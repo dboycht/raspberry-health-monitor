@@ -109,14 +109,26 @@ def check_docs() -> Tuple[bool, str]:
 
     这类问题**人眼查不出**（"少一条索引""链接指向已改名的文件"），
     但会让新同学按文档找不到东西，所以放进提交前检查。
+
+    ⚠️ 先跑**注入自测**再跑全量检查：检查器自己"静默失效"过一次
+    （正则只允许 ASCII，而本项目文档名全是中文 ⇒ 一个都匹配不到，却一直报通过）。
+    自测会造一条假悬空引用、断言它真的被抓到，失败时归因清晰。
     """
+    selftest = subprocess.run(
+        [sys.executable, str(RPI_DIR / "scripts" / "check_docs.py"), "--self-test"],
+        cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8",
+    )
+    if selftest.returncode != 0:
+        detail = [ln for ln in (selftest.stdout or "").splitlines() if ln.strip().startswith("❌")]
+        return False, "文档检查器自测失败（守卫可能已失效）：\n      " + "\n      ".join(detail[:5])
+
     proc = subprocess.run(
         [sys.executable, str(RPI_DIR / "scripts" / "check_docs.py")],
         cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8",
     )
     if proc.returncode == 0:
         lines = [ln for ln in (proc.stdout or "").splitlines() if ln.startswith("✅")]
-        return True, lines[0] if lines else "文档自检通过"
+        return True, (lines[0] if lines else "文档自检通过") + "（含检查器注入自测）"
     detail = [ln for ln in (proc.stdout or "").splitlines() if ln.strip().startswith("-")]
     return False, "文档自检失败：\n      " + "\n      ".join(detail[:10])
 
