@@ -1,5 +1,7 @@
 # raspberry-health-monitor · 树莓派居家老人健康与安全监护系统
 
+[![checks](https://github.com/dboycht/raspberry-health-monitor/actions/workflows/checks.yml/badge.svg)](https://github.com/dboycht/raspberry-health-monitor/actions/workflows/checks.yml)
+
 > 《Python编程与物联网应用入门》2026 年课程设计 —— **健康医疗物联网**方向
 >
 > 一个"床头监护仪"：树莓派 5 采集老人的**心率血氧 / 体温 / 环境温湿度 / 活动状态**，
@@ -109,7 +111,9 @@ raspberry-health-monitor/
 ├── android/                              ← 安卓监护 App（Kotlin + Jetpack Compose）
 ├── hardware/                             ← 硬件文档：引脚分配、接线图、供电与安全
 ├── docs/                                 ← 接口规格、报警规则、开发规范、通信协议
-└── contrib/                              ← 团队分工与提交规范
+├── contrib/                              ← 团队分工与提交规范
+├── .github/workflows/checks.yml          ← CI：每次推送自动跑单测 + 9 项检查（无需硬件）
+└── CONTRIBUTING.md                       ← 贡献指南（提交前必过的三条）
 ```
 
 ## 4. 团队分工怎么协作（本项目的核心设计）
@@ -200,13 +204,16 @@ raspberry-health-monitor/
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
-| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **8 项全 PASS** |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **429 passed, 1 skipped, 170 subtests** |
+| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **9 项全 PASS** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **445 passed, 1 skipped, 170 subtests** |
+| 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | **Ran 446 tests, OK (skipped=1)** |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
 | 驱动注册表 | `python -m health_monitor drivers` | 11 个驱动全部可构造 |
 | 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
+| 文档一致性 | `python scripts/check_docs.py` | 19 份文档链接可解析；报警码三方一致 |
 | 安卓端单元测试 | 见 `docs/06-安卓开发指南.md` 的构建命令 | **78 passed** |
-| 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.86 MB |
+| 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.31 MB |
+| CI | `.github/workflows/checks.yml` | 每次推送自动跑上面两套（无硬件） |
 
 > ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**。真实器件读数、真实 I2C/SPI 时序、
 > 蓝牙音箱配对、手机与树莓派的真实局域网往返**都还没验过**——

@@ -1,0 +1,39 @@
+name: checks
+
+# 每次推送与 PR 都跑一遍"提交前检查"。
+# 目的：让"引脚撞脚 / 文档悬空引用 / 报警码三方不一致 / 单测回归"在**合并前**就暴露，
+# 而不是等到有人接上硬件才发现。这些检查全部不需要硬件（mock 模式）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rpi:
+    name: 树莓派端检查（无硬件）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 本项目**核心零第三方依赖**：不装 smbus2/spidev/gpiozero 也能跑全部检查，
+      # 因为驱动都是"函数内延迟导入 + try/except ImportError"。
+      # 只装 pytest（测试仍可用标准库 unittest 跑，这里装它是为了更好的输出）。
+      - name: 安装 pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: 项目自检（9 项：配置 / 驱动注册表 / 引脚冲突 / 文档一致性 / 自检 / 单测 / 演示）
+        working-directory: rpi
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/validate.py
+
+      - name: 单独跑一遍 unittest（不依赖 pytest 的路径也要可用）
+        working-directory: rpi
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -q
