@@ -139,6 +139,9 @@ class AppConfig:
     thresholds: Thresholds = field(default_factory=Thresholds)
     devices: List[DeviceConfig] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
+    #: MQTT 上云配置（可选，默认关闭）。用 ``dict`` 承载以避免 core 依赖 net 层；
+    #: 需要时由 net.mqtt.MqttConfig.from_dict 解析。
+    mqtt: Dict[str, Any] = field(default_factory=dict)
 
     def enabled_devices(self) -> List[DeviceConfig]:
         return [d for d in self.devices if d.enabled]
@@ -166,7 +169,7 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AppConfig":
-        known = {"thresholds", "devices"}
+        known = {"thresholds", "devices", "mqtt"}
         unknown = set(data) - known
         if unknown:
             raise ConfigError(f"配置里有未知顶层字段 {sorted(unknown)}；只支持 {sorted(known)}")
@@ -192,7 +195,11 @@ class AppConfig:
                     optional=bool(item.get("optional", False)),
                 )
             )
-        cfg = cls(thresholds=thresholds, devices=devices, raw=dict(data))
+        # MQTT 配置只做"是不是对象"的粗校验；字段级校验在 net.mqtt.MqttConfig.from_dict
+        mqtt_raw = data.get("mqtt", {})
+        if not isinstance(mqtt_raw, Mapping):
+            raise ConfigError("mqtt 必须是一个对象")
+        cfg = cls(thresholds=thresholds, devices=devices, raw=dict(data), mqtt=dict(mqtt_raw))
         cfg.validate()
         return cfg
 
@@ -340,6 +347,21 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "read_interval_s": 5.0,
             "params": {"trig_pin": 5, "echo_pin": 6},
         },
+    },
+    # 上云（可选，默认关闭）。填好 broker 信息并把 enabled 改 true 即可。
+    # ⚠️ password 请留空并用环境变量 HEALTH_MQTT_PASSWORD，或写在自己的 devices.json 里
+    #    （devices.json 已被 .gitignore 排除，不会进仓库）。
+    "mqtt": {
+        "enabled": False,
+        "host": "",
+        "port": 1883,
+        "topic_prefix": "health/room1",
+        "client_id": "raspi-health-monitor",
+        "username": "",
+        "password": "",
+        "interval_s": 30.0,
+        "qos": 0,
+        "keepalive": 60,
     },
 }
 

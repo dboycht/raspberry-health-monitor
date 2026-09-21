@@ -89,7 +89,7 @@ class WebApi:
 
     def _health(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         collector = self.runtime.collector
-        return 200, {
+        payload: Dict[str, Any] = {
             "ok": True,
             "ts": time.time(),
             "uptime_s": round(time.time() - self.runtime.started_at, 1),
@@ -99,6 +99,10 @@ class WebApi:
             "dispatcher": self.runtime.dispatcher.status(),
             "devices": collector.status()["devices"],
         }
+        # 上云状态（可选功能）：客户端可用它判断"云上那条链路通不通"
+        mqtt = getattr(self.runtime, "mqtt", None)
+        payload["mqtt"] = mqtt.status() if mqtt is not None else {"enabled": False}
+        return 200, payload
 
     def _current(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         snap = self.runtime.collector.snapshot()

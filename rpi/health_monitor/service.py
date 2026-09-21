@@ -110,6 +110,24 @@ class Runtime:
             config, self.inputs, store=self.store, clock=clock,
         )
 
+        # ---- 3.5 上云（可选；没配置或没装 paho 就整体降级，绝不影响本地监护） ----
+        self.mqtt: Optional[Any] = None
+        self._mqtt_last_publish: float = 0.0
+        try:
+            from .net.mqtt import MqttConfig, MqttPublisher
+
+            mqtt_cfg = MqttConfig.from_dict(config.mqtt) if config.mqtt else MqttConfig()
+        except Exception as exc:  # noqa: BLE001 - 配置写错不该让整机起不来
+            _LOG.warning("MQTT 配置解析失败（已忽略上云）：%s", exc)
+        else:
+            publisher = MqttPublisher(mqtt_cfg)
+            if mqtt_cfg.enabled:
+                self.mqtt = publisher
+            else:
+                publisher.reason = publisher.reason or "配置里 mqtt.enabled=false（未启用上云）"
+                self.mqtt = publisher   # 保留对象以便 status() 里能看到"为什么没上云"
+        self.mqtt_started = False
+
         # ---- 4. 运行状态 ----
         self._events: List[AlarmEvent] = []
         self._stop = threading.Event()
@@ -170,6 +188,12 @@ class Runtime:
                 device.close()
             except Exception as exc:  # noqa: BLE001
                 _LOG.debug("输出器件 %s 关闭异常（已忽略）：%s", name, exc)
+        if self.mqtt is not None:
+            try:
+                self.mqtt.stop()
+            except Exception as exc:  # noqa: BLE001
+                _LOG.debug("MQTT 关闭异常（已忽略）：%s", exc)
+            self.mqtt_started = False
 
     # ------------------------------------------------------------------
     # 主循环
@@ -197,11 +221,20 @@ class Runtime:
             self.dispatcher.dispatch(event, now)
             if self.store is not None:
                 self.store.save_alarm(event)
+            if self.mqtt is not None and self.mqtt_started:
+                self.mqtt.publish_alarm(event)
         if events:
             self._events.extend(events)
             self._events = self._events[-500:]
             for event in events:
                 _LOG.info("[报警] %s %s", event.code.value, event.message)
+
+        # 上云：按 interval_s 周期发布读数摘要（失败只计数，不影响本地）
+        if self.mqtt is not None and self.mqtt_started:
+            interval = float(getattr(self.mqtt.config, "interval_s", 30.0))
+            if (now - self._mqtt_last_publish) >= interval:
+                self._mqtt_last_publish = now
+                self.mqtt.publish_reading(snap.health_summary())
 
         # 定期清理过期历史（每小时一次足够）
         if self.store is not None and self.ticks % 3600 == 0:
@@ -230,7 +263,14 @@ class Runtime:
             self._sleep(max(0.02, wait))
 
     def start_background(self) -> threading.Thread:
-        """在后台线程跑主循环（供 ``serve`` 命令使用）。"""
+        """在后台线程跑主循环（供 ``serve`` 命令使用）。
+
+        同时尝试启动 MQTT 上报（没配置或没装 paho-mqtt 时**只记日志**，不影响主循环）。
+        """
+        if self.mqtt is not None and not self.mqtt_started:
+            self.mqtt_started = bool(self.mqtt.start())
+            if self.mqtt_started:
+                self.mqtt.publish_status(self.status())
         self._thread = threading.Thread(target=self.run_forever, name="monitor-loop", daemon=True)
         self._thread.start()
         return self._thread
@@ -311,6 +351,7 @@ class Runtime:
             "collector": self.collector.status(),
             "dispatcher": self.dispatcher.status(),
             "active_alarms": self.engine.active_alarms(),
+            "mqtt": (self.mqtt.status() if self.mqtt is not None else {"enabled": False, "reason": "未创建"}),
             "store": self.store.stats() if self.store else None,
         }
 
