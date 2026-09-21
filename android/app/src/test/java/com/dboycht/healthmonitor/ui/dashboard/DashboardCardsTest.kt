@@ -37,12 +37,16 @@ class DashboardCardsTest {
     fun `全空快照时五张卡片都不显示 0`() {
         val cards = DashboardCards.build(MonitorSnapshot.EMPTY)
         cards.forEach { card ->
-            // 心率那张因为 finger_detected == null 显示 --，其它也是 -- 或"未知"。
+            // 只允许"--"或"-- / --"这种纯未知占位，不允许出现任何数字。
+            assertTrue(
+                "${card.title} 的值只能是未知占位，实际是：${card.value}",
+                card.value.split(" / ").all { it == Formatters.UNKNOWN || it == "未知" },
+            )
             assertFalse("${card.title} 的值里不能有 0：${card.value}", card.value.contains("0"))
         }
         assertEquals(Formatters.UNKNOWN, cardOf(cards, "心率").value)
         assertEquals(Formatters.UNKNOWN, cardOf(cards, "体温").value)
-        assertEquals(Formatters.UNKNOWN, cardOf(cards, "室温 / 湿度").value)
+        assertEquals("-- / --", cardOf(cards, "室温 / 湿度").value)
         assertEquals("未知", cardOf(cards, "活动状态").value)
         // 值缺失时不给单位（避免出现 "-- ℃"）。
         assertNull(cardOf(cards, "体温").unit)

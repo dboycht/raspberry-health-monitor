@@ -1,7 +1,9 @@
 package com.dboycht.healthmonitor.ui.about
 
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dboycht.healthmonitor.data.MonitorApiResult
 import com.dboycht.healthmonitor.data.MonitorRepository
@@ -51,8 +53,8 @@ class AboutViewModel(
 
     private var pollingEnabled = false
 
-    suspend fun startPolling(lifecycle: androidx.lifecycle.Lifecycle) {
-        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+    suspend fun startPolling(lifecycle: Lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             pollingEnabled = true
             while (isActive && pollingEnabled) {
                 refreshOnce()

@@ -3,6 +3,7 @@ package com.dboycht.healthmonitor.ui.dashboard
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dboycht.healthmonitor.data.MonitorApiResult
 import com.dboycht.healthmonitor.data.MonitorRepository
@@ -92,11 +93,11 @@ class DashboardViewModel(
         _uiState.value = _uiState.value.copy(connection = ConnectionStatus.IDLE)
     }
 
-    /** 手动刷新（同时把"连续失败停轮询"复位）。 */
+    /** 手动刷新：重新打开轮询开关（连续失败计数在**成功**时才会清零）。 */
     fun refreshNow() {
         viewModelScope.launch {
             pollingEnabled = true
-            _uiState.value = _uiState.value.copy(pollingStopped = false, consecutiveFailures = 0)
+            _uiState.value = _uiState.value.copy(pollingStopped = false)
             refreshOnce()
         }
     }

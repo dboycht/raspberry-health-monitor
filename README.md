@@ -180,6 +180,22 @@ raspberry-health-monitor/
 - 版本单一来源：`rpi/health_monitor/__init__.py` 的 `__version__`（HTTP `/api/v1/health` 会返回它）
 - 当前版本：**1.0.1**
 
-## 9. 许可
+## 9. 验证基线（2026-09-21 实测）
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **8 项全 PASS** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **426 passed, 1 skipped, 170 subtests** |
+| 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
+| 驱动注册表 | `python -m health_monitor drivers` | 11 个驱动全部可构造 |
+| 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
+| 安卓端单元测试 | 见 `docs/06-安卓开发指南.md` 的构建命令 | **73 passed** |
+| 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.25 MB |
+
+> ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**。真实器件读数、真实 I2C/SPI 时序、
+> 蓝牙音箱配对、手机与树莓派的真实局域网往返**都还没验过**——
+> 这些必须由真人接硬件后跑 `python -m health_monitor selfcheck --real` 与真机联调。
+
+## 10. 许可
 
 MIT License，详见 [`LICENSE`](LICENSE)。

@@ -123,6 +123,19 @@ powershell -File D:\code\DeepSeekHarness\raspberry-health-monitor\android\tools\
 | 单元测试报告 | `D:\code\DeepSeekHarness\raspberry-health-monitor\android\app\build\reports\tests\testDebugUnitTest\index.html` |
 | debug APK | `D:\code\DeepSeekHarness\raspberry-health-monitor\android\app\build\outputs\apk\debug\app-debug.apk` |
 
+### 3.4 本机实测记录
+
+| 命令 | 结果 |
+| --- | --- |
+| `--no-daemon testDebugUnitTest` | **BUILD SUCCESSFUL，73 个测试全部通过**（0 失败 / 0 跳过） |
+| `--no-daemon assembleDebug` | **BUILD SUCCESSFUL**，产出 `app-debug.apk`，**11.25 MB**（11,796,364 字节） |
+
+用 `aapt2 dump badging` 核对过 APK 内容：`package=com.dboycht.healthmonitor.debug`、
+`minSdkVersion=26`、`targetSdkVersion=36`、`compileSdkVersion=36`、
+`uses-permission INTERNET` 与 `ACCESS_NETWORK_STATE` 都在，
+`usesCleartextTraffic=true` 且 `networkSecurityConfig` 指向编译后的 `res/xml/network_security_config.xml`
+（里面 `cleartextTrafficPermitted=true`）。
+
 ---
 
 ## 4. 怎么连树莓派

@@ -19,7 +19,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -63,8 +62,6 @@ fun SosButton(
     val currentOnTrigger by rememberUpdatedState(onTrigger)
 
     var progress by remember { mutableFloatStateOf(0f) }
-    var holding by remember { mutableStateOf(false) }
-    var fired by remember { mutableStateOf(false) }
 
     val urgent = Color(Severity.colorArgb(Severity.CRITICAL))
     val disabled = !enabled
@@ -79,32 +76,27 @@ fun SosButton(
                 if (!enabled) return@pointerInput
                 detectTapGestures(
                     onPress = {
-                        holding = true
-                        fired = false
                         val started = System.currentTimeMillis()
                         var nextBuzz = 500L
-                        val job = launch {
-                            while (holding && !fired) {
-                                val elapsed = System.currentTimeMillis() - started
-                                progress = (elapsed.toFloat() / SOS_HOLD_MILLIS).coerceIn(0f, 1f)
-                                if (elapsed >= nextBuzz) {
-                                    vibrate(context, 25)
-                                    nextBuzz += 500L
-                                }
-                                if (elapsed >= SOS_HOLD_MILLIS) {
-                                    fired = true
-                                    holding = false
-                                    progress = 0f
-                                    vibrate(context, 220)
-                                    currentOnTrigger()
-                                    break
-                                }
-                                delay(40)
+                        // 按住期间累进度；手指抬起或手势结束时这段协程会被取消，
+                        // 所以"中途松手"天然就等于取消，不会误发。
+                        while (true) {
+                            val elapsed = System.currentTimeMillis() - started
+                            progress = (elapsed.toFloat() / SOS_HOLD_MILLIS).coerceIn(0f, 1f)
+                            if (elapsed >= nextBuzz) {
+                                vibrate(context, 25)
+                                nextBuzz += 500L
                             }
+                            if (elapsed >= SOS_HOLD_MILLIS) {
+                                // 只在"按满 1.5 秒"这一刻触发一次。
+                                progress = 0f
+                                vibrate(context, 220)
+                                currentOnTrigger()
+                                break
+                            }
+                            delay(40)
                         }
                         tryAwaitRelease()
-                        holding = false
-                        job.cancel()
                         progress = 0f
                     },
                 )

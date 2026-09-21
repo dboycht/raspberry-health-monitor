@@ -132,14 +132,15 @@ private fun MonitorApp(container: AppContainer) {
                     NavigationBarItem(
                         selected = tab == item,
                         onClick = { tab = item },
-                        // 不传 icon：NavigationBarItem 允许只有文字标签，
-                        // 这样能省掉一整套图标资源（含 material-icons-extended 的几十 MB）。
-                        label = {
+                        // 图标用"符号 + 文字"：不引 material-icons-extended
+                        // （单它就能让 debug APK 涨几十 MB），课设够用。
+                        icon = {
                             Text(
-                                text = "${item.symbol} ${item.title}",
-                                fontWeight = FontWeight.Medium,
+                                text = item.symbol,
+                                fontWeight = FontWeight.Bold,
                             )
                         },
+                        label = { Text(item.title) },
                     )
                 }
             }

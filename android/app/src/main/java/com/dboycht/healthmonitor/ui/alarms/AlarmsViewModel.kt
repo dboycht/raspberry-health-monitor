@@ -1,7 +1,9 @@
 package com.dboycht.healthmonitor.ui.alarms
 
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import com.dboycht.healthmonitor.data.MonitorApiResult
 import com.dboycht.healthmonitor.data.MonitorRepository
@@ -62,8 +64,8 @@ class AlarmsViewModel(
     private var pollingEnabled = false
 
     /** 与首页同样的生命周期策略：进后台立即停（协议 §5.1）。 */
-    suspend fun startPolling(lifecycle: androidx.lifecycle.Lifecycle) {
-        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+    suspend fun startPolling(lifecycle: Lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             pollingEnabled = true
             while (isActive && pollingEnabled) {
                 refreshOnce()
