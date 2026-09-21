@@ -1,0 +1,31 @@
+# 统一换行符，避免跨平台协作时出现"整文件都改了"的假 diff
+#
+# ⚠️ 关键：**shell 脚本必须保持 LF**。
+# 如果 install-service.sh 被 Windows 转成 CRLF，在树莓派上执行会报
+# `bash: ./install-service.sh: /bin/bash^M: bad interpreter: No such file or directory`
+# —— 这是最典型的"在我机器上好好的"类问题。
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.kts   text eol=lf
+*.kt    text eol=lf
+*.xml   text eol=lf
+*.toml  text eol=lf
+*.service text eol=lf
+gradlew text eol=lf
+
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二进制文件不要被当成文本处理
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.apk   binary
+*.zip   binary
+*.db    binary

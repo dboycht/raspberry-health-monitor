@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文 HTTP 白名单配置（局域网直连树莓派必需）。
+
+  Android 9（API 28）起默认禁止明文 HTTP，请求会直接失败并报
+  "CLEARTEXT communication to 192.168.x.x not permitted by network security policy"。
+  树莓派后端是 http://<局域网IP>:8080，没有证书，所以这里必须显式放开。
+
+  cleartextTrafficPermitted="true" 对 <base-config> 生效 = 允许所有明文 HTTP。
+  课设场景（家里 WiFi、树莓派直连）可以接受；若将来要上云，应改成只给固定域名/IP
+  开白名单（<domain-config>），并优先使用 https。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

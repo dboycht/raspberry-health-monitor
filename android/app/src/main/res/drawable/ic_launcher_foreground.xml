@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 应用图标：一个心跳折线 + 心形，矢量绘制，不需要任何位图资源。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,80.5c-1.2,0 -2.3,-0.5 -3.2,-1.4L30.4,58.9c-5.6,-5.6 -5.6,-14.7 0,-20.3c5.6,-5.6 14.7,-5.6 20.3,0l3.3,3.3l3.3,-3.3c5.6,-5.6 14.7,-5.6 20.3,0c5.6,5.6 5.6,14.7 0,20.3L57.2,79.1C56.3,80 55.2,80.5 54,80.5z" />
+    <path
+        android:fillColor="#7CE3B6"
+        android:pathData="M24,49.5h14.5l4.5,-9.5l6.5,19.5l6,-27l6.5,17h15.5v5H60.5l-2.5,-6.5l-6.2,27.5l-6.3,-19.5l-1.9,3.5H24z" />
+</vector>

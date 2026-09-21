@@ -1,0 +1,32 @@
+# 运行数据与本地配置（**绝不入库**）
+data/
+*.db
+*.db-journal
+*.sqlite3
+logs/
+*.log
+
+# 本地覆盖配置（每人机器的引脚可能不同；示例文件 devices.example.json 才入库）
+config/devices.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# 开发文档（按项目约定：只留开发副本，不上传 GitHub）
+DEVELOPMENT.md
+ERROR.md
+HANDOVER.md
+docs/TODO.md
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

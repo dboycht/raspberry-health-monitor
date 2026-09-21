@@ -1,0 +1,34 @@
+[Unit]
+Description=Raspberry Health Monitor (elder care IoT monitor)
+Documentation=file:///home/pi/raspberry-health-monitor/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# ⚠️ 请把 WorkingDirectory 与 ExecStart 的路径改成你树莓派上的实际路径
+#    也可以用仓库里的 install-service.sh 自动改好：
+#      cd <项目>/rpi/deploy && sudo bash install-service.sh
+WorkingDirectory=/home/pi/raspberry-health-monitor/rpi
+# --real = 访问真实硬件；--store 指定历史库位置
+ExecStart=/usr/bin/python3 -m health_monitor serve --real --host 0.0.0.0 --port 8080 --store /home/pi/health-monitor-data/history.db
+# 需要 token 时加：--token <你的口令>
+# ⚠️ 注意：`python3 -m health_monitor` 需要工作目录在 rpi/（包根所在处）——见上面的 WorkingDirectory
+
+# 用 pi 用户跑（需要访问 /dev/i2c-1、/dev/spidev0.0、GPIO）
+User=pi
+Group=pi
+
+Restart=always
+RestartSec=5
+# 让 systemd 把日志收进 journalctl
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=health-monitor
+
+# 依赖 I2C/SPI 设备节点；若用 GPIO 还需要 /dev/gpiomem
+# 若启动早于设备节点创建，Restart=always 会自动重试
+After=dev-i2c-1.device
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">老人监护</string>
+
+    <!-- 底部导航 -->
+    <string name="tab_dashboard">监护</string>
+    <string name="tab_alarms">报警</string>
+    <string name="tab_about">关于</string>
+    <string name="tab_settings">设置</string>
+
+    <!-- 通用 -->
+    <string name="action_silence">消音</string>
+    <string name="action_sos">紧急求助</string>
+    <string name="action_save">保存</string>
+    <string name="action_refresh">刷新</string>
+    <string name="unknown_value">--</string>
+</resources>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 只作为 Activity 的启动主题（Compose 内部颜色由 ui/theme 里的 Material3 主题决定）。 -->
+    <style name="Theme.HealthMonitor" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

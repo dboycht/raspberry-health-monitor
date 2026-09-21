@@ -1,0 +1,24 @@
+# 运行时依赖说明（rpi/）
+#
+# ⚠️ 本项目**核心只依赖 Python 标准库**：没有这些包时，mock 模式、全部单测、
+#    业务逻辑、HTTP 接口都能正常工作。所以"没装依赖"不会让你什么都跑不起来。
+#
+# 下面这些只在**真实树莓派上访问硬件**时才需要，且驱动里都是
+# "函数内延迟导入 + try/except ImportError"，缺了会抛出带安装命令的 DeviceInitError。
+#
+# 推荐安装方式（优先用系统包，树莓派 OS 自带、省去编译）：
+#   sudo apt update
+#   sudo apt install -y python3-smbus i2c-tools python3-gpiozero python3-lgpio python3-spidev
+#   sudo apt install -y espeak-ng alsa-utils
+#
+# 若系统包版本太老，也可以用 pip：
+#   pip3 install smbus2 spidev
+#
+# 各包用途：
+#   smbus2 / python3-smbus    I2C 总线（MAX30102、LCD1602）
+#   python3-spidev            SPI 总线（MCP3002）
+#   python3-gpiozero          GPIO 抽象（按键、PIR、蜂鸣器、LED、DHT11、HC-SR04）
+#   python3-lgpio             gpiozero 在树莓派 5 上的后端（RPi.GPIO 在 Pi 5 上不可用）
+#   espeak-ng / alsa-utils    语音播报（TTS 合成 + aplay 播放）
+#
+# 开发机（Windows/PC）上**不需要安装任何一项**：用 mock 模式即可。

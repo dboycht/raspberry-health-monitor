@@ -1,0 +1,119 @@
+{
+  "thresholds": {
+    "hr_min": 50,
+    "hr_max": 110,
+    "spo2_min": 93,
+    "body_temp_min": 35.5,
+    "body_temp_max": 37.5,
+    "ambient_temp_min": 16,
+    "ambient_temp_max": 30,
+    "humidity_max": 80,
+    "no_motion_timeout_s": 1800,
+    "night_start_hour": 22,
+    "night_end_hour": 6,
+    "night_wake_count": 5,
+    "night_window_s": 3600,
+    "sensor_fault_after": 3,
+    "repeat_cooldown_s": 300,
+    "hysteresis": 3
+  },
+  "devices": {
+    "vitals": {
+      "driver": "max30102",
+      "enabled": true,
+      "read_interval_s": 1.0,
+      "params": {
+        "bus": 1,
+        "address": 87,
+        "led_current": "7.6mA"
+      }
+    },
+    "body_temp": {
+      "driver": "tmp36",
+      "enabled": true,
+      "read_interval_s": 2.0,
+      "params": {
+        "spi_bus": 0,
+        "spi_device": 0,
+        "channel": 0,
+        "vref": 3.3,
+        "calibration_offset_c": 0.0
+      }
+    },
+    "ambient": {
+      "driver": "dht11",
+      "enabled": true,
+      "read_interval_s": 3.0,
+      "params": {
+        "pin": 4
+      }
+    },
+    "motion": {
+      "driver": "hc_sr501",
+      "enabled": true,
+      "read_interval_s": 0.5,
+      "params": {
+        "pin": 17
+      }
+    },
+    "display": {
+      "driver": "lcd1602",
+      "enabled": true,
+      "read_interval_s": 1.0,
+      "params": {
+        "bus": 1,
+        "address": 0,
+        "cols": 16,
+        "rows": 2
+      }
+    },
+    "speaker": {
+      "driver": "bt_speaker",
+      "enabled": true,
+      "read_interval_s": 1.0,
+      "params": {
+        "engine": "espeak-ng",
+        "rate": 150
+      }
+    },
+    "alarm_buzzer": {
+      "driver": "buzzer",
+      "enabled": true,
+      "read_interval_s": 1.0,
+      "params": {
+        "pin": 18
+      }
+    },
+    "status_led": {
+      "driver": "led",
+      "enabled": true,
+      "read_interval_s": 1.0,
+      "params": {
+        "pins": {
+          "green": 22,
+          "yellow": 23,
+          "red": 24
+        }
+      }
+    },
+    "sos_button": {
+      "driver": "button",
+      "enabled": true,
+      "read_interval_s": 0.2,
+      "params": {
+        "pin": 27,
+        "long_press_s": 1.0
+      }
+    },
+    "distance": {
+      "driver": "hc_sr04",
+      "enabled": false,
+      "optional": true,
+      "read_interval_s": 5.0,
+      "params": {
+        "trig_pin": 5,
+        "echo_pin": 6
+      }
+    }
+  }
+}
