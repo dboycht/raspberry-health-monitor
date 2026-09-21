@@ -104,6 +104,23 @@ def check_pin_conflicts() -> Tuple[bool, str]:
     return True, f"{len(claims)} 个独占引脚无冲突"
 
 
+def check_docs() -> Tuple[bool, str]:
+    """文档一致性：悬空引用 / docs 索引与实体不等 / 报警码三方不一致。
+
+    这类问题**人眼查不出**（"少一条索引""链接指向已改名的文件"），
+    但会让新同学按文档找不到东西，所以放进提交前检查。
+    """
+    proc = subprocess.run(
+        [sys.executable, str(RPI_DIR / "scripts" / "check_docs.py")],
+        cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8",
+    )
+    if proc.returncode == 0:
+        lines = [ln for ln in (proc.stdout or "").splitlines() if ln.startswith("✅")]
+        return True, lines[0] if lines else "文档自检通过"
+    detail = [ln for ln in (proc.stdout or "").splitlines() if ln.strip().startswith("-")]
+    return False, "文档自检失败：\n      " + "\n      ".join(detail[:10])
+
+
 def check_selfcheck() -> Tuple[bool, str]:
     """全设备模拟体检（assemble → open → self_check）。"""
     from health_monitor.hal import snapshot
@@ -161,6 +178,7 @@ def main() -> int:
         Check("驱动注册表", check_drivers),
         Check("引脚冲突", check_pin_conflicts),
         Check("设备自检（模拟）", check_selfcheck),
+        Check("文档一致性", check_docs),
     ]
     if not args.quick:
         checks.append(Check("单元测试", check_tests))

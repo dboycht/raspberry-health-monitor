@@ -48,6 +48,24 @@ class ReadingSnapshot:
     motion_silent_s: Optional[float] = None       # 距上次检测到人的秒数
     sensor_failures: Dict[str, int] = field(default_factory=dict)  # 设备名 -> 连续失败次数
     sensor_errors: Dict[str, str] = field(default_factory=dict)    # 设备名 -> 最后一次错误
+    #: 距"最近一次成功读到新数据"的秒数；``None`` 表示从未读到过。
+    #: 用来回答"服务在跑但数据是不是旧的"——手机端据此显示"数据可能已过期"。
+    data_age_s: Optional[float] = None
+    #: 判定"快照已陈旧"的秒数阈值。由采集器按各设备周期算出
+    #: （= 设备数 × 3 × 最长周期，见 :meth:`Collector.snapshot`），**不写死**：
+    #: 3 个设备各 3 秒周期 ⇒ 27 秒，与"所有设备都该至少更新过一轮"对齐。
+    data_stale_after_s: float = 30.0
+
+    @property
+    def data_stale(self) -> bool:
+        """整份快照是否已经"不值得相信"（没有任何一个传感器在正常更新）。
+
+        判据：从未读到过数据（``data_age_s is None``），或者最近一次成功读取已经超过
+        ``data_stale_after_s``。手机端据此显示"数据可能已过期"，而不是拿旧值当实时值。
+        """
+        if self.data_age_s is None:
+            return True
+        return self.data_age_s > self.data_stale_after_s
 
     def health_summary(self) -> Dict[str, Any]:
         """给 HTTP API / 安卓端用的扁平摘要（**只放已采到的值，缺失就是 None**）。
@@ -71,6 +89,9 @@ class ReadingSnapshot:
             "motion_state": m.state.value if m else None,
             "motion_silent_s": self.motion_silent_s,
             "sensor_failures": dict(self.sensor_failures),
+            # ---- 新鲜度：让手机端能区分"没有数据"与"数据是旧的" ----
+            "data_age_s": (None if self.data_age_s is None else round(self.data_age_s, 1)),
+            "data_stale": self.data_stale,
         }
 
 

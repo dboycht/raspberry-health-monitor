@@ -137,6 +137,18 @@ class Runtime:
                 errors[name] = f"{type(exc).__name__}: {exc}"
                 _LOG.warning("输出器件 %s 打开失败：%s", name, errors[name])
         self.assembly_errors.update(errors)
+
+        # 启动提示：让屏幕/LED/音箱立刻给出"我活着"的反馈。
+        # 这条容易漏，但很有用：现场演示时，一看屏幕就知道服务起来了，
+        # 而不是"等了半天不知道有没有在跑"。
+        try:
+            startup = AlarmEvent(
+                ts=self.clock(), code=AlarmCode.SYSTEM_START, severity=Severity.NOTICE,
+                message="监护系统已启动", source="service",
+            )
+            self.dispatcher.dispatch(startup, startup.ts)
+        except Exception as exc:  # noqa: BLE001 - 启动提示失败绝不该影响服务启动
+            _LOG.debug("启动提示下发失败（已忽略）：%s", exc)
         return errors
 
     def close(self) -> None:

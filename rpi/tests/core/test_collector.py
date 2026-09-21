@@ -167,6 +167,29 @@ class TestCollectorSnapshot(unittest.TestCase):
         snap = self.collector.snapshot()
         self.assertFalse(snap.motion.detected)
 
+    def test_新鲜度随采集更新(self) -> None:
+        """★ 手机端要靠这两个字段判断"服务在跑但数据是旧的"。"""
+        self.collector.collect_due()
+        snap = self.collector.snapshot()
+        self.assertIsNotNone(snap.data_age_s)
+        # 注意：刚采集完 data_age_s 恰好是 0.0，而 `0.0 or 999` 会得到 999（0.0 是假值）
+        # —— 这类"用 or 兜底"的写法在数值断言里是陷阱，必须显式判 None。
+        age = snap.data_age_s
+        assert age is not None
+        self.assertLess(age, 1.0, "刚采集完，数据年龄应该接近 0")
+        self.assertFalse(snap.data_stale)
+        # 阈值应随设备数与最长周期缩放（3 设备 × 3 × 最长 3 秒 = 27 秒）
+        self.assertAlmostEqual(snap.data_stale_after_s, 27.0, delta=0.1)
+
+    def test_全部设备停摆后判为陈旧(self) -> None:
+        self.collector.collect_due()
+        self.clock.advance(self.collector.snapshot().data_stale_after_s + 5.0)
+        for entry in self.collector.entries.values():   # 模拟"读不到任何新数据"
+            entry.failures = 1
+            entry.last_error = "模拟停摆"
+        snap = self.collector.snapshot()
+        self.assertTrue(snap.data_stale, "全部设备停摆时快照必须标记为陈旧")
+
 
 class TestCollectorWithStore(unittest.TestCase):
     def test_采集结果会落库(self) -> None:

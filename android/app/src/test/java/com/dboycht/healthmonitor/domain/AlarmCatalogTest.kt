@@ -29,13 +29,17 @@ class AlarmCatalogTest {
             "sos_pressed" to "紧急求助",
             "sensor_fault" to "传感器故障",
             "device_offline" to "设备离线",
+            "system_start" to "系统已启动",
             "all_clear" to "已恢复正常",
         )
         expected.forEach { (code, label) ->
             assertEquals("报警码 $code 的中文名不对", label, AlarmCatalog.label(code))
         }
-        // 表里数一数：14 个码，别漏。
-        assertEquals(14, AlarmCatalog.allCodes().size)
+        // 表里数一数：15 个码，别漏。
+        // ⚠️ 这个数字**故意写死**：新增报警码时必须同时改三处
+        //    （models.py 的 AlarmCode / docs/08-报警规则表.md / 本文件），
+        //    跨语言的一致性由 `rpi/scripts/check_docs.py` 兜底检查。
+        assertEquals(15, AlarmCatalog.allCodes().size)
     }
 
     @Test
@@ -56,6 +60,7 @@ class AlarmCatalogTest {
         assertEquals(Severity.INFO, AlarmCatalog.defaultSeverity("ambient_temp_high"))
         assertEquals(Severity.INFO, AlarmCatalog.defaultSeverity("ambient_temp_low"))
         assertEquals(Severity.INFO, AlarmCatalog.defaultSeverity("humidity_high"))
+        assertEquals(Severity.INFO, AlarmCatalog.defaultSeverity("system_start"))
         // 0 正常
         assertEquals(Severity.NORMAL, AlarmCatalog.defaultSeverity("all_clear"))
     }

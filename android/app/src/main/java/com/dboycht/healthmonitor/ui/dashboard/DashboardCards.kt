@@ -195,4 +195,20 @@ object DashboardCards {
     /** 一整句警告，例如"vitals 传感器异常（连续 3 次）"。 */
     fun sensorWarningText(snapshot: MonitorSnapshot): String? =
         sensorWarnings(snapshot).takeIf { it.isNotEmpty() }?.joinToString("；")
+
+    /**
+     * "数据已过期"的警告文案（协议 §4.1 第四条）。
+     *
+     * 与"请求失败"是两件事：请求成功也可能是数据过期（服务活着但传感器没数据）。
+     * 服务端明确说 `data_stale=true` 时才提示——**不自己按年龄瞎猜**（阈值在服务端，可配）。
+     */
+    fun staleWarningText(snapshot: MonitorSnapshot): String? {
+        if (!snapshot.dataStale) return null
+        val age = snapshot.dataAgeSeconds
+        return when {
+            age == null -> "数据不可用：树莓派尚未读到任何传感器数据"
+            age < 60 -> "数据可能已过期：最近 ${age.toInt()} 秒无新数据"
+            else -> "数据可能已过期：最近 ${(age / 60).toInt()} 分钟无新数据"
+        }
+    }
 }

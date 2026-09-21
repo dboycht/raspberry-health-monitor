@@ -41,6 +41,16 @@ data class DashboardUiState(
     val staleData: Boolean
         get() = lastSuccessAgeSeconds?.let { it > STALE_AFTER_SECONDS } ?: false
 
+    /**
+     * "树莓派那边数据已过期"的提示文案（协议 §4.1 第四条）。
+     *
+     * 与 [staleData] 的区别：那个是**本机**视角（多久没成功请求过），
+     * 这个是**服务端**视角（请求成功，但树莓派的传感器早就没数据了）。
+     * 两种情况都要让用户看见——"服务活着但测不到人"是最危险的状态。
+     */
+    val serverStaleWarning: String?
+        get() = DashboardCards.staleWarningText(snapshot)
+
     companion object {
         /** 超过这个秒数就提示"数据可能已过期"。 */
         const val STALE_AFTER_SECONDS: Double = 15.0

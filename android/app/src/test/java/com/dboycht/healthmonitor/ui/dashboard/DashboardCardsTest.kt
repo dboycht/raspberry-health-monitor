@@ -6,6 +6,7 @@ import com.dboycht.healthmonitor.domain.MonitorSnapshot
 import com.dboycht.healthmonitor.domain.Severity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -162,8 +163,7 @@ class DashboardCardsTest {
     }
 
     @Test
-    fun `正常数值原样显示_室温湿度合并在同一张卡`() {
-        val cards = DashboardCards.build(
+    fun `正常数值原样显示_室温湿度合并在同一张卡`() {        val cards = DashboardCards.build(
             snapshot(
                 CurrentDataDto(
                     ts = 1.0,
@@ -190,5 +190,44 @@ class DashboardCardsTest {
         assertEquals("-- / --", room.value)
         assertFalse(room.value.contains("0"))
         assertEquals("未知", room.statusText)
+    }
+
+    // -----------------------------------------------------------------------
+    // 协议 §4.1 第四条：服务端说"数据已过期"要提示（与本机请求失败是两件事）
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `data_stale 为真时给出过期提示_并带上秒数`() {
+        val snap = snapshot(CurrentDataDto(ts = 1.0, data_stale = true, data_age_s = 42.0))
+        val text = DashboardCards.staleWarningText(snap)
+        assertNotNull(text)
+        assertEquals("数据可能已过期：最近 42 秒无新数据", text)
+    }
+
+    @Test
+    fun `data_stale 为真且分钟级时用分钟表述`() {
+        val snap = snapshot(CurrentDataDto(ts = 1.0, data_stale = true, data_age_s = 600.0))
+        assertEquals("数据可能已过期：最近 10 分钟无新数据", DashboardCards.staleWarningText(snap))
+    }
+
+    @Test
+    fun `从未读到数据时给出不可用提示_而不是编个秒数`() {
+        val snap = snapshot(CurrentDataDto(ts = 1.0, data_stale = true, data_age_s = null))
+        assertEquals("数据不可用：树莓派尚未读到任何传感器数据", DashboardCards.staleWarningText(snap))
+    }
+
+    @Test
+    fun `data_stale 为假时不提示_阈值由服务端决定不自己猜`() {
+        // 即使本机看到的年龄很大，服务端没说 stale 就**不**提示——
+        // 阈值（设备数 × 3 × 最长周期）在树莓派端可配，客户端不该复制一套逻辑。
+        val snap = snapshot(CurrentDataDto(ts = 1.0, data_stale = false, data_age_s = 999.0))
+        assertNull(DashboardCards.staleWarningText(snap))
+    }
+
+    @Test
+    fun `旧版服务端没有 data_stale 字段时按不陈旧处理_且不崩`() {
+        val snap = snapshot(CurrentDataDto(ts = 1.0))
+        assertFalse(snap.dataStale)
+        assertNull(DashboardCards.staleWarningText(snap))
     }
 }

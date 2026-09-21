@@ -26,6 +26,7 @@ object AlarmCatalog {
         "sos_pressed" to "紧急求助",
         "sensor_fault" to "传感器故障",
         "device_offline" to "设备离线",
+        "system_start" to "系统已启动",
         "all_clear" to "已恢复正常",
     )
 
@@ -44,6 +45,7 @@ object AlarmCatalog {
         "sos_pressed" to Severity.CRITICAL,
         "sensor_fault" to Severity.WARNING,
         "device_offline" to Severity.WARNING,
+        "system_start" to Severity.INFO,
         "all_clear" to Severity.NORMAL,
     )
 

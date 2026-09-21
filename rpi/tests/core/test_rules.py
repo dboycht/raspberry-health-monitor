@@ -274,6 +274,24 @@ class TestSnapshotSummary(unittest.TestCase):
         self.assertEqual(s["ambient_temp_c"], 24.5)
         self.assertIsNone(s["body_temp_c"])
 
+    def test_新鲜度字段(self) -> None:
+        """★ 让手机端能区分"没有数据"与"数据是旧的"。
+
+        没有这两个字段时，App 只能看到一堆 null，无法判断是"传感器没接"还是
+        "整个采集早就停了"——后一种情况需要立刻提醒用户。
+        """
+        never = ReadingSnapshot(ts=1000.0)
+        self.assertIsNone(never.health_summary()["data_age_s"])
+        self.assertTrue(never.data_stale, "从未读到过数据 ⇒ 必须判为陈旧")
+
+        fresh = ReadingSnapshot(ts=1000.0, data_age_s=1.5, data_stale_after_s=27.0)
+        self.assertFalse(fresh.data_stale)
+        self.assertEqual(fresh.health_summary()["data_age_s"], 1.5)
+
+        old = ReadingSnapshot(ts=1000.0, data_age_s=120.0, data_stale_after_s=27.0)
+        self.assertTrue(old.data_stale, "超过阈值必须判为陈旧")
+        self.assertTrue(old.health_summary()["data_stale"])
+
 
 class TestThresholdValidation(unittest.TestCase):
     def test_阈值上下限颠倒要报错(self) -> None:

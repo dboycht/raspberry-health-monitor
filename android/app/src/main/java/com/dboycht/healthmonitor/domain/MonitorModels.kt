@@ -64,6 +64,10 @@ data class MonitorSnapshot(
     val motionSilentSeconds: Double? = null,
     /** 设备名 → 连续失败次数。 */
     val sensorFailures: Map<String, Int> = emptyMap(),
+    /** 距最近一次成功读到新数据的秒数；null = 从未读到过。 */
+    val dataAgeSeconds: Double? = null,
+    /** 快照是否已不值得相信（树莓派那边判定的，**不是**本机请求失败）。 */
+    val dataStale: Boolean = false,
     /** 报警码 → 首次触发时间。 */
     val activeAlarms: Map<String, Double> = emptyMap(),
 ) {
@@ -94,6 +98,10 @@ data class MonitorSnapshot(
                 motionState = data.motion_state,
                 motionSilentSeconds = data.motion_silent_s,
                 sensorFailures = data.sensor_failures,
+                // 树莓派没给这个字段（旧版本）时，保守地按"只有真的没数据才算陈旧"处理：
+                // 服务端说得明确就听服务端的，没说不许自己瞎猜。
+                dataAgeSeconds = data.data_age_s,
+                dataStale = data.data_stale ?: false,
                 activeAlarms = response.active_alarms,
             )
         }

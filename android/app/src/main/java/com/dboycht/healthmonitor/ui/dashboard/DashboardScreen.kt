@@ -45,6 +45,7 @@ fun DashboardScreen(
 ) {
     val cards = DashboardCards.build(state.snapshot)
     val sensorWarning = DashboardCards.sensorWarningText(state.snapshot)
+    val serverStaleWarning = state.serverStaleWarning
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -74,6 +75,15 @@ fun DashboardScreen(
             item {
                 Column(Modifier.padding(horizontal = 14.dp)) {
                     WarningStrip(text = "⚠ $sensorWarning", severity = Severity.WARNING)
+                }
+            }
+        }
+
+        if (serverStaleWarning != null) {
+            // 协议 §4.1 第四条：服务端说"数据已过期"就提示（与本机请求失败是两件事）。
+            item {
+                Column(Modifier.padding(horizontal = 14.dp)) {
+                    WarningStrip(text = "⚠ $serverStaleWarning", severity = Severity.WARNING)
                 }
             }
         }

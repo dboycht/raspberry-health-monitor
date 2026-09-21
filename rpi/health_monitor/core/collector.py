@@ -220,6 +220,15 @@ class Collector:
             if silent is not None:
                 snap.motion_silent_s = silent
 
+        # ---- 新鲜度（给手机端看"服务在跑但数据是不是旧的"）----
+        # 阈值刻意用"所有设备都至少该更新过一轮"的尺度：设备数 × 3 × 最长周期。
+        # 这样单个慢器件（如 3 秒周期的 DHT11）不会立刻把整份快照判成陈旧。
+        newest = [e.last_ok_ts for e in self.entries.values() if e.last_ok_ts is not None]
+        snap.data_age_s = (now - max(newest)) if newest else None
+        if self.entries:
+            longest = max(e.interval for e in self.entries.values())
+            snap.data_stale_after_s = max(10.0, len(self.entries) * self.stale_factor * longest)
+
         snap.sensor_failures = failures
         snap.sensor_errors = errors
         return snap

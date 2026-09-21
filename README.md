@@ -75,6 +75,19 @@ python3 -m health_monitor serve --real --port 8080
 **接线与引脚**：见 [`hardware/01-引脚分配表.md`](hardware/01-引脚分配表.md) 与
 [`hardware/02-接线图.md`](hardware/02-接线图.md)。
 
+**接完线请跑硬件验收测试单**（逐项过关，失败时直接给出"下一步查什么"）：
+
+```bash
+cd ~/raspberry-health-monitor/rpi
+sudo python3 scripts/hardware_test.py              # 全量（会响蜂鸣器/闪灯，需你目视确认）
+python3 scripts/hardware_test.py --skip-output     # 跳过发声/闪灯的项目
+python3 scripts/hardware_test.py --json report.json  # 同时导出机器可读报告
+```
+
+它会检查：平台 → 内核设备节点（`/dev/i2c-1`、`/dev/spidev0.0`、gpiochip）→ 依赖库 →
+**I2C 扫描**（能否看到 0x57 与 0x27）→ 逐器件**数值合理性**（心率 40~180、体温 15~45 等）→
+输出器件（LED/LCD/蜂鸣器/音箱/按键，需人工确认）。
+
 ## 3. 目录结构（谁该看哪个文件）
 
 ```
@@ -168,6 +181,8 @@ raspberry-health-monitor/
 | --- | --- |
 | `python -m health_monitor selfcheck --mock` | 不接硬件的代码链路体检 |
 | `python -m health_monitor selfcheck --real` | 真实硬件体检（树莓派上跑） |
+| `sudo python3 scripts/hardware_test.py` | **真机验收测试单**（逐项过关 + 失败时给排查命令） |
+| `python scripts/validate.py` | 提交前 8 项检查（体检 / 引脚冲突 / 单测 / 演示） |
 | `python -m health_monitor serve --mock` | 模拟模式起服务（PC 上联调安卓端） |
 | `python -m health_monitor serve --real` | 正式运行 |
 | `python -m health_monitor demo` | 一键演完整个报警链路 |
@@ -185,12 +200,12 @@ raspberry-health-monitor/
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **8 项全 PASS** |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **426 passed, 1 skipped, 170 subtests** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **429 passed, 1 skipped, 170 subtests** |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
 | 驱动注册表 | `python -m health_monitor drivers` | 11 个驱动全部可构造 |
 | 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
-| 安卓端单元测试 | 见 `docs/06-安卓开发指南.md` 的构建命令 | **73 passed** |
-| 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.25 MB |
+| 安卓端单元测试 | 见 `docs/06-安卓开发指南.md` 的构建命令 | **78 passed** |
+| 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.86 MB |
 
 > ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**。真实器件读数、真实 I2C/SPI 时序、
 > 蓝牙音箱配对、手机与树莓派的真实局域网往返**都还没验过**——
