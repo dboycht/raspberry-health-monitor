@@ -1,11 +1,16 @@
 # 构建产物与本机配置：不入库
-build/
-.gradle/
-local.properties
-.cxx/
+#
+# ⚠️ 模式一律**加前导斜杠**锚定到本目录（android/）：
+#    `build/` 会匹配任意层级的 build 目录（本项目里没有别的 build 源码目录，
+#    但仍统一锚定，避免将来新增 `app/src/.../build/` 之类目录时被静默忽略）；
+#    `data/` 更是踩过的坑——它曾把 `.../healthmonitor/data/*.kt` 整个源码包忽略掉。
+/build/
+/.gradle/
+/local.properties
+/.cxx/
+/.idea/
+/captures/
 *.iml
-.idea/
-captures/
 *.apk
 *.aab
 *.keystore

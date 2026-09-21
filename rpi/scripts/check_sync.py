@@ -86,10 +86,64 @@ def compare(dev: Dict[str, Path], dst: Dict[str, Path], check_hash: bool) -> Tup
     return only_dev, only_dst, differing
 
 
+def check_git_ignored(target: Path) -> List[str]:
+    """★ 入库验收：找出"存在、本该入库、却被 .gitignore 忽略"的文件。
+
+    为什么必须有这条检查（2026-09-21 真实事故）
+    ------------------------------------------
+    根 `.gitignore` 里写了没加前导斜杠的 `data/`，于是它匹配了**任意层级**的 data 目录，
+    把 `android/app/src/**/healthmonitor/data/*.kt`（安卓数据层 8 个源码 + 2 个测试）
+    整包忽略掉了。表现是：
+      - `git status` 干净、本地单测全绿、同步脚本也"一致"；
+      - **干净 checkout 却缺文件** —— GitHub Actions 的文档一致性检查才把它抓出来
+        （`android/README.md` 引用的 `data/UrlNormalizerTest.kt` 在仓库里不存在）。
+    根因是"忽略规则的匹配范围"，而**唯一可靠的判据就是问 git 本人**：
+    `git status --porcelain --ignored` 会把被忽略的路径列出来，再按白名单过滤掉
+    构建产物/运行数据，剩下的就是"被误忽略的源码"。
+    """
+    problems: List[str] = []
+    if not (target / ".git").exists():
+        return [f"目标不是 git 仓库（缺少 .git）：{target}"]
+
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "status", "--porcelain", "--ignored"],
+        cwd=str(target), capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if proc.returncode != 0:
+        return [f"无法读取 git 状态：{proc.stderr.strip()[:200]}"]
+
+    #: 被忽略但**正常**的东西（构建产物 / 运行数据 / 本地配置 / 开发文档）
+    allowed_dir_parts = {
+        "build", ".gradle", "__pycache__", ".pytest_cache", "data", ".venv", "venv",
+        ".idea", ".vscode", "captures", ".cxx",
+    }
+    allowed_suffix = {".pyc", ".db", ".log", ".apk", ".aab", ".keystore", ".jks", ".iml", ".db-journal"}
+    allowed_names = {"local.properties", "DEVELOPMENT.md", "ERROR.md", "HANDOVER.md", "devices.local.json"}
+
+    for line in proc.stdout.splitlines():
+        if not line.startswith("!! "):
+            continue
+        rel = line[3:].strip().strip('"')
+        name = rel.rsplit("/", 1)[-1]
+        parts = set(rel.split("/"))
+        if name in allowed_names or any(rel.endswith(s) for s in allowed_suffix):
+            continue
+        if parts & allowed_dir_parts:
+            continue
+        problems.append(
+            f"被 .gitignore 忽略但看起来是源码/文档：{rel}"
+            "（多半是忽略模式太宽，比如 `data/` 会匹配任意层级；改成 `/data/` 锚定到仓库根）"
+        )
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="开发副本 ↔ canonical 同步验收")
     parser.add_argument("--target", default=str(DEFAULT_TARGET), help="canonical 仓库路径")
     parser.add_argument("--hash", action="store_true", help="同时比对内容哈希（更严格）")
+    parser.add_argument("--no-git", action="store_true", help="跳过 git 忽略项检查")
     args = parser.parse_args()
 
     target = Path(args.target)
@@ -127,12 +181,23 @@ def main() -> int:
         for rel in differing:
             print(f"   - {rel}")
 
+    # 入库验收：存在但被忽略的文件（只有在目标是 git 仓库时才做）
+    if not args.no_git and (target / ".git").exists():
+        ignored = check_git_ignored(target)
+        if ignored:
+            problems += len(ignored)
+            print(f"\n❌ 存在但**被 .gitignore 忽略**（本地有、干净 checkout 没有 ⇒ CI 会红）：{len(ignored)} 个")
+            for item in ignored:
+                print(f"   - {item}")
+        else:
+            print("\n✅ 忽略项检查通过：没有被误忽略的源码/文档")
+
     print("-" * 78)
     if problems == 0:
         print(f"✅ 两侧一致（{'含内容哈希' if args.hash else '仅按文件清单'}比对）")
         print("   提醒：canonical 里 `git status --porcelain` 应当为空；有变更就 commit + push。")
         return 0
-    print(f"⚠️ 共 {problems} 处差异（其中「只在开发副本里」的那一类是必须修的）")
+    print(f"⚠️ 共 {problems} 处差异（其中「只在开发副本里」与「被误忽略」这两类是必须修的）")
     return 1
 
 

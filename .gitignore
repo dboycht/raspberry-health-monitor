@@ -1,29 +1,36 @@
 # 运行数据与本地配置（**绝不入库**）
-data/
+#
+# ⚠️ 一律**加前导斜杠**锚定到仓库根：
+#    `data/` 这种写法会匹配**任意层级**的 data 目录，曾把
+#    `android/app/src/**/healthmonitor/data/*.kt`（安卓的数据层与测试包）整包忽略，
+#    表现为"工作树里明明有文件，git ls-files 里却没有"——
+#    本地一切正常、干净 checkout 里 CI 却报"文档引用的文件不存在"。
+#    同类事故在本项目历史上出现过一次（python 侧 `data/` 曾误伤 `src/data/`）。
+/data/
 *.db
 *.db-journal
 *.sqlite3
-logs/
+/logs/
 *.log
 
 # 本地覆盖配置（每人机器的引脚可能不同；示例文件 devices.example.json 才入库）
-config/devices.local.json
+/config/devices.local.json
 
 # Python
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
-venv/
+/.venv/
+/venv/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
 
 # 开发文档（按项目约定：只留开发副本，不上传 GitHub）
-DEVELOPMENT.md
-ERROR.md
-HANDOVER.md
-docs/TODO.md
+/DEVELOPMENT.md
+/ERROR.md
+/HANDOVER.md
+/docs/TODO.md
 
 # 编辑器 / 系统
 .vscode/
