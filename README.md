@@ -205,15 +205,16 @@ raspberry-health-monitor/
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **9 项全 PASS** |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **445 passed, 1 skipped, 170 subtests** |
-| 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | **Ran 446 tests, OK (skipped=1)** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **466 passed, 1 skipped, 170 subtests** |
+| 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
 | 驱动注册表 | `python -m health_monitor drivers` | 11 个驱动全部可构造 |
 | 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
-| 文档一致性 | `python scripts/check_docs.py` | 19 份文档链接可解析；报警码三方一致 |
+| 文档一致性 | `python scripts/check_docs.py` | 20 份文档链接可解析；报警码三方一致 |
+| 同步 + 入库验收 | `python scripts/check_sync.py --hash` | 两侧文件一致；无误忽略源码 |
 | 安卓端单元测试 | 见 `docs/06-安卓开发指南.md` 的构建命令 | **78 passed** |
 | 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.31 MB |
-| CI | `.github/workflows/checks.yml` | 每次推送自动跑上面两套（无硬件） |
+| CI | `.github/workflows/checks.yml` | 每次推送自动跑上面两套（无硬件）；最近一次 **success** |
 
 > ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**。真实器件读数、真实 I2C/SPI 时序、
 > 蓝牙音箱配对、手机与树莓派的真实局域网往返**都还没验过**——
