@@ -209,6 +209,15 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _respond_html(self, status: int, text: str) -> None:
+        body = text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802 - 标准库约定的方法名
         self._dispatch("GET")
 
@@ -223,12 +232,54 @@ class _Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
         headers = {k.lower(): v for k, v in self.headers.items()}
+
+        # 状态网页（GET /）与 /index.html：给人看的 HTML，不走 JSON 路由
+        if method == "GET" and parsed.path in ("/", "/index.html", "/status"):
+            status_code, page = _render_status_page(self.api)
+            self._respond_html(status_code, page)
+            return
+
         status, payload = self.api.handle(method, parsed.path, query, headers)
         self._respond(status, payload)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         """默认实现会往 stderr 打日志；这里降级为 debug，避免刷屏。"""
         _LOG.debug("%s - %s", self.address_string(), fmt % args)
+
+
+def _render_status_page(api: WebApi) -> Tuple[int, str]:
+    """渲染状态网页；**渲染失败也必须给出可读页面**（不能让 / 直接 500 空白）。"""
+    if api.token:
+        return 401, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>需要令牌</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>需要访问令牌</h1>"
+            "<p>本服务启用了 <code>--token</code>；状态网页不提供令牌输入框（避免把口令写进浏览器历史）。</p>"
+            "<p>请改用手机 App 或在请求头带 <code>X-Auth-Token</code> 访问 <code>/api/v1/current</code>。</p>"
+            "</body></html>"
+        )
+    try:
+        from .webui import render_page
+
+        return 200, render_page(api.runtime)
+    except Exception as exc:  # noqa: BLE001 - 网页渲染失败不能影响 API
+        _LOG.exception("状态网页渲染失败")
+        return 500, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>页面渲染失败</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>状态页渲染失败</h1>"
+            f"<p>原因：{esc(str(exc))}</p>"
+            "<p>JSON 接口仍然可用：<code>/api/v1/current</code>、<code>/api/v1/health</code></p>"
+            "</body></html>"
+        )
+
+
+def esc(text: str) -> str:
+    """最小 HTML 转义（渲染失败页用，避免把异常信息里的尖括号当标签）。"""
+    return (
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def make_server(api: WebApi, host: str = "0.0.0.0", port: int = 8080) -> ThreadingHTTPServer:

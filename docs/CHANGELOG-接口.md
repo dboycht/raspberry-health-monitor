@@ -34,6 +34,9 @@
 
 ### ADDED（同版本内的增量，向后兼容）
 
+- `net/webui.py` + `GET /`（同 `/status`、`/index.html`）：**状态网页**（HTML，只读，无外链依赖）。
+  JSON 接口行为**完全未变**；手机 App 不需要它。带 `--token` 时该页返回 401 且不提供口令输入框。
+
 - `core/rules.py` 的 `ReadingSnapshot` 增加 **`data_age_s`（`float | None`，默认 `None`）** 与
   **`data_stale_after_s`（`float`，默认 30.0）**，并新增只读属性 **`data_stale`**；
   `health_summary()` 的返回里相应多出 **`data_age_s`** 与 **`data_stale`** 两个字段。

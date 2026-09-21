@@ -37,7 +37,8 @@ python -m health_monitor demo
 
 # ③ 起一个可以配合手机 App 的服务（模拟数据）
 python -m health_monitor serve --mock
-#    然后浏览器打开 http://127.0.0.1:8080/api/v1/current
+#    然后浏览器打开 http://127.0.0.1:8080/            ← 状态网页（答辩现场可视化）
+#    或 http://127.0.0.1:8080/api/v1/current          ← JSON 接口
 ```
 
 跑测试：

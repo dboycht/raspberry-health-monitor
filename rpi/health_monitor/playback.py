@@ -90,7 +90,12 @@ class _SimBase(Device):
 
 
 class SimVitals(_SimBase):
-    """模拟 MAX30102 心率血氧：60~90 bpm 缓慢波动。"""
+    """模拟 MAX30102 心率血氧。
+
+    ⚠️ 语义（2026-09-21 修正）：**显式设定过的心率/血氧会被固定住**，只叠加很小的噪声。
+    早前版本无论设成什么值都会按时间正弦"飘回去"，导致剧本写了 `set_vitals(hr=128)`
+    却仍然显示 72 —— 那是**自欺**：演示看起来"没反应"，排查半天才发现是模拟器把值盖了。
+    """
 
     KIND = DeviceKind.VITAL
     NAME = "max30102"
@@ -100,6 +105,8 @@ class SimVitals(_SimBase):
         self.hr: Optional[float] = 72.0
         self.spo2: Optional[float] = 98.0
         self.finger: bool = True
+        self._hr_pinned: bool = True     # 初始值即"已设定"，默认保持 72
+        self._spo2_pinned: bool = True
 
     def read(self) -> VitalSignsSample:
         self._require_open()
@@ -108,12 +115,18 @@ class SimVitals(_SimBase):
             # 未贴合手指时**必须**是 None（不能编一个数出来）
             return VitalSignsSample(device=self.name, heart_rate_bpm=None, spo2_percent=None, finger_detected=False)
         t = time.time() - self._t0
-        hr = self.hr if self.hr is not None else 72.0 + 4.0 * math.sin(t / 7.0)
-        spo2 = self.spo2 if self.spo2 is not None else 98.0 - 0.3 * abs(math.sin(t / 9.0))
+        if self.hr is not None:
+            hr = self.hr
+        else:
+            hr = 72.0 + 4.0 * math.sin(t / 7.0)      # 未指定时给"缓慢波动"的合成值
+        if self.spo2 is not None:
+            spo2 = self.spo2
+        else:
+            spo2 = 98.0 - 0.3 * abs(math.sin(t / 9.0))
         return VitalSignsSample(
             device=self.name,
-            heart_rate_bpm=round(hr + self._rng.uniform(-1.0, 1.0), 1),
-            spo2_percent=round(min(100.0, spo2 + self._rng.uniform(-0.4, 0.4)), 1),
+            heart_rate_bpm=round(hr + self._rng.uniform(-0.8, 0.8), 1),
+            spo2_percent=round(min(100.0, spo2 + self._rng.uniform(-0.3, 0.3)), 1),
             finger_detected=True,
             quality=0.95,
         )
@@ -133,8 +146,8 @@ class SimBodyTemp(_SimBase):
     def read(self) -> PrecisionTempSample:
         self._require_open()
         self._maybe_fail()
-        t = time.time() - self._t0
-        temp = self.temperature_c + 0.15 * math.sin(t / 11.0)
+        # 设定值即固定值（只叠加极小噪声）——剧本要能可靠地控制读数
+        temp = self.temperature_c + self._rng.uniform(-0.05, 0.05)
         voltage = 0.75 + (temp - 25.0) * 0.010        # TMP36：10mV/°C，25°C 时 750mV
         raw = int(round(voltage / self.vref * 1023.0))
         return PrecisionTempSample(
@@ -157,11 +170,11 @@ class SimAmbient(_SimBase):
     def read(self) -> AmbientSample:
         self._require_open()
         self._maybe_fail()
-        t = time.time() - self._t0
+        # 同上：设定值即固定值（只叠加极小噪声），剧本可控
         return AmbientSample(
             device=self.name,
-            temperature_c=round(self.temperature_c + 0.5 * math.sin(t / 30.0), 1),
-            humidity_percent=round(self.humidity_percent + 2.0 * math.cos(t / 25.0), 1),
+            temperature_c=round(self.temperature_c + self._rng.uniform(-0.1, 0.1), 1),
+            humidity_percent=round(self.humidity_percent + self._rng.uniform(-0.5, 0.5), 1),
         )
 
 
