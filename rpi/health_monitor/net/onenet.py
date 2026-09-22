@@ -64,6 +64,13 @@ _LOG = logging.getLogger(__name__)
 #: token 算法固定的版本号（平台规定，目前仅支持这一个取值）[文档]
 TOKEN_VERSION = "2018-10-31"
 
+#: 本适配器支持的产品线（**已与需求方确认 = legacy**）。
+#: 加这个开关的目的：一旦有人把 Studio（新版物模型）的参数填进来，
+#: 能**立刻**报错并说清原因，而不是"连上了但数据流一个都不出现"（那种最难查）。
+PLATFORM_LEGACY = "legacy"     # 旧版 MQTT物联网套件 / 多协议接入（数据流-数据点）← 本项目用这套
+PLATFORM_STUDIO = "studio"     # OneNET Studio（新版物模型 OneJSON）—— 需要另写适配器
+SUPPORTED_PLATFORMS = (PLATFORM_LEGACY,)
+
 #: 平台默认地址 [文档]
 DEFAULT_HOST_PLAIN = "mqtts.heclouds.com"
 DEFAULT_HOST_TLS = "mqttstls.heclouds.com"
@@ -167,6 +174,10 @@ class OneNetConfig:
     """
 
     enabled: bool = False
+    #: 产品线版本：``legacy`` = 旧版 MQTT物联网套件（数据流-数据点，本项目用这套）；
+    #: ``studio`` = OneNET Studio（物模型 OneJSON）——**本适配器不支持**，填了会明确报错。
+    #: 判据（怎么知道自己是哪套）：建产品时**有没有让你"定义物模型/属性"** —— 有 = studio。
+    platform: str = PLATFORM_LEGACY
     #: 产品 ID（控制台里那串数字）
     product_id: str = ""
     #: 设备名称（同一产品内唯一；推荐用设备的 MAC / SN）
@@ -211,7 +222,12 @@ class OneNetConfig:
 
     def validate(self) -> None:
         if not self.enabled:
+            # 即使未启用，也拦住"平台版本填错"这种会在联调时浪费半天的错误
+            if self.platform not in SUPPORTED_PLATFORMS:
+                raise OneNetError(self._platform_hint())
             return
+        if self.platform not in SUPPORTED_PLATFORMS:
+            raise OneNetError(self._platform_hint())
         missing = [n for n, v in (("product_id", self.product_id), ("device_name", self.device_name)) if not v]
         if missing:
             raise OneNetError(f"onenet.enabled=true 但缺少必填项：{', '.join(missing)}")
@@ -240,6 +256,20 @@ class OneNetConfig:
         import os
 
         return os.environ.get(self.key_env) or self.access_key
+
+    @staticmethod
+    def _platform_hint() -> str:
+        """平台版本填错时的提示（把"两套产品线的差异"讲清楚，别让人猜）。"""
+        return (
+            f"onenet.platform 只支持 {SUPPORTED_PLATFORMS}（= 旧版 MQTT物联网套件 / 多协议接入，"
+            "数据流-数据点），当前填的是 studio。\n"
+            "  → OneNET Studio 用的是**物模型 OneJSON**（`params.xxx.value`），"
+            "topic 与 payload 都与本适配器不同，不能直接混用。\n"
+            "  → 怎么判断自己在哪套平台：建产品时**有没有让你'定义物模型/属性'** —— "
+            "有 = Studio；没有、直接建设备 = 旧版（本适配器）。\n"
+            "  → 如果你们确实在 Studio 上：把平台切到旧版（新建一个'多协议接入'产品），"
+            "或让负责同学按 OneJSON 另写一个适配器（鉴权函数 sign_token 可以直接复用）。"
+        )
 
     def resolved_host(self) -> str:
         if self.host:

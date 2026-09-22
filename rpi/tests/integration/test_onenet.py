@@ -257,6 +257,39 @@ class TestOneNetConfig(unittest.TestCase):
             OneNetConfig.from_dict({"enable": True})
         self.assertIn("enable", str(ctx.exception))
 
+    def test_默认平台是legacy(self) -> None:
+        """本项目已与需求方确认用**旧版 MQTT物联网套件**（数据流-数据点）。
+
+        默认值必须是 legacy —— 免得有人照文档填了配置却因为版本不对而"连上了但没数据"。
+        """
+        from health_monitor.net.onenet import PLATFORM_LEGACY
+
+        self.assertEqual(OneNetConfig().platform, PLATFORM_LEGACY)
+        self.assertEqual(make_config().platform, PLATFORM_LEGACY)
+
+    def test_填了studio要明确报错并说明差异(self) -> None:
+        """★ 防"配错版本默默不上数据"：Studio 是另一套上报格式，必须**大声报错**。
+
+        判据：异常消息里要同时出现
+        ① 不支持的原因、② 两套的差异（OneJSON vs 数据点）、③ 怎么判断自己在哪套平台。
+        """
+        from health_monitor.net.onenet import PLATFORM_STUDIO
+
+        with self.assertRaises(OneNetError) as ctx:
+            make_config(platform=PLATFORM_STUDIO)
+        message = str(ctx.exception)
+        self.assertIn("studio", message)
+        self.assertIn("OneJSON", message, "要说清 Studio 用的是物模型 OneJSON")
+        self.assertIn("物模型", message, "要给出判断自己平台版本的方法")
+        self.assertIn("数据流", message, "要说明本适配器支持的是数据流-数据点")
+
+    def test_未启用时也会拦住版本填错(self) -> None:
+        """版本错误属于配置错误，**未启用也要拦**（否则联调时才发现，白费半天）。"""
+        from health_monitor.net.onenet import PLATFORM_STUDIO
+
+        with self.assertRaises(OneNetError):
+            OneNetConfig.from_dict({"enabled": False, "platform": PLATFORM_STUDIO})
+
     def test_token由配置生成且含设备res(self) -> None:
         cfg = make_config()
         token = cfg.make_token(now=DOC_ET)

@@ -237,7 +237,7 @@ raspberry-health-monitor/
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **9 项全 PASS** |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **500 passed, 1 skipped, 177 subtests** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **503 passed, 1 skipped, 177 subtests** |
 | 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
 | 驱动注册表 | `python -m health_monitor drivers` | 11 个驱动全部可构造 |

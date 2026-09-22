@@ -46,6 +46,8 @@ from health_monitor.net.onenet import (  # noqa: E402
     DEFAULT_HOST_TLS,
     DEFAULT_PORT_PLAIN,
     DEFAULT_PORT_TLS,
+    PLATFORM_LEGACY,
+    PLATFORM_STUDIO,
     OneNetError,
     device_resource,
     product_resource,
@@ -121,12 +123,25 @@ def main() -> int:
     parser.add_argument("--ttl", type=int, default=86400, help="有效期秒数（默认 86400=1 天）")
     parser.add_argument("--product-level", action="store_true",
                         help="生成产品级 token（res=products/{pid}，用于调用平台 API，不能用于设备连接）")
+    parser.add_argument("--platform", default=PLATFORM_LEGACY, choices=[PLATFORM_LEGACY, PLATFORM_STUDIO],
+                        help="产品线：legacy=旧版 MQTT物联网套件（数据流-数据点，本项目用的）；"
+                             "studio=OneNET Studio（物模型，本适配器不支持，仅生成 token 供参考）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出（便于脚本消费）")
     parser.add_argument("--selftest", action="store_true", help="只跑算法自检")
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
+
+    if args.platform == PLATFORM_STUDIO:
+        print("⚠️ 你选了 studio（OneNET Studio，物模型 OneJSON）。")
+        print("   本项目的适配器只支持旧版「MQTT物联网套件」（数据流-数据点），")
+        print("   两者**鉴权算法相同、上报 topic 与 payload 不同**：")
+        print("     - legacy：$sys/{pid}/{device}/dp/post/json，报文 {id, dp:{流:[{v,t}]}}")
+        print("     - studio：物模型属性/事件/服务主题，报文 params.xxx.value（OneJSON）")
+        print("   下面仍然按同样的算法生成 token（算法两套通用），但**上报格式需要另写适配器**。")
+        print("   判断自己在哪套平台：建产品时有没有让你'定义物模型/属性' —— 有=studio。")
+        print("-" * 78)
 
     key = args.key or os.environ.get(args.key_env, "")
     if not key:
@@ -148,6 +163,12 @@ def main() -> int:
 
     now = int(time.time())
     result = {
+        "platform": args.platform,
+        "platform_note": (
+            "旧版 MQTT物联网套件（数据流-数据点）—— 本项目支持"
+            if args.platform == PLATFORM_LEGACY
+            else "OneNET Studio（物模型 OneJSON）—— 本项目**不支持**上报格式，需另写适配器"
+        ),
         "host": DEFAULT_HOST_PLAIN,
         "port": DEFAULT_PORT_PLAIN,
         "tls_host": DEFAULT_HOST_TLS,

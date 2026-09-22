@@ -21,7 +21,7 @@
     "vitals": {
       "driver": "max30102",
       "enabled": true,
-      "read_interval_s": 1.0,
+      "read_interval_s": 1,
       "params": {
         "bus": 1,
         "address": 87,
@@ -31,19 +31,19 @@
     "body_temp": {
       "driver": "tmp36",
       "enabled": true,
-      "read_interval_s": 2.0,
+      "read_interval_s": 2,
       "params": {
         "spi_bus": 0,
         "spi_device": 0,
         "channel": 0,
         "vref": 3.3,
-        "calibration_offset_c": 0.0
+        "calibration_offset_c": 0
       }
     },
     "ambient": {
       "driver": "dht11",
       "enabled": true,
-      "read_interval_s": 3.0,
+      "read_interval_s": 3,
       "params": {
         "pin": 4
       }
@@ -59,7 +59,7 @@
     "display": {
       "driver": "lcd1602",
       "enabled": true,
-      "read_interval_s": 1.0,
+      "read_interval_s": 1,
       "params": {
         "bus": 1,
         "address": 0,
@@ -70,7 +70,7 @@
     "speaker": {
       "driver": "bt_speaker",
       "enabled": true,
-      "read_interval_s": 1.0,
+      "read_interval_s": 1,
       "params": {
         "engine": "espeak-ng",
         "rate": 150
@@ -79,7 +79,7 @@
     "alarm_buzzer": {
       "driver": "buzzer",
       "enabled": true,
-      "read_interval_s": 1.0,
+      "read_interval_s": 1,
       "params": {
         "pin": 18
       }
@@ -87,7 +87,7 @@
     "status_led": {
       "driver": "led",
       "enabled": true,
-      "read_interval_s": 1.0,
+      "read_interval_s": 1,
       "params": {
         "pins": {
           "green": 22,
@@ -102,18 +102,49 @@
       "read_interval_s": 0.2,
       "params": {
         "pin": 27,
-        "long_press_s": 1.0
+        "long_press_s": 1
       }
     },
     "distance": {
       "driver": "hc_sr04",
       "enabled": false,
       "optional": true,
-      "read_interval_s": 5.0,
+      "read_interval_s": 5,
       "params": {
         "trig_pin": 5,
         "echo_pin": 6
       }
     }
+  },
+  "mqtt": {
+    "enabled": false,
+    "host": "",
+    "port": 1883,
+    "topic_prefix": "health/room1",
+    "client_id": "raspi-health-monitor",
+    "username": "",
+    "password": "",
+    "interval_s": 30,
+    "qos": 0,
+    "keepalive": 60
+  },
+  "onenet": {
+    "enabled": false,
+    "platform": "legacy",
+    "product_id": "",
+    "device_name": "",
+    "access_key": "",
+    "method": "sha256",
+    "token_ttl_s": 86400,
+    "host": "",
+    "port": 0,
+    "tls": false,
+    "keepalive": 120,
+    "interval_s": 30,
+    "topic_template": "/{pid}/{device}/dp/post/json",
+    "subscribe_result": true,
+    "qos": 1,
+    "publish_alarm": true,
+    "publish_status": true
   }
 }

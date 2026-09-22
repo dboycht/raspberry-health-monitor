@@ -380,6 +380,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # 密钥请用环境变量 HEALTH_ONENET_KEY，不要写进仓库。
     "onenet": {
         "enabled": False,
+        # 平台版本：**legacy = 旧版 MQTT物联网套件（数据流-数据点）← 本项目用这套**
+        # 另一套 OneNET Studio（物模型 OneJSON）不支持，填了会明确报错并说明差异。
+        "platform": "legacy",
         "product_id": "",
         "device_name": "",
         "access_key": "",

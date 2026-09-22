@@ -34,6 +34,20 @@
 
 ### ADDED（同版本内的增量，向后兼容）
 
+- **OneNET 上云**（`net/onenet.py`，可选、默认关闭；2026-09-22 与需求方确认用**旧版**产品线）：
+  - 配置新增顶层字段 **`onenet`**（`AppConfig.onenet: dict`）；字段级解析与校验在
+    `net.onenet.OneNetConfig.from_dict`。校验规则：`enabled=true` 时 `product_id`/`device_name` 必填；
+    密钥需非空（可用环境变量 `HEALTH_ONENET_KEY` 提供）；`method ∈ {md5,sha1,sha256}`；
+    **`keepalive ∈ [10, 1800]`（平台限制）**；`topic_template` 必须含 `{pid}` 与 `{device}`。
+  - 新增 **`platform`** 字段（默认 `"legacy"` = 旧版 MQTT物联网套件，数据流-数据点）。
+    填 `"studio"`（OneNET Studio 物模型 OneJSON）会**明确报错**并打印两套的差异与判断方法——
+    刻意如此：配错版本的典型症状是"连接成功但数据流一个都不出现"，这是最难排查的一类。
+  - **兼容性**：老配置没有 `onenet` 段时行为不变（等价 `enabled=false`）；新增字段均有默认值。
+  - HTTP 新增 **`POST /api/v1/cloud/callback`**：接收 OneNET 规则引擎 HTTP 推送，
+    宽容接收（不校验字段）→ 留证最近 20 条 + 记日志 → 按平台约定回 `{"code":0,"msg":"ok"}`。
+    **只记录，不驱动报警**（避免"自己上报的数据被转发回来又触发报警"的自我环路）。
+  - `GET /api/v1/health` 新增 **`cloud`** 字段（`platform` / `warning` / `started`）。
+
 - `net/webui.py` + `GET /`（同 `/status`、`/index.html`）：**状态网页**（HTML，只读，无外链依赖）。
   JSON 接口行为**完全未变**；手机 App 不需要它。带 `--token` 时该页返回 401 且不提供口令输入框。
 
