@@ -130,6 +130,14 @@ MANIFEST: Dict[str, DriverSpec] = {
         "LED 状态指示（多色）", ("pins", "active_low"), "核心",
         notes="绿=正常/黄=注意/红=报警；每个 LED 串 220Ω~1kΩ 限流",
     ),
+    "tft_spi": DriverSpec(
+        "tft_spi", "health_monitor.outputs.tft_spi:TftSpi", DeviceKind.DISPLAY,
+        "SPI TFT 彩屏（ST7735S / ST7789 / ILI9341）",
+        ("controller", "spi_bus", "spi_device", "dc_pin", "reset_pin", "rotate", "bgr", "invert"),
+        "核心",
+        notes="课程清单里的『显示屏』；controller=auto 依次尝试三种控制器并画三色条供肉眼确认；"
+              "⚠️ CS 不要与 MCP3002 抢片选（本项目 MCP3002=CE0 / TFT 默认 CE1=脚 26）",
+    ),
     "button": DriverSpec(
         "button", "health_monitor.sensors.button:Button", DeviceKind.BUTTON,
         "按键（求救/消音/翻页）", ("pin", "bounce_s", "long_press_s", "pull_up"), "核心",

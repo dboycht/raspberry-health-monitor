@@ -328,6 +328,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "read_interval_s": 1.0,
             "params": {"bus": 1, "address": 0, "cols": 16, "rows": 2},
         },
+        "tft": {
+            "driver": "tft_spi",
+            "enabled": False,
+            "optional": True,
+            "read_interval_s": 2.0,
+            "params": {
+                "controller": "auto",
+                "spi_bus": 0,
+                "spi_device": 1,
+                "dc_pin": 24,
+                "reset_pin": 25,
+                "backlight_pin": -1,
+                "rotate": 90,
+                "baudrate": 24000000,
+            },
+        },
         "speaker": {
             "driver": "bt_speaker",
             "enabled": True,
