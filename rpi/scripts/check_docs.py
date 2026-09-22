@@ -47,6 +47,9 @@ ALLOW_MISSING = {
     "boot/firmware/config.txt",
     "/boot/firmware/config.txt",
     "~/Desktop/lab1b_bmp_iot_clean.py",   # 树莓派桌面上的课程示例（docs/10 引用）
+    "~/Desktop/lab1a_bmp280.py",          # 同上
+    "lab1a_bmp280.py",
+    "lab1b_bmp_iot_clean.py",
     # ⚠️ 本机覆盖配置：**按设计不入库**（含 OneNET 密钥等凭据，.gitignore 已忽略），
     #    所以仓库里永远找不到它 —— 文档里必须能讨论它，检查器不该报悬空。
     "config/devices.local.json",
