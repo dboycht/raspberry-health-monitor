@@ -36,4 +36,9 @@ jobs:
         working-directory: rpi
         env:
           PYTHONIOENCODING: utf-8
-        run: python -m unittest discover -s tests -q
+          # ⚠️ conftest.py 是 **pytest 专有**的，unittest 不会加载它，
+          # 所以这里显式给出 PYTHONPATH：让 `import health_monitor` 与 `import live_plot`
+          # （scripts/ 下的脚本模块）都能导入。
+          # 曾经因此出现"CI 红、本地绿"：tests/scripts 里 import live_plot 失败。
+          PYTHONPATH: ${{ github.workspace }}/rpi:${{ github.workspace }}/rpi/scripts
+        run: python -m unittest discover -s tests -v

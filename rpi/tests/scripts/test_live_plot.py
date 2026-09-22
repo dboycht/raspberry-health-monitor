@@ -12,11 +12,23 @@ GUI 窗口本身没法自动断言（要靠人眼），但脚本里真正容易�
 
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import live_plot
-from live_plot import ApiSource, Series
+# ⚠️ **测试必须自包含**：不能只依赖 conftest.py 改 sys.path ——
+# 那是 **pytest 专有**的钩子；用 `python -m unittest discover -s tests` 跑时不会加载它，
+# 于是 `import live_plot` 直接 ModuleNotFoundError（2026-09-22 CI 实测踩到，
+# 本地因为用 pytest 跑所以一直是绿的）。
+_RPI_DIR = Path(__file__).resolve().parents[2]      # .../rpi
+_SCRIPTS_DIR = _RPI_DIR / "scripts"
+for _path in (_RPI_DIR, _SCRIPTS_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+import live_plot  # noqa: E402  必须在 sys.path 处理之后导入
+from live_plot import ApiSource, Series  # noqa: E402
 
 
 class TestSeries(unittest.TestCase):
