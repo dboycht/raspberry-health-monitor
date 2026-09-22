@@ -153,17 +153,28 @@ _ILI9341_INIT: Tuple[Tuple[int, bytes, int], ...] = (
 )
 
 CONTROLLERS: Dict[str, ControllerSpec] = {
-    "st7735": ControllerSpec("st7735", 160, 128, col_offset=0, row_offset=0,
-                             madctl=0xC8, init=_ST7735_INIT, bgr=True),
+    # ⚠️ 命名规则：``st7735`` = **横屏 160×128**（多数 1.8" 模块的出厂朝向），
+    #             ``st7735_128x160`` = **竖屏 128×160**（丝印常写 "128*160"）
     "st7735_128x160": ControllerSpec("st7735_128x160", 128, 160, col_offset=0, row_offset=0,
                                      madctl=0xC0, init=_ST7735_INIT, bgr=True),
+    "st7735": ControllerSpec("st7735", 160, 128, col_offset=0, row_offset=0,
+                             madctl=0xC8, init=_ST7735_INIT, bgr=True),
+    #: ⭐ **1.8" 模块最常见的一种**（丝印 "1.8TFT SPI 128*160"，Waveshare 1.8inch LCD Module 同款接线）：
+    #: 竖屏、需要 col_offset=2 才能对齐（两边不出杂色边）
+    "st7735_1.8_128x160": ControllerSpec("st7735_1.8_128x160", 128, 160, col_offset=2, row_offset=1,
+                                         madctl=0xC0, init=_ST7735_INIT, bgr=True),
+    #: 另一些 1.8"/1.44" 模组偏移不同，列在这里供逐个试（用 tft_check.py --offsets 自动遍历）
+    "st7735_128x160_c1": ControllerSpec("st7735_128x160_c1", 128, 160, col_offset=1, row_offset=0,
+                                        madctl=0xC0, init=_ST7735_INIT, bgr=True),
+    "st7735_128x160_c0r2": ControllerSpec("st7735_128x160_c0r2", 128, 160, col_offset=0, row_offset=2,
+                                          madctl=0xC0, init=_ST7735_INIT, bgr=True),
     "st7789": ControllerSpec("st7789", 240, 240, col_offset=0, row_offset=0,
                              madctl=0x00, init=_ST7789_INIT, invert=True),
     "st7789_240x320": ControllerSpec("st7789_240x320", 240, 320, col_offset=0, row_offset=0,
                                      madctl=0x00, init=_ST7789_INIT, invert=True),
     "ili9341": ControllerSpec("ili9341", 240, 320, col_offset=0, row_offset=0,
                               madctl=0x48, init=_ILI9341_INIT, bgr=True),
-    # 一些 1.44"/1.8" 模组是 ST7735R（红版），偏移与 160×128 不同
+    # 一些 1.44"/1.8" 模组是 ST7735R（红版）
     "st7735r": ControllerSpec("st7735r", 128, 160, col_offset=2, row_offset=1,
                               madctl=0xC0, init=_ST7735_INIT, bgr=True),
 }
@@ -347,6 +358,8 @@ class TftSpi(OutputDevice):
         rotate: int = 90,
         bgr: Optional[bool] = None,
         invert: Optional[bool] = None,
+        col_offset: Optional[int] = None,
+        row_offset: Optional[int] = None,
         bus: Any = None,
         mock: bool = False,
         name: str = "",
@@ -362,6 +375,10 @@ class TftSpi(OutputDevice):
         self.rotate = int(rotate)
         self._bgr_override = bgr
         self._invert_override = invert
+        #: 偏移微调（从配置传，不用改代码）：1.8"/1.44" 这批模组的玻璃与显存对不齐，
+        #: 差了就会在边缘出现一条杂色/错位。``None`` = 用控制器表的默认值。
+        self._col_offset_override = col_offset
+        self._row_offset_override = row_offset
 
         self.spec: Optional[ControllerSpec] = None
         self.width = 0
@@ -613,10 +630,13 @@ class TftSpi(OutputDevice):
     def set_window(self, x0: int, y0: int, x1: int, y1: int) -> None:
         """设置写入窗口（列/行地址范围），随后 :meth:`push_pixels` 的数据会填进去。"""
         assert self.spec is not None
-        x0 += self.spec.col_offset
-        x1 += self.spec.col_offset
-        y0 += self.spec.row_offset
-        y1 += self.spec.row_offset
+        # 偏移：优先用配置传入的值（现场微调用），否则用控制器表的默认值
+        col_off = self.spec.col_offset if self._col_offset_override is None else int(self._col_offset_override)
+        row_off = self.spec.row_offset if self._row_offset_override is None else int(self._row_offset_override)
+        x0 += col_off
+        x1 += col_off
+        y0 += row_off
+        y1 += row_off
         self._write(0x2A, bytes([x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF]))
         self._write(0x2B, bytes([y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF]))
         self._write(0x2C, b"")
@@ -772,11 +792,14 @@ class TftSpi(OutputDevice):
                 "gnd": "GND（物理脚 6，务必共地）",
             },
             "notes": (
-                f"控制器 {spec.name if spec else '未初始化'}，分辨率 {self.width}x{self.height}（旋转 {self.rotate}°）；"
+                f"控制器 {spec.name if spec else '未初始化'}，分辨率 {self.width}x{self.height}（旋转 {self.rotate}°），"
+                f"偏移 col={self._col_offset_override if self._col_offset_override is not None else (spec.col_offset if spec else 0)}"
+                f"/row={self._row_offset_override if self._row_offset_override is not None else (spec.row_offset if spec else 0)}；"
                 "⚠️ 彩色屏只能显示 ASCII（中文请走 LCD/手机/语音）；"
                 "⚠️ CS 不要与 MCP3002 抢同一个片选（本项目 MCP3002=CE0、TFT=CE1）；"
                 "颜色红蓝互换 ⇒ 把 bgr 设为 true（BGR/RGB 顺序）；"
-                "画面像底片（反色）⇒ 把 invert 设为 true"
+                "画面像底片（反色）⇒ 把 invert 设为 true；"
+                "边缘出现一条杂色/错位 ⇒ 用 col_offset / row_offset 微调（见 scripts/tft_check.py）"
             ),
         }
 

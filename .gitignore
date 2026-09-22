@@ -13,8 +13,12 @@
 /logs/
 *.log
 
-# 本地覆盖配置（每人机器的引脚可能不同；示例文件 devices.example.json 才入库）
-/config/devices.local.json
+# 本地覆盖配置（每人机器的引脚 / OneNET 密钥可能不同；devices.example.json 才入库）
+# ⚠️ 这里**不能**加前导斜杠：配置在 `rpi/config/` 下（不是仓库根的 config/），
+#    写成 `/config/devices.local.json` 会锚定到仓库根而**匹配不到**，
+#    结果就是"以为忽略了、其实会被提交"（2026-09-22 实测发现）。
+#    用不带斜杠的文件名形式，匹配任意层级下的同名文件 —— 这正是我们想要的。
+devices.local.json
 
 # Python
 __pycache__/

@@ -19,8 +19,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
@@ -44,6 +46,12 @@ ALLOW_MISSING = {
     # 系统路径（不是仓库内文件）：排错手册里会引用树莓派的配置文件
     "boot/firmware/config.txt",
     "/boot/firmware/config.txt",
+    "~/Desktop/lab1b_bmp_iot_clean.py",   # 树莓派桌面上的课程示例（docs/10 引用）
+    # ⚠️ 本机覆盖配置：**按设计不入库**（含 OneNET 密钥等凭据，.gitignore 已忽略），
+    #    所以仓库里永远找不到它 —— 文档里必须能讨论它，检查器不该报悬空。
+    "config/devices.local.json",
+    "rpi/config/devices.local.json",
+    "devices.local.json",
 }
 
 #: 允许的**路径前缀**：这些是"仓库之外、但在同一个工作区里"的文档，
@@ -281,25 +289,49 @@ def self_test() -> List[str]:
     2. 本项目 2026-09-21 真的出现过一次"守卫看起来在跑、其实一直没匹配"：
        行内反引号的正则只允许 ASCII，而本项目文档文件名**全是中文**，
        于是它对最该检查的那批引用视而不见（用外部脚本注入才暴露）。
-    做法：在内存里造一份文档（**不碰真实文件**），断言探针能抓到悬空引用、
+    做法：在内存里造一份文档，断言探针能抓到悬空引用、
     且对围栏代码块里的 `.gitignore` 片段不误报。
+
+    ⚠️ 2026-09-22 在真树莓派上暴露的第二个坑：**自测不能假设仓库的形状**。
+    早前版本用固定字符串 ``docs/README.md`` 当"真实存在的文件"，
+    而这只在"仓库根 == 检查器的 ROOT"时才成立——树莓派上代码放在
+    ``~/raspberry-health-monitor/rpi/``（不是仓库根），那句就真的解析不到，
+    于是自测报"真实存在的文件被误报为悬空引用"（**假红**，把守卫自身搞成了失败项）。
+    现在的做法：**临时造一个真实文件**来验"不误报"，不再依赖任何既有文件。
     """
     problems: List[str] = []
-    payload = (
-        "正常引用 `docs/README.md`\n\n"
-        "悬空引用 `docs/99-不存在文档.md`\n\n"
-        "```gitignore\n/data/\n/logs/\n```\n"
-    )
-    targets = _probe_targets(payload)
-    if "docs/99-不存在文档.md" not in targets:
-        problems.append(
-            "自测失败：悬空引用没被抓到（探针的正则或过滤条件失效了）"
-            "——注意本项目文档名是中文，正则必须允许非 ASCII"
+    probe_dir = ROOT / "docs"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    # 名字带 pid+时间戳：确保不可能与既有文件重名
+    # （否则"该抓到的没抓到"这条断言就失去意义）
+    unique = f"_selftest_probe_{os.getpid()}_{int(time.time())}.md"
+    probe_file = probe_dir / unique
+    real_target = f"docs/{unique}"
+    try:
+        probe_file.write_text("自测用临时文件，检查完立即删除\n", encoding="utf-8")
+        global SUFFIX_INDEX
+        if not SUFFIX_INDEX:
+            SUFFIX_INDEX = build_suffix_index()
+        payload = (
+            f"正常引用 `{real_target}`\n\n"
+            "悬空引用 `docs/99-不存在文档.md`\n\n"
+            "```gitignore\n/data/\n/logs/\n```\n"
         )
-    if any(t.startswith("/data") or t.startswith("/logs") for t in targets):
-        problems.append("自测失败：围栏代码块里的 .gitignore 片段被误判成文件引用")
-    if "docs/README.md" in targets:
-        problems.append("自测失败：真实存在的文件被误报为悬空引用")
+        targets = _probe_targets(payload, base=probe_dir)
+        if "docs/99-不存在文档.md" not in targets:
+            problems.append(
+                "自测失败：悬空引用没被抓到（探针的正则或过滤条件失效了）"
+                "——注意本项目文档名是中文，正则必须允许非 ASCII"
+            )
+        if any(t.startswith("/data") or t.startswith("/logs") for t in targets):
+            problems.append("自测失败：围栏代码块里的 .gitignore 片段被误判成文件引用")
+        if real_target in targets:
+            problems.append("自测失败：真实存在的文件被误报为悬空引用")
+    finally:
+        try:
+            probe_file.unlink()
+        except OSError:
+            pass
     return problems
 
 

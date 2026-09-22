@@ -149,19 +149,42 @@ def check_selfcheck() -> Tuple[bool, str]:
 
 
 def check_tests() -> Tuple[bool, str]:
-    """跑单元测试（用 pytest；没有 pytest 就退回 unittest）。"""
+    """跑单元测试（用 pytest；没有 pytest 就退回 unittest）。
+
+    ⚠️ 统计数字**从日志文件里 grep**，而不是取 stdout 的最后一行。
+    为什么（2026-09-22 在树莓派上实测踩到）：本项目很多测试会往 stdout 打中文日志
+    （LED/语音/报警），**unittest 的 `Ran N tests / OK` 汇总行会被这些日志挤到中间**，
+    取"最后一行"就变成打印了 "[语音] 播报：监护系统已启动"——看起来像没跑测试。
+    判据应当来自**报告本身**（`Ran N tests` / `OK` / `FAILED`），而不是最后一行。
+    """
     has_pytest = subprocess.run(
         [sys.executable, "-c", "import pytest"], capture_output=True
     ).returncode == 0
     if has_pytest:
         cmd = [sys.executable, "-m", "pytest", "tests", "-q"]
     else:
-        cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"]
+        cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]
     proc = subprocess.run(cmd, cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8")
-    tail = (proc.stdout or "").strip().splitlines()[-1:] or [""]
+
+    combined = "\n".join(part or "" for part in (proc.stdout, proc.stderr))
+    lines = combined.splitlines()
+
+    def pick(pattern: str) -> str:
+        import re
+
+        for line in reversed(lines):
+            if re.search(pattern, line):
+                return line.strip()
+        return ""
+
+    summary = pick(r"\bRan \d+ tests?\b") or pick(r"\d+ passed")
+    verdict = pick(r"^OK\b") or pick(r"^FAILED\b") or pick(r"\d+ failed")
+
     if proc.returncode == 0:
-        return True, f"测试通过：{tail[0]}"
-    return False, f"测试失败：{tail[0]}\n      " + "\n      ".join((proc.stdout or "").strip().splitlines()[-12:])
+        detail = "；".join(part for part in (summary, verdict) if part) or "全部通过"
+        return True, f"测试通过：{detail}"
+    tail = "\n      ".join(lines[-12:])
+    return False, f"测试失败（{summary or '无统计'}）：\n      {tail}"
 
 
 def check_demo() -> Tuple[bool, str]:

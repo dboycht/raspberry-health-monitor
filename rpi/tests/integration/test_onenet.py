@@ -244,6 +244,23 @@ class TestOneNetConfig(unittest.TestCase):
             make_config(topic_template="sys/foo/bar").validate()
         self.assertIn("{pid}", str(ctx.exception))
 
+    def test_topic模板必须以sys开头(self) -> None:
+        """★ 2026-09-22 真机踩到：少了 `$sys/` 前缀时**发布照样成功**，
+        但 `_topic()` 拼出的**订阅主题是错的** → accepted/rejected 回执一条都收不到，
+        等于把"数据到底上没上去"的唯一硬证据静默丢掉（排查时只能靠猜）。
+
+        所以这里必须**直接拒绝**，而不是"让它跑起来"。
+        """
+        for bad in ("/{pid}/{device}/dp/post/json", "sys/{pid}/{device}/dp/post/json",
+                    "{pid}/{device}/dp/post/json"):
+            with self.subTest(template=bad):
+                with self.assertRaises(OneNetError) as ctx:
+                    make_config(topic_template=bad).validate()
+                self.assertIn("$sys/", str(ctx.exception))
+                self.assertIn("回执", str(ctx.exception), "错误信息要说清后果，不能只说'格式不对'")
+        # 正确写法要能通过
+        make_config(topic_template="$sys/{pid}/{device}/dp/post/json").validate()
+
     def test_默认地址与TLS地址(self) -> None:
         plain = make_config()
         self.assertEqual(plain.resolved_host(), DEFAULT_HOST_PLAIN)
@@ -380,6 +397,34 @@ class TestOneNetPublisher(unittest.TestCase):
         topics = [t for t, _ in client.subscribed]
         self.assertIn("$sys/123123/living-room-pi/dp/post/json/accepted", topics)
         self.assertIn("$sys/123123/living-room-pi/dp/post/json/rejected", topics)
+
+    def test_没有可上报字段时必须留痕(self) -> None:
+        """★ 静默不发是一级缺陷（2026-09-22 真机踩到）。
+
+        当时用自造键（``probe_temp``）调用 ``publish_reading`` —— 该键不在 stream_map 里，
+        映射后一个字段都没有，于是**什么都没发、也没有任何提示**，白排查半天。
+        现在的约定：这种情况必须 ① 累加 ``skipped_empty`` ② 记 warning ③ 不入队。
+        """
+        before = self.pub.skipped_empty
+        with self.assertLogs("health_monitor.net.onenet", level="WARNING") as captured:
+            self.pub.publish_reading({"probe_temp": 25.0, "unknown_key": 1})
+        self.assertEqual(self.pub.skipped_empty, before + 1)
+        self.assertTrue(any("没有任何可上报字段" in line for line in captured.output))
+        self.assertEqual(self._drain(timeout=0.4), [], "不该把空数据点发上去")
+
+    def test_按映射上报真实字段(self) -> None:
+        """用 stream_map 里的本地量名 → 应该正常入队并发出。"""
+        self.pub.publish_reading({"heart_rate_bpm": 72.0, "spo2_percent": 98.0,
+                                  "ambient_temp_c": 25.5, "data_age_s": 1.0})
+        published = self._drain()
+        self.assertEqual(len(published), 1)
+        topic, payload, _qos = published[0]
+        self.assertEqual(topic, "$sys/123123/living-room-pi/dp/post/json")
+        data = json.loads(payload)
+        streams = data["dp"]
+        self.assertIn("heart_rate", streams)
+        self.assertEqual(streams["heart_rate"][0]["v"], 72.0)
+        self.assertEqual(self.pub.skipped_empty, 0)
 
     def test_连接被拒时给出排查提示(self) -> None:
         client = FakeClient.instances[-1]

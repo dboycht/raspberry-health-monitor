@@ -15,9 +15,12 @@ ExecStart=/usr/bin/python3 -m health_monitor serve --real --host 0.0.0.0 --port 
 # 需要 token 时加：--token <你的口令>
 # ⚠️ 注意：`python3 -m health_monitor` 需要工作目录在 rpi/（包根所在处）——见上面的 WorkingDirectory
 
-# 用 pi 用户跑（需要访问 /dev/i2c-1、/dev/spidev0.0、GPIO）
+# 用普通用户跑（需要访问 /dev/i2c-1、/dev/spidev0.*、GPIO）
+# ⚠️ Debian 13 / Raspberry Pi OS Bookworm 之后，i2c/spi 设备属组是 i2c / spi，
+#    用户需要在这两个组里才不需要 root（install-service.sh 会自动加）
 User=pi
 Group=pi
+SupplementaryGroups=i2c spi gpio
 
 Restart=always
 RestartSec=5
@@ -26,8 +29,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=health-monitor
 
-# 依赖 I2C/SPI 设备节点；若用 GPIO 还需要 /dev/gpiomem
-# 若启动早于设备节点创建，Restart=always 会自动重试
+# 设备节点就绪后再启动（启动早于节点创建时，Restart=always 会自动重试）
 After=dev-i2c-1.device
 
 [Install]

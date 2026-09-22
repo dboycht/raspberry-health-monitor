@@ -147,20 +147,21 @@
   "onenet": {
     "enabled": false,
     "platform": "legacy",
-    "product_id": "",
-    "device_name": "",
+    "product_id": "vmkgy5EP2t",
+    "device_name": "t1",
     "access_key": "",
-    "method": "sha256",
+    "method": "sha1",
     "token_ttl_s": 86400,
-    "host": "",
-    "port": 0,
+    "host": "mqtts.heclouds.com",
+    "port": 1883,
     "tls": false,
     "keepalive": 120,
     "interval_s": 30,
-    "topic_template": "/{pid}/{device}/dp/post/json",
+    "topic_template": "$sys/{pid}/{device}/dp/post/json",
     "subscribe_result": true,
     "qos": 1,
     "publish_alarm": true,
-    "publish_status": true
+    "publish_status": true,
+    "key_env": "HEALTH_ONENET_KEY"
   }
 }

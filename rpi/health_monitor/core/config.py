@@ -230,12 +230,43 @@ def example_config_path() -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "devices.example.json"
 
 
-def load_config(path: Optional[str | Path] = None) -> AppConfig:
+def local_config_path() -> Path:
+    """本机覆盖配置：``config/devices.local.json``（**不入库**，见 .gitignore）。
+
+    用途：把"每台机器自己的东西"（OneNET 密钥、MQTT 口令、本机引脚）放这里，
+    仓库里的 ``devices.json`` 保持干净、可以随时提交。
+    :func:`load_config` 会自动把它**深度合并**到基础配置之上。
+    """
+    return Path(__file__).resolve().parents[2] / "config" / "devices.local.json"
+
+
+def _deep_merge(base: Dict[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
+    """递归合并：字典按键合并，其它类型**整体替换**（列表也整体替换）。
+
+    刻意不做"列表拼接"：像 ``devices`` 这种"按设备名索引的对象"天然支持按键覆盖；
+    真正的列表整体替换更符合直觉、也更可预测。
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, Mapping) and isinstance(result.get(key), Mapping):
+            result[key] = _deep_merge(dict(result[key]), value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_config(path: Optional[str | Path] = None, *, use_local: bool = True) -> AppConfig:
     """从 JSON 文件加载配置。
 
     Args:
         path: 配置文件路径。为 ``None`` 时用 :func:`default_config_path`；
               若该文件不存在则回退到示例配置（便于"第一次跑起来"）。
+              无论用哪个基础配置，**都会再叠加** ``config/devices.local.json``（若存在）。
+        use_local: 是否叠加本机覆盖（默认 ``True``）。
+                  ⚠️ **测试里应当传 ``False``**：否则测试结果会随"这台机器上有没有
+                  ``devices.local.json``"而变 —— 2026-09-22 真机踩到：
+                  同一份测试在开发机（无覆盖文件）绿、在树莓派（有覆盖文件）红。
+                  测试必须能**控制自己的环境**，不能靠环境碰巧。
 
     Raises:
         ConfigError: 文件不存在、JSON 语法错误、字段未知、阈值不合理。
@@ -260,6 +291,18 @@ def load_config(path: Optional[str | Path] = None) -> AppConfig:
         raise ConfigError(f"配置文件 JSON 语法错误：{target} 第 {exc.lineno} 行：{exc.msg}") from exc
     if not isinstance(data, Mapping):
         raise ConfigError(f"配置文件顶层必须是对象：{target}")
+
+    # 叠加本机覆盖（密钥/口令放这里，**不提交**）
+    local = local_config_path()
+    if use_local and local.exists() and local.resolve() != target.resolve():
+        try:
+            local_data = json.loads(local.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigError(f"本机覆盖配置无法读取/解析：{local}：{exc}") from exc
+        if not isinstance(local_data, Mapping):
+            raise ConfigError(f"本机覆盖配置顶层必须是对象：{local}")
+        data = _deep_merge(dict(data), local_data)
+
     return AppConfig.from_dict(data)
 
 

@@ -250,6 +250,17 @@ class OneNetConfig:
                 "onenet.topic_template 必须包含 {pid} 与 {device}，"
                 "例如 $sys/{pid}/{device}/dp/post/json"
             )
+        # ⚠️ 必须以 $sys/ 开头（2026-09-22 实测踩到）：少写前缀时**发布仍会成功**
+        #    （平台侧用别的路径收到了），但 `_topic()` 拼出来的**订阅主题是错的**，
+        #    于是 accepted/rejected 回执一条都收不到 —— 等于把"数据到底上没上去"
+        #    这个唯一的硬证据静默丢掉，排查时只能靠猜。所以这里直接拒绝。
+        if not self.topic_template.startswith("$sys/"):
+            raise OneNetError(
+                f"onenet.topic_template 必须以 $sys/ 开头（当前 {self.topic_template!r}）。"
+                "旧版 MQTT物联网套件的数据点上报主题是 "
+                "$sys/{pid}/{device}/dp/post/json —— 少了 $sys/ 会**发得出去但收不到回执**，"
+                "让人误以为没上报成功。"
+            )
 
     def resolved_key(self) -> str:
         """密钥优先取环境变量（配置文件里可以留空）。"""
@@ -328,6 +339,8 @@ class OneNetPublisher(MqttPublisher):
         self._msg_id = 0
         self.received_results: List[Dict[str, Any]] = []   # 平台回执（accepted/rejected）
         self.token_issued_at: float = 0.0
+        #: "本轮没有任何可上报字段"的次数 —— 静默不发是缺陷，必须能被看见
+        self.skipped_empty = 0
 
     # -- 连接参数 --------------------------------------------------------
 
@@ -474,7 +487,14 @@ class OneNetPublisher(MqttPublisher):
     # -- 对外接口（与 Runtime 对接） --------------------------------------
 
     def publish_reading(self, summary: Dict[str, Any], ts: Optional[float] = None) -> None:
-        """上报一次读数摘要（按 stream_map 映射成本地量 → 数据流名）。"""
+        """上报一次读数摘要（按 stream_map 映射成本地量 → 数据流名）。
+
+        ⚠️ **只上报本地量名**（``heart_rate_bpm`` / ``body_temp_c`` …，见 ``stream_map``）。
+        传进来的其它键会被忽略；若一个字段都没映射上，本调用**什么都不会发**，
+        并且记一条 warning + 累加 ``skipped_empty`` ——
+        **不允许"静默不发"**（2026-09-22 实测踩到：用自造键 ``probe_temp`` 调用，
+        数据点一条都没发出去却毫无提示，白白排查了半天）。
+        """
         values: Dict[str, Any] = {}
         for local_key, stream in self.onenet.stream_map.items():
             value = summary.get(local_key)
@@ -485,6 +505,15 @@ class OneNetPublisher(MqttPublisher):
         # 顺带把"数据是否过期"也报到云端：云端据此判断树莓派是不是采集停了
         if summary.get("data_age_s") is not None:
             values["data_age_s"] = round(float(summary["data_age_s"]), 1)
+
+        if not values:
+            self.skipped_empty += 1
+            _LOG.warning(
+                "OneNET 本轮没有任何可上报字段（入参键：%s；已配置数据流：%s）"
+                "—— 请用 stream_map 里的本地量名，或把该量加进 onenet.stream_map",
+                sorted(summary)[:8], sorted(self.onenet.stream_map),
+            )
+            return
         self._enqueue_datapoint(values, ts)
 
     def publish_alarm(self, event: Any, ts: Optional[float] = None) -> None:
@@ -529,6 +558,7 @@ class OneNetPublisher(MqttPublisher):
             "token_age_s": (round(self.clock() - self.token_issued_at, 1) if self.token_issued_at else None),
             "token_ttl_s": self.onenet.token_ttl_s,
             "results": self.received_results[-5:],
+            "skipped_empty": self.skipped_empty,
             "note": "token 只在日志里出现长度，不打印内容",
         })
         return info
