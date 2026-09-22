@@ -15,7 +15,7 @@
 | `rpi/config/devices.json`、`rpi/health_monitor/core/config.py` 的 `DEFAULT_CONFIG` | 每个器件的实际引脚 / 地址 / 周期 |
 | `rpi/health_monitor/hal/registry.py` 的 `MANIFEST` | 驱动清单、驱动名、中文名、参数名 |
 | 各驱动的文件头接线表与 `describe()` 输出 | 物理脚号（**以 `describe()` 为事实来源**） |
-| `docs/05-安卓通信协议.md` | 系统全貌（数据链路） |
+| `docs/手册/05-安卓通信协议.md` | 系统全貌（数据链路） |
 
 ---
 

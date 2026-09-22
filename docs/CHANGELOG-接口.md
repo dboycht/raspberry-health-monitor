@@ -42,7 +42,7 @@
   `health_summary()` 的返回里相应多出 **`data_age_s`** 与 **`data_stale`** 两个字段。
   - **原因**：手机端此前只能看到一堆 `null`，无法区分"传感器没接"与"整个采集早就停了"。
     后者需要立刻提醒用户（服务活着、HTTP 通、但数据是旧的，最危险）。
-  - **影响面**：`net/web.py` 的 `/api/v1/current` 与 `docs/05-安卓通信协议.md` 已同步；
+  - **影响面**：`net/web.py` 的 `/api/v1/current` 与 `docs/手册/05-安卓通信协议.md` 已同步；
     安卓端新增字段是**兼容**的（旧客户端忽略即可，协议 §6）。
     规则判定逻辑**未受影响**（陈旧样本依旧是 `None`，不会参与报警判定）。
   配套测试：`tests/core/test_rules.py::TestSnapshotSummary::test_新鲜度字段`、

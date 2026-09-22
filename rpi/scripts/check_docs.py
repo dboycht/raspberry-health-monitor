@@ -41,6 +41,9 @@ ALLOW_MISSING = {
     "rpi/health_monitor/net/mqtt.py",   # docs/07 里的"将来要加"的文件
     "sensors/a.py",                     # docs/CHANGELOG 模板示例（不存在的虚构文件）
     "outputs/b.py",                     # 同上
+    # 系统路径（不是仓库内文件）：排错手册里会引用树莓派的配置文件
+    "boot/firmware/config.txt",
+    "/boot/firmware/config.txt",
 }
 
 #: 允许的**路径前缀**：这些是"仓库之外、但在同一个工作区里"的文档，
@@ -49,12 +52,20 @@ ALLOW_MISSING = {
 ALLOW_PREFIXES = (
     "rules/",
     "memory/",
-    "docs/03-报警规则表.md",   # 旧文件名：已被 docs/08 取代，下面用 RENAMED 统一处理
 )
 
-#: 已重命名的文件：旧路径 → 新路径（检查器据此报"引用已过时"而不是"不存在"）
+#: 已重命名/已移动的文件：旧路径 → 新路径（检查器据此报"引用已过时"而不是"不存在"）
+#: 2026-09-22 重组：参考资料统一移入 ``docs/手册/``，操作手册留在 ``docs/`` 根下。
 RENAMED = {
-    "docs/03-报警规则表.md": "docs/08-报警规则表.md",
+    "docs/01-项目管理.md": "docs/手册/01-项目管理.md",
+    "docs/02-接口规格说明书.md": "docs/手册/02-接口规格说明书.md",
+    "docs/03-器件任务书.md": "docs/手册/03-器件任务书.md",
+    "docs/04-驱动开发规范与贡献指南.md": "docs/手册/04-驱动开发规范与贡献指南.md",
+    "docs/05-安卓通信协议.md": "docs/手册/05-安卓通信协议.md",
+    "docs/06-安卓开发指南.md": "docs/手册/06-安卓开发指南.md",
+    "docs/07-拓展与上云.md": "docs/手册/07-拓展与上云.md",
+    "docs/08-报警规则表.md": "docs/手册/08-报警规则表.md",
+    "docs/03-报警规则表.md": "docs/手册/08-报警规则表.md",   # 更早的一次改名
 }
 
 #: markdown 链接 [文本](路径)
@@ -141,9 +152,10 @@ def _probe_targets(text: str, base: Path | None = None) -> List[str]:
         # 仓库之外、但同属一个工作区的文档（rules/、memory/）：有意的跨文档引用
         if target.startswith(ALLOW_PREFIXES):
             return
-        # 被重命名的文件：报"引用已过时"（比"不存在"更有指导性）
+        # 被重命名/移动的文件：报"引用已过时"（比"不存在"更有指导性），
+        # 返回带说明的字符串（只用于展示，不影响 self_test 的判定）
         if target in RENAMED:
-            missing.append((f"{target}（已重命名为 {RENAMED[target]}，请更新引用）", raw))
+            missing.append(f"{target}（已移动/改名为 {RENAMED[target]}，请更新引用）")
             return
         # `/xxx` 是"以仓库根为锚"的写法（.gitignore 片段与文档里都常见）：
         # 去掉前导斜杠后按仓库根解析，而不是当成绝对路径丢掉。
@@ -174,25 +186,34 @@ def _probe_targets(text: str, base: Path | None = None) -> List[str]:
     return missing
 
 
-def check_links(doc: Path) -> List[Tuple[str, str]]:
-    """返回 ``[(缺失的目标, 原文片段), ...]``（供报告用，带出处文件名）。"""
+def check_links(doc: Path) -> List[str]:
+    """返回该文档里"解析不到的文件引用"（带出处说明，供报告用）。"""
     text = doc.read_text(encoding="utf-8")
-    return [(target, target) for target in _probe_targets(text, base=doc.parent)]
+    return _probe_targets(text, base=doc.parent)
 
 
 def check_docs_index() -> List[str]:
-    """`docs/README.md` 的索引表必须覆盖 docs/ 下的每一份 .md（除它自己）。"""
+    """双向检查：操作手册文档必须被 `docs/README.md` 索引；索引条目必须真实存在。
+
+    ⚠️ 2026-09-22 文档改组后：参考资料在 ``docs/手册/``（在索引里以 ``手册/xx.md`` 形式出现），
+    操作手册在 ``docs/`` 根下（以 ``xx.md`` 形式出现）。所以这里要**扫描两处**，
+    并且按"索引里怎么写的"去核对，避免重构后索引与实体悄悄脱节。
+    """
     index = ROOT / "docs" / "README.md"
     if not index.exists():
         return ["docs/README.md 不存在（文档索引缺失）"]
     text = index.read_text(encoding="utf-8")
-    actual = {p.name for p in (ROOT / "docs").glob("*.md")} - {"README.md"}
     problems: List[str] = []
-    for name in sorted(actual):
-        # 索引里以链接形式出现即可
-        if f"({name})" not in text and f"]({name})" not in text:
-            problems.append(f"docs/README.md 索引里缺少 {name}")
-    # 反向：索引里列了但文件不存在（悬空条目）
+
+    entries = [(p.name, p) for p in (ROOT / "docs").glob("*.md")]
+    entries += [(f"手册/{p.name}", p) for p in (ROOT / "docs" / "手册").glob("*.md")]
+    for label, path in sorted(entries):
+        if path.name == "README.md":
+            continue
+        if f"({label})" not in text:
+            problems.append(f"docs/README.md 索引里缺少 {label}")
+
+    # 反向：索引里列了但文件不存在
     for match in MD_LINK.finditer(text):
         target = match.group(1).split("#", 1)[0].strip()
         if not target.endswith(".md") or target.startswith(("http", "..")):
@@ -222,7 +243,9 @@ def check_report_rules_consistency() -> List[str]:
     """报警码三方一致性：`AlarmCode` 枚举 ↔ 报警规则表 ↔ 安卓端文案表。"""
     problems: List[str] = []
     models = ROOT / "rpi" / "health_monitor" / "hal" / "models.py"
-    rules_doc = ROOT / "docs" / "08-报警规则表.md"
+    # 报警规则表在 2026-09-22 移到了 docs/手册/ 下；两个位置都认（避免下次搬家又断）
+    rules_doc_candidates = [ROOT / "docs" / "手册" / "08-报警规则表.md", ROOT / "docs" / "08-报警规则表.md"]
+    rules_doc = next((p for p in rules_doc_candidates if p.exists()), rules_doc_candidates[0])
     android_catalog = ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "dboycht" / "healthmonitor" / "domain" / "AlarmCatalog.kt"
 
     if not models.exists():
@@ -309,8 +332,11 @@ def main() -> int:
     problems: List[str] = self_test()      # 先自证有效，再拿它去检查
     for doc in docs:
         rel = doc.relative_to(ROOT)
-        for target, raw in check_links(doc):
-            problems.append(f"{rel}：引用了不存在的路径 {target}（原文 `{raw}`）")
+        for target in check_links(doc):
+            if "（已移动" in target:
+                problems.append(f"{rel}：{target}")
+            else:
+                problems.append(f"{rel}：引用了不存在的路径 {target}")
 
     problems.extend(check_docs_index())
     problems.extend(check_report_rules_consistency())

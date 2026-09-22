@@ -35,6 +35,12 @@ from ..hal.models import AlarmCode, AlarmEvent, Severity, SpeakCommand
 
 _LOG = logging.getLogger(__name__)
 
+#: 当前线程正在处理的请求体。
+#: 本 API 的参数都走 query string，**只有** ``/api/v1/cloud/callback`` 需要读 body
+#: （OneNET 规则引擎推送的是 JSON 报文）。用 thread-local 传递，避免把 body
+#: 塞进所有处理函数的签名里（那会让其它接口的测试也要造 body）。
+_CURRENT_BODY = threading.local()
+
 
 class WebApi:
     """把 HTTP 请求映射到业务对象（不依赖 ``http.server``，可直接单测）。
@@ -102,7 +108,44 @@ class WebApi:
         # 上云状态（可选功能）：客户端可用它判断"云上那条链路通不通"
         mqtt = getattr(self.runtime, "mqtt", None)
         payload["mqtt"] = mqtt.status() if mqtt is not None else {"enabled": False}
+        payload["cloud"] = {
+            "platform": getattr(self.runtime, "cloud_platform", "none"),
+            "warning": getattr(self.runtime, "cloud_warning", ""),
+            "started": bool(getattr(self.runtime, "mqtt_started", False)),
+        }
         return 200, payload
+
+    def _cloud_callback(self, q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """接收 OneNET **规则引擎 HTTP 推送**的数据（云云对接）。
+
+        OneNET 规则引擎把"设备数据点消息"按规则 POST 到我们配置的 URL，
+        期望收到 ``{"code": 0, "msg": "ok"}`` 表示成功（平台侧推送失败会按其策略重试）。
+
+        本端点做三件事（**只记录，不改任何监护状态**）：
+        1. 把收到的原始 JSON 记一条日志（排查"云端到底发了什么"的唯一硬证据）；
+        2. 在内存里保留最近若干条，供 ``/api/v1/cloud/last`` 与状态页查看；
+        3. 原样返回 ``{"code": 0, "msg": "ok"}``（平台约定的成功应答）。
+
+        ⚠️ **安全**：默认不校验来源（局域网/课程演示够用）。
+        要暴露到公网，请同时给 ``serve --token`` 与 OneNET 的推送 URL 配上令牌
+        （见 ``docs/11-OneNET云端接入与云云对接.md`` 的"安全"一节）。
+        """
+        raw = _CURRENT_BODY.get()
+        record: Dict[str, Any] = {"ts": time.time(), "query": {k: v[0] for k, v in q.items()}}
+        if raw:
+            try:
+                record["payload"] = json.loads(raw.decode("utf-8"))
+            except Exception:  # noqa: BLE001 - 不是 JSON 也要留证
+                record["payload"] = raw[:2000].decode("utf-8", "replace")
+        saver = getattr(self.runtime, "record_cloud_push", None)
+        if callable(saver):
+            try:
+                saver(record)
+            except Exception as exc:  # noqa: BLE001 - 记录失败不该让平台收到错误应答
+                _LOG.debug("记录云端推送失败（已忽略）：%s", exc)
+        else:
+            _LOG.info("收到云端推送（无记录器）：%s", json.dumps(record, ensure_ascii=False)[:500])
+        return 200, {"code": 0, "msg": "ok"}
 
     def _current(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         snap = self.runtime.collector.snapshot()
@@ -226,11 +269,14 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch("GET")
 
     def do_POST(self) -> None:  # noqa: N802
-        # 读掉请求体（本 API 只用 query string，不读 body；但不读会让连接复用出问题）
+        # 读请求体：绝大多数接口只用 query string，但云端回调需要 JSON body。
+        # 保留原始字节，交给 _cloud_callback 解析（读掉 body 也让连接可复用）。
         length = int(self.headers.get("Content-Length") or 0)
-        if length:
-            self.rfile.read(length)
-        self._dispatch("POST")
+        _CURRENT_BODY.value = self.rfile.read(length) if length else b""
+        try:
+            self._dispatch("POST")
+        finally:
+            _CURRENT_BODY.value = b""
 
     def _dispatch(self, method: str) -> None:
         parsed = urlparse(self.path)

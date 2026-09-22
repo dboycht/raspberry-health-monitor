@@ -192,11 +192,16 @@ class MqttPublisher:
     # 发布入口（都是非阻塞入队）
     # ------------------------------------------------------------------
 
-    def publish_reading(self, summary: Dict[str, Any]) -> None:
+    def publish_reading(self, summary: Dict[str, Any], ts: Optional[float] = None) -> None:
         """发布一次读数摘要（``health/<prefix>/reading``）。
 
         ⚠️ 只发数值与时间戳；`sensor_failures` 只发**次数**，不发错误文本
         （错误文本里可能带本机路径）。
+
+        Args:
+            summary: :meth:`ReadingSnapshot.health_summary` 的输出。
+            ts: 可选时间戳。**通用 MQTT 版忽略它**；OneNET 版用它填数据点的 ``t``。
+                保留这个参数是为了让运行时用同一套调用代码（见 ``Runtime.tick``）。
         """
         payload = {
             "ts": summary.get("ts"),

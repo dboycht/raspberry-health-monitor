@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -111,20 +112,44 @@ class Runtime:
         )
 
         # ---- 3.5 上云（可选；没配置或没装 paho 就整体降级，绝不影响本地监护） ----
+        # 本项目实际使用的云平台是 **OneNET**（旧版 MQTT物联网套件，数据流-数据点）；
+        # 通用 MQTT 保留作为备选（例如自建 EMQX / 巴法云）。两者**只启用一个**：
+        # 若 onenet.enabled 与 mqtt.enabled 同时为真，优先 OneNET 并在日志里说明。
         self.mqtt: Optional[Any] = None
         self._mqtt_last_publish: float = 0.0
-        try:
-            from .net.mqtt import MqttConfig, MqttPublisher
+        self.cloud_platform = "none"      # none / onenet / mqtt
+        self.cloud_warning = ""
 
-            mqtt_cfg = MqttConfig.from_dict(config.mqtt) if config.mqtt else MqttConfig()
-        except Exception as exc:  # noqa: BLE001 - 配置写错不该让整机起不来
-            _LOG.warning("MQTT 配置解析失败（已忽略上云）：%s", exc)
+        onenet_enabled = bool(config.onenet.get("enabled"))
+        mqtt_enabled = bool(config.mqtt.get("enabled"))
+        if onenet_enabled and mqtt_enabled:
+            self.cloud_warning = "onenet.enabled 与 mqtt.enabled 同时为真，已优先使用 OneNET（请关掉其一）"
+            _LOG.warning("%s", self.cloud_warning)
+
+        if onenet_enabled:
+            try:
+                from .net.onenet import OneNetConfig, OneNetPublisher
+
+                onenet_cfg = OneNetConfig.from_dict(config.onenet)
+                self.mqtt = OneNetPublisher(onenet_cfg, clock=clock)
+                self.cloud_platform = "onenet"
+            except Exception as exc:  # noqa: BLE001 - 云配置写错不该让整机起不来
+                self.cloud_warning = f"OneNET 配置解析失败（已降级为不上云）：{exc}"
+                _LOG.warning("%s", self.cloud_warning)
         else:
-            publisher = MqttPublisher(mqtt_cfg)
-            if mqtt_cfg.enabled:
-                self.mqtt = publisher
+            try:
+                from .net.mqtt import MqttConfig, MqttPublisher
+
+                mqtt_cfg = MqttConfig.from_dict(config.mqtt) if config.mqtt else MqttConfig()
+            except Exception as exc:  # noqa: BLE001 - 配置写错不该让整机起不来
+                self.cloud_warning = f"MQTT 配置解析失败（已忽略上云）：{exc}"
+                _LOG.warning("%s", self.cloud_warning)
             else:
-                publisher.reason = publisher.reason or "配置里 mqtt.enabled=false（未启用上云）"
+                publisher = MqttPublisher(mqtt_cfg)
+                if mqtt_cfg.enabled:
+                    self.cloud_platform = "mqtt"
+                else:
+                    publisher.reason = publisher.reason or "配置里 mqtt.enabled=false（未启用上云）"
                 self.mqtt = publisher   # 保留对象以便 status() 里能看到"为什么没上云"
         self.mqtt_started = False
 
@@ -135,6 +160,10 @@ class Runtime:
         self._server: Any = None
         self._last_stale_alert: float = 0.0
         self.ticks = 0
+        #: 云端（OneNET 规则引擎）推送回来的最近若干条报文（只记录，不驱动报警）
+        self._cloud_pushes: List[Dict[str, Any]] = []
+        self.cloud_push_keep = 20
+        self.cloud_push_count = 0
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -230,11 +259,16 @@ class Runtime:
                 _LOG.info("[报警] %s %s", event.code.value, event.message)
 
         # 上云：按 interval_s 周期发布读数摘要（失败只计数，不影响本地）
+        # ⚠️ 周期也**跑在假时钟下**：演示/单测推进时钟即可触发上报，不必真的等 30 秒。
         if self.mqtt is not None and self.mqtt_started:
             interval = float(getattr(self.mqtt.config, "interval_s", 30.0))
             if (now - self._mqtt_last_publish) >= interval:
                 self._mqtt_last_publish = now
-                self.mqtt.publish_reading(snap.health_summary())
+                try:
+                    self.mqtt.publish_reading(snap.health_summary(), now)
+                except TypeError:
+                    # 通用 MQTT 发布器只接受 summary（OneNET 版多一个 ts 参数）
+                    self.mqtt.publish_reading(snap.health_summary())
 
         # 定期清理过期历史（每小时一次足够）
         if self.store is not None and self.ticks % 3600 == 0:
@@ -308,6 +342,41 @@ class Runtime:
         """消音：一段时间内只亮灯、不响铃、不播报。"""
         self.dispatcher.silence(ts if ts is not None else now_ts())
 
+    # ------------------------------------------------------------------
+    # 云云对接：接收 OneNET 规则引擎的 HTTP 推送
+    # ------------------------------------------------------------------
+
+    def record_cloud_push(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """记录一条来自云平台（OneNET 规则引擎 HTTP 推送）的报文。
+
+        设计取舍：
+        - **只记录，不改监护状态**。云端转发回来的数据是我们自己刚上报的，
+          再拿它去驱动报警会形成"自己喂自己"的环（一旦云端重发就可能误报）；
+        - 保留最近 ``cloud_push_keep`` 条，供状态页与 ``/api/v1/cloud/last`` 查看；
+        - **只记结构不外传**：这里的内容仍属本机，不会被再次上报。
+
+        Returns:
+            规范化后的记录（含 ``ts`` / ``payload``），便于 HTTP 端点回显。
+        """
+        entry = {
+            "ts": float(record.get("ts") or self.clock()),
+            "payload": record.get("payload"),
+            "query": record.get("query") or {},
+        }
+        self._cloud_pushes.append(entry)
+        self._cloud_pushes = self._cloud_pushes[-self.cloud_push_keep:]
+        self.cloud_push_count += 1
+        try:
+            preview = json.dumps(entry["payload"], ensure_ascii=False)[:400]
+        except Exception:  # noqa: BLE001 - 记录日志不该因为序列化失败而中断
+            preview = str(entry["payload"])[:400]
+        _LOG.info("[云端推送] #%d %s", self.cloud_push_count, preview)
+        return entry
+
+    def recent_cloud_pushes(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """最近收到的云端推送（新的在后）。"""
+        return self._cloud_pushes[-limit:]
+
     def clear_alarms(self, ts: Optional[float] = None) -> AlarmEvent:
         """人工确认：清除全部报警态，并**把输出器件复位到正常状态**。
 
@@ -351,7 +420,15 @@ class Runtime:
             "collector": self.collector.status(),
             "dispatcher": self.dispatcher.status(),
             "active_alarms": self.engine.active_alarms(),
-            "mqtt": (self.mqtt.status() if self.mqtt is not None else {"enabled": False, "reason": "未创建"}),
+            "mqtt": (
+                self.mqtt.status() if self.mqtt is not None
+                else {"enabled": False, "reason": "未创建"}
+            ),
+            "cloud": {
+                "platform": self.cloud_platform,
+                "warning": self.cloud_warning,
+                "started": self.mqtt_started,
+            },
             "store": self.store.stats() if self.store else None,
         }
 

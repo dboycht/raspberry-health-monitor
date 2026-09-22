@@ -142,6 +142,11 @@ class AppConfig:
     #: MQTT 上云配置（可选，默认关闭）。用 ``dict`` 承载以避免 core 依赖 net 层；
     #: 需要时由 net.mqtt.MqttConfig.from_dict 解析。
     mqtt: Dict[str, Any] = field(default_factory=dict)
+    #: OneNET（中国移动物联网平台）配置（可选，默认关闭）。
+    #: 本项目实际采用的上云方式 = OneNET 旧版「MQTT物联网套件」数据流-数据点，
+    #: 再由 OneNET 规则引擎转发回本机/App（云云对接）。
+    #: 字段级解析见 ``net.onenet.OneNetConfig.from_dict``。
+    onenet: Dict[str, Any] = field(default_factory=dict)
 
     def enabled_devices(self) -> List[DeviceConfig]:
         return [d for d in self.devices if d.enabled]
@@ -169,7 +174,7 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AppConfig":
-        known = {"thresholds", "devices", "mqtt"}
+        known = {"thresholds", "devices", "mqtt", "onenet"}
         unknown = set(data) - known
         if unknown:
             raise ConfigError(f"配置里有未知顶层字段 {sorted(unknown)}；只支持 {sorted(known)}")
@@ -195,11 +200,18 @@ class AppConfig:
                     optional=bool(item.get("optional", False)),
                 )
             )
-        # MQTT 配置只做"是不是对象"的粗校验；字段级校验在 net.mqtt.MqttConfig.from_dict
+        # MQTT / OneNET 配置只做"是不是对象"的粗校验；
+        # 字段级校验在 net.mqtt.MqttConfig.from_dict / net.onenet.OneNetConfig.from_dict
         mqtt_raw = data.get("mqtt", {})
         if not isinstance(mqtt_raw, Mapping):
             raise ConfigError("mqtt 必须是一个对象")
-        cfg = cls(thresholds=thresholds, devices=devices, raw=dict(data), mqtt=dict(mqtt_raw))
+        onenet_raw = data.get("onenet", {})
+        if not isinstance(onenet_raw, Mapping):
+            raise ConfigError("onenet 必须是一个对象")
+        cfg = cls(
+            thresholds=thresholds, devices=devices, raw=dict(data),
+            mqtt=dict(mqtt_raw), onenet=dict(onenet_raw),
+        )
         cfg.validate()
         return cfg
 
@@ -362,6 +374,27 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "interval_s": 30.0,
         "qos": 0,
         "keepalive": 60,
+    },
+    # OneNET（中国移动物联网平台）—— 本项目实际使用的云平台，默认关闭。
+    # 完整点击步骤见 docs/11-OneNET云端接入与云云对接.md；
+    # 密钥请用环境变量 HEALTH_ONENET_KEY，不要写进仓库。
+    "onenet": {
+        "enabled": False,
+        "product_id": "",
+        "device_name": "",
+        "access_key": "",
+        "method": "sha256",
+        "token_ttl_s": 86400,
+        "host": "",
+        "port": 0,
+        "tls": False,
+        "keepalive": 120,
+        "interval_s": 30.0,
+        "topic_template": "$sys/{pid}/{device}/dp/post/json",
+        "subscribe_result": True,
+        "qos": 1,
+        "publish_alarm": True,
+        "publish_status": True,
     },
 }
 
