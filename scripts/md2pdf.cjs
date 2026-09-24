@@ -273,21 +273,43 @@ function main() {
   const htmlPath = args.html ? path.resolve(args.html) : pdfPath.replace(/\.pdf$/i, '.html');
   fs.writeFileSync(htmlPath, html, 'utf8');   // 显式 utf8，否则中文会乱码
 
-  fs.mkdirSync(path.dirname(pdfPath), { recursive: true });
-  if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+  // ------------------------------------------------------------------
+  // 覆盖已存在的输出：**先删后写**，但删不掉时要给出可操作的建议
+  // ⚠️ 2026-09-24 实测踩到：用 Adobe Acrobat / Edge 打开着目标 PDF 时，
+  //    文件被独占锁住，unlinkSync 直接抛 EBUSY 且堆栈很难看懂。
+  //    正确姿势是：**先渲染到临时文件，再替换**；替换失败就把临时文件路径给用户，
+  //    而不是粗暴地去结束别人的阅读器进程。
+  // ------------------------------------------------------------------
+  const outDir = path.dirname(pdfPath);
+  fs.mkdirSync(outDir, { recursive: true });
+  const rendered = path.join(outDir, `.md2pdf-${process.pid}.tmp.pdf`);
+  try { if (fs.existsSync(rendered)) fs.unlinkSync(rendered); } catch {}
 
   const browser = findBrowser();
-  const flag = printToPdf(browser, htmlPath, pdfPath);
+  const flag = printToPdf(browser, htmlPath, rendered);
 
-  const size = fs.statSync(pdfPath).size;
-  const pages = countPages(pdfPath);
-  console.log(`✅ 已生成 PDF：${pdfPath}`);
+  let replaced = true;
+  try {
+    fs.copyFileSync(rendered, pdfPath);
+  } catch (e) {
+    replaced = false;
+    console.error(`⚠️ 无法覆盖目标文件（多半是被 PDF 阅读器占用）：${path.basename(pdfPath)}`);
+    console.error('   → 请关闭阅读器里打开的这个文件后重跑；本次结果保留在：');
+    console.error(`   → ${rendered}`);
+  }
+  if (replaced) { try { fs.unlinkSync(rendered); } catch {} }
+
+  const finalPath = replaced ? pdfPath : rendered;
+  const size = fs.statSync(finalPath).size;
+  const pages = countPages(finalPath);
+  console.log(`✅ 已生成 PDF：${finalPath}`);
   console.log(`   渲染器：${path.basename(browser)} ${flag}`);
   console.log(`   体积：${(size / 1024).toFixed(1)} KB；页数（近似）：${pages}`);
   console.log(`   中间 HTML：${htmlPath}`);
 
   if (size < 10000) { console.error('⚠️ 文件过小，可能渲染失败'); process.exit(1); }
   if (pages < 1) { console.error('⚠️ 页数统计为 0，请人工打开确认'); }
+  if (!replaced) process.exit(1);
 
   if (args.open) {
     try { execFileSync('cmd', ['/c', 'start', '', pdfPath], { stdio: 'ignore' }); } catch {}
