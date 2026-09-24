@@ -108,7 +108,7 @@ class Runner:
             self.stopped_reason = (
                 f"连续 {self.reader.consecutive_failures} 次读不到数据，已停止采集。"
                 "排查顺序：① 供电 3.3V；② 数据线在 GPIO4（物理脚 7）；"
-                "③ 裸传感器要接 4.7k~10k 上拉电阻；④ 换一个 DHT11 模块试试。"
+                "③ 裸传感器要接 4.7kΩ~10kΩ 上拉电阻；④ 换一个 DHT11 模块试试。"
             )
         return reading
 

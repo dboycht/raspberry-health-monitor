@@ -197,7 +197,9 @@ def wires() -> List[Wire]:
             physical=int(DATA_PHYSICAL or 0),
             bcm=DATA_BCM,
             color="黄",
-            note="单总线数据线（双向）；裸四针传感器必须外接 4.7k~10kΩ 上拉到 3.3V",
+            # ⚠️ 上拉电阻的文字形式**统一用 pullup_text()**：手写 `4.7k~10kΩ`
+            #    会漏掉第一个 Ω，而"4.7k"在电气上不等于"4.7kΩ"（曾经真的这么写过）
+            note=f"单总线数据线（双向）；裸四针传感器必须外接 {pullup_text()} 上拉到 3.3V",
         ),
     ]
 

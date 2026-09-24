@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import re
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -232,6 +233,7 @@ def build_index() -> str:
 | [`03-供电与安全.md`](03-供电与安全.md) | 接线前必读 | 3.3V/5V 不要接错、电流预算、断电插拔、防静电 |
 | [`04-线色与自查卡.md`](04-线色与自查卡.md) | 贴在工位上 | 一页纸内容：线色约定 + 通电前自查 + 现象对照 |
 | [`04-线色与自查卡.pdf`](04-线色与自查卡.pdf) | 打印带到工位 | 上面那份的 PDF（A4，由 `scripts/md2pdf.cjs` 生成） |
+| [`05-接线文档合集.md`](05-接线文档合集.md) / [`05-接线文档合集.pdf`](05-接线文档合集.pdf) | **打印这一份就够** | 上面 1–4 全部合成的一份（含目录），PDF 由 `scripts/md2pdf.cjs` 生成 |
 
 ## 2. 接线速查（本基础版用到的 3 个脚）
 
@@ -704,6 +706,159 @@ node scripts/md2pdf.cjs --in basic/hardware/04-线色与自查卡.md --out basic
 
 
 # ==========================================================================
+# 六、打印合集（把 5 份文档合成一份可打印的 Markdown → PDF）
+# ==========================================================================
+
+#: 合成文档的文件名（先出 Markdown，再用 `scripts/md2pdf.cjs` 转 PDF）
+COLLECTION_MD = "05-接线文档合集.md"
+
+#: 合集里的 PDF 文件名
+COLLECTION_PDF = "05-接线文档合集.pdf"
+
+#: 生成 PDF 时留下的中间 HTML（由 md2pdf.cjs 产出）
+COLLECTION_HTML = "05-接线文档合集.html"
+
+
+def print_sources() -> Dict[str, Tuple[str, ...]]:
+    """``源 md → 它产生的打印产物``（供清单与校验使用）。
+
+    两类：
+    1. 单份文档的 PDF（`04-线色与自查卡.md` → 一页纸自查卡）；
+    2. **合集 PDF**（由全部 5 份文档合成，源就是合集自身的 md）。
+    """
+    return {
+        "04-线色与自查卡.md": ("04-线色与自查卡.pdf", "04-线色与自查卡.html"),
+        COLLECTION_MD: (COLLECTION_PDF, COLLECTION_HTML),
+    }
+
+#: 合集的目录（与 DOCUMENTS 的顺序一致；标题里的"·"前是编号）
+COLLECTION_TOC: Tuple[str, ...] = (
+    "接线总览（三根线速查 + 硬件判据）",
+    "40-pin 引脚分配表",
+    "接线图与逐线接续表（含万用表验证）",
+    "供电与安全",
+    "线色与自查卡",
+)
+
+#: 指向"另一份 basic 文档"的链接：打印件里没有别的文件，转成纯文本
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((?!https?://)([^)#][^)]*)\)")
+#: 指向本文档内部章节的链接（`#xxx`）：打印件里跳转没意义，保留文字
+_ANCHOR_RE = re.compile(r"\[([^\]]+)\]\(#[^)]*\)")
+#: 有序列表项（`1. xxx`）：`md2pdf.cjs` 只在"**上一行是空行或另一个列表项**"时才当列表处理，
+#: 所以合成时要把连着写的列表项拆开，否则它们会被渲染成一行（实测踩到）
+_ORDERED_ITEM_RE = re.compile(r"^(?P<num>\d+)\.\s+(?P<text>.+)$")
+
+
+def _plain_links(text: str) -> str:
+    """把"指向仓库内文件"的 Markdown 链接降级成纯文本（打印件里那些文件不存在）。
+
+    判据：http(s) 链接保留（打印出来也能照着敲）；指向仓库文件的链接保留**文字**并去掉路径，
+    否则 PDF 里会看到一堆 `../README.md` 这种"点了也没用"的路径。
+    """
+    text = _ANCHOR_RE.sub(r"\1", text)
+    return _LINK_RE.sub(r"\1", text)
+
+
+def _space_lists(text: str) -> str:
+    """把连着的有序列表项拆成"每项之间空一行"。
+
+    为什么（实测）：`scripts/md2pdf.cjs` 判定"列表开始"的条件是 **上一行是空行**、
+    "列表继续"的条件是 **上一行也是列表项**。而 `1.` 和 `2.` 这种**有序**列表项
+    它的续行判断只认 `-`/`*` 开头，于是连着的 `1. 2. 3.` 会被当普通段落渲染成一行。
+    合集里我们用有序列表写目录，所以合成前统一加空行 —— 这是"生成给谁看"的适配：
+    面向 PDF 渲染器，而不是面向 GitHub。
+    """
+    out: List[str] = []
+    for line in text.splitlines():
+        is_item = bool(_ORDERED_ITEM_RE.match(line))
+        if is_item and out and out[-1].strip():
+            out.append("")
+        out.append(line)
+    return "\n".join(out)
+
+
+def _strip_generated_notice(text: str) -> str:
+    """去掉单份文档开头的"本文件由代码生成"声明（合集开头统一写一次即可）。"""
+    lines = text.splitlines()
+    kept: List[str] = []
+    for line in lines:
+        if line.startswith("> 🤖 **本文件由代码生成"):
+            continue
+        if line.startswith("> 生成器：`python3 basic/tools/wire_docs.py"):
+            continue
+        if line.startswith("> 事实来源："):
+            continue
+        if line.startswith("> 基础版版本："):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip("\n")
+
+
+def _demote_headings(text: str, demote: int = 1) -> str:
+    """把 `#` 标题整体降级（合集里各份文档是"章"，所以降到 `##` 起）。"""
+    out: List[str] = []
+    for line in text.splitlines():
+        if line.startswith("#"):
+            hashes = len(line) - len(line.lstrip("#"))
+            out.append("#" * (hashes + demote) + line[hashes:])
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def build_collection() -> str:
+    """把 5 份文档合成一份适合打印的 Markdown（含封面 + 用法 + 各章）。
+
+    做法与理由：
+    - 每份文档降两级标题，合集用 `##` 当章标题；
+    - 每份文档的"本文件由代码生成"声明只保留一次（合集抬头）；
+    - 指向仓库内文件的链接降级成纯文本（打印件里没有那些文件）；
+    - 有序列表项之间补空行（`md2pdf.cjs` 的有序列表续行判定只认 `-`/`*`，见 `_space_lists`）。
+
+    ⚠️ **刻意不写"页数"**：页数由浏览器排版决定，写进 Markdown 会引入"改了页数 →
+    Markdown 哈希变 → PDF 又要重导出"的循环（生成与校验互相打架）。
+    页数在导出时由 `md2pdf.cjs` 打印出来，看终端即可。
+    """
+    parts: List[str] = []
+    parts.append(f"""# 基础版 · DHT11 温湿度接线文档（合集）
+
+> 用途：**打印这一份就够** —— 接线图、逐线接续表、引脚分配、供电安全、自查卡全在里面。
+> 单份 Markdown（可编辑版）与其它资料见仓库 `basic/hardware/` 目录。
+>
+> 事实来源：`basic/pins.py`（引脚映射）、`basic/dht11read.py`（驱动默认值与量程）、`basic/wire_spec.py`（接线事实）
+> 生成方式：`python3 basic/tools/wire_docs.py --generate`（Markdown）→
+> `node scripts/md2pdf.cjs --in basic/hardware/{COLLECTION_MD} --out basic/hardware/{COLLECTION_PDF}`
+> 基础版版本：{__version__}
+
+## 怎么用这一份（打印前先看三行）
+
+1. **要接线**：看"接线图与逐线接续表"那一章 —— 三根线：脚 1=3.3V（红）、脚 6=GND（黑）、脚 7=DATA（黄）；
+2. **接完验收**：看那章的"接完怎么验"（万用表三项）与最后一章"线色与自查卡"；
+3. **读不到数**：先跑 `python3 tools/diag_dht_line.py`，再对照那章的"现象 → 原因"表。
+
+---
+
+""")
+    for name, title in zip(DOCUMENTS, COLLECTION_TOC):
+        body = _strip_generated_notice(DOCUMENTS[name]())
+        # 去掉单份文档自己的 H1（合集里统一用小节标题），其余标题整体降一级
+        lines = [line for line in body.splitlines() if not line.startswith("# ")]
+        body = _demote_headings("\n".join(lines).strip("\n"), demote=2)
+        body = _space_lists(_plain_links(body))
+        parts.append(f"## {title}\n\n{body}\n\n---\n")
+    parts[0] = _space_lists(parts[0])      # 封面里的"怎么用"也是有序列表，同样要拆开
+    return "\n".join(parts)
+
+
+def generate_collection(target_dir: Path = HW_DIR) -> Path:
+    """写出合集 Markdown（**只写 .md**；PDF 由 `scripts/md2pdf.cjs` 转）。"""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / COLLECTION_MD
+    _write_lf(path, build_collection())
+    return path
+
+
+# ==========================================================================
 # 生成 / 校验
 # ==========================================================================
 
@@ -716,16 +871,14 @@ DOCUMENTS: Dict[str, Callable[[], str]] = {
     "04-线色与自查卡.md": build_quick_card,
 }
 
-#: 生成/校验时必须存在的其它文件（PDF 与它的中间 HTML，由 `scripts/md2pdf.cjs` 产出）
-REQUIRED_FILES: Tuple[str, ...] = ("04-线色与自查卡.pdf", "04-线色与自查卡.html")
+#: 生成/校验时必须存在的其它文件（两份 PDF 与它们的中间 HTML，由 `scripts/md2pdf.cjs` 产出）
+REQUIRED_FILES: Tuple[str, ...] = (
+    "04-线色与自查卡.pdf", "04-线色与自查卡.html",
+    COLLECTION_PDF, COLLECTION_HTML,
+)
 
 #: 记录"打印产物是用哪一版 md 生成的"的清单文件
 MANIFEST_NAME = ".print-manifest.json"
-
-#: 需要"打印产物与 md 必须同步"的文档：md 名 → 由它生成的产物
-PRINT_SOURCES: Dict[str, Tuple[str, ...]] = {
-    "04-线色与自查卡.md": ("04-线色与自查卡.pdf", "04-线色与自查卡.html"),
-}
 
 
 def _sha256(path: Path) -> str:
@@ -735,29 +888,29 @@ def _sha256(path: Path) -> str:
 
 
 def write_print_manifest(target_dir: Path = HW_DIR) -> Path:
-    """记录每个打印产物的源 md 的哈希（生成时写）。
+    """记录每个打印产物（及其源 md）的哈希（生成时写）。
 
-    ⚠️ 为什么需要（真问题）：生成器只写了 md，PDF 是**另一个命令**（`scripts/md2pdf.cjs`）产的。
-    如果只检查"PDF 存在"，那么"改了 md、忘了重新导出 PDF"就会被漏过去 ——
-    打印出来的自查卡与正文不一致，正好是最难发现的一类错误。
-    所以把"当时源文件的哈希"记在清单里，`--check` 时比对：
-    md 变了而清单没更新 ⇒ 报"打印产物已过期"。
+    ⚠️ 为什么需要（真问题）：生成器只写 md，PDF 是**另一个命令**（`scripts/md2pdf.cjs`）产的。
+    如果只检查"PDF 存在"，那么"PDF 被手改 / 回退 / 丢失"就会被漏过去 ——
+    打印出来的接线图与正文不一致，正好是最难发现的一类错误。
+    所以把"当时源文件与产物的哈希"记进清单，`--check` 时逐项比对。
     """
     import json
 
+    sources = {}
+    for source, outputs in print_sources().items():
+        if not (target_dir / source).exists():
+            continue
+        sources[source] = {
+            "sha256": _sha256(target_dir / source),
+            "outputs": {
+                name: (_sha256(target_dir / name) if (target_dir / name).exists() else None)
+                for name in outputs
+            },
+        }
     manifest = {
-        "note": "由 wire_docs.py --generate 写出；记录打印产物及其源 md 的哈希，用来发现'忘了重新导出 PDF'",
-        "sources": {
-            source: {
-                "sha256": _sha256(target_dir / source),
-                "outputs": {
-                    name: (_sha256(target_dir / name) if (target_dir / name).exists() else None)
-                    for name in outputs
-                },
-            }
-            for source, outputs in PRINT_SOURCES.items()
-            if (target_dir / source).exists()
-        },
+        "note": "由 wire_docs.py --generate 写出；记录打印产物及其源 md 的哈希（发现'忘了重新导出 PDF'与'产物被改'）",
+        "sources": sources,
     }
     path = target_dir / MANIFEST_NAME
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
@@ -815,13 +968,14 @@ def _write_lf(path: Path, text: str) -> None:
 
 
 def generate_all(target_dir: Path = HW_DIR) -> List[Path]:
-    """把全部文档写到磁盘，返回写入的文件列表（并刷新打印产物清单）。"""
+    """把全部文档写到磁盘（含打印合集 md），返回写入的文件列表（并刷新打印产物清单）。"""
     target_dir.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
     for name, builder in DOCUMENTS.items():
         path = target_dir / name
         _write_lf(path, builder())
         written.append(path)
+    written.append(generate_collection(target_dir))
     written.append(write_print_manifest(target_dir))
     return written
 
@@ -861,9 +1015,26 @@ def check_all(target_dir: Path = HW_DIR) -> List[str]:
         problems.extend(check_required_facts(corpus))
         problems.extend(check_referenced_paths(corpus, target_dir))
 
+    # 打印合集：内容与生成结果一致 + 5 个章节齐全（少了章节说明合成逻辑坏了）
+    collection_path = target_dir / COLLECTION_MD
+    if not collection_path.exists():
+        problems.append(f"缺少打印合集：{collection_path}（跑 `--generate` 生成）")
+    else:
+        expected_collection = build_collection()
+        if collection_path.read_text(encoding="utf-8") != expected_collection:
+            problems.append(
+                f"打印合集与代码不一致：{COLLECTION_MD}（改了生成器/事实源没重新生成，或手工改过）"
+            )
+        missing_chapters = [title for title in COLLECTION_TOC if title not in expected_collection]
+        if missing_chapters:
+            problems.append(f"打印合集缺少章节：{'；'.join(missing_chapters)}")
+
     for extra in REQUIRED_FILES:
         if not (target_dir / extra).exists():
-            problems.append(f"缺少必需文件：{target_dir / extra}（PDF，见 `04-线色与自查卡.md` 末尾的生成命令）")
+            problems.append(
+                f"缺少必需文件：{target_dir / extra}（PDF/HTML，生成命令见 `{COLLECTION_MD}` 或 "
+                "`04-线色与自查卡.md` 的末尾）"
+            )
     problems.extend(check_print_sync(target_dir))
     return problems
 
@@ -921,7 +1092,7 @@ def self_test() -> List[str]:
     # ① 事实检查：把上拉电阻写错（4.7k 写成 4k）必须被抓到
     bad_fact = good.replace(wire_spec.pullup_text(), "4kΩ~10kΩ")
     if not check_required_facts(bad_fact):
-        problems.append("自测失败：把上拉电阻写错（4.7kΩ → 4kΩ）却仍然通过 —— 事实检查形同虚设")
+        problems.append("自测失败：把上拉电阻写错（4.7kΩ → 4k）却仍然通过 —— 事实检查形同虚设")
     if check_required_facts(good):
         problems.append("自测失败：正确文本被误报缺少关键事实（假红）")
 

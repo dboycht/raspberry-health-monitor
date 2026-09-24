@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>基础版 · DHT11 接线文档合集</title><style>
+    @page { size: A4; margin: 14mm 12mm 16mm 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "微软雅黑", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+      font-size: 10.5pt; line-height: 1.55; color: #1a1a1a; margin: 0;
+    }
+    h1 { font-size: 19pt; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 3px solid #1f77b4; color: #0b3d5c; }
+    h2 { font-size: 14.5pt; margin: 18px 0 8px; padding: 5px 8px; background: #eef5fb;
+         border-left: 5px solid #1f77b4; color: #0b3d5c; page-break-after: avoid; }
+    h3 { font-size: 12pt; margin: 14px 0 6px; color: #14507a; page-break-after: avoid; }
+    h4 { font-size: 11pt; margin: 12px 0 5px; color: #14507a; }
+    p { margin: 6px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+    th, td { border: 1px solid #b9c9d6; padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #dfeaf4; font-weight: 600; }
+    tr { page-break-inside: avoid; }
+    thead { display: table-header-group; }
+    code { font-family: Consolas, "Courier New", monospace; background: #f2f4f6;
+           padding: 1px 4px; border-radius: 3px; font-size: 9pt; }
+    pre { background: #f6f8fa; border: 1px solid #d6dde4; border-radius: 4px;
+          padding: 8px 10px; overflow-wrap: anywhere; white-space: pre-wrap; page-break-inside: avoid; }
+    pre code { background: none; padding: 0; }
+    blockquote { margin: 8px 0; padding: 6px 10px; background: #fff8e6;
+                 border-left: 4px solid #e8b84b; color: #5a4a1a; }
+    ul, ol { margin: 6px 0 6px 22px; padding: 0; }
+    li { margin: 2px 0; }
+    hr { border: none; border-top: 1px dashed #b9c9d6; margin: 14px 0; }
+    strong { color: #b3261e; }
+    @media print { h2 { break-after: avoid; } }
+  </style></head>
+<body><h1>基础版 · DHT11 温湿度接线文档（合集）</h1>
+<blockquote>用途：<strong>打印这一份就够</strong> —— 接线图、逐线接续表、引脚分配、供电安全、自查卡全在里面。<br>单份 Markdown（可编辑版）与其它资料见仓库 <code>basic/hardware/</code> 目录。<br><br>事实来源：<code>basic/pins.py</code>（引脚映射）、<code>basic/dht11read.py</code>（驱动默认值与量程）、<code>basic/wire_spec.py</code>（接线事实）<br>生成方式：<code>python3 basic/tools/wire_docs.py --generate</code>（Markdown）→<br><code>node scripts/md2pdf.cjs --in basic/hardware/05-接线文档合集.md --out basic/hardware/05-接线文档合集.pdf</code><br>基础版版本：1.0.0</blockquote>
+<h2>怎么用这一份（打印前先看三行）</h2>
+<ol>
+<li><strong>要接线</strong>：看"接线图与逐线接续表"那一章 —— 三根线：脚 1=3.3V（红）、脚 6=GND（黑）、脚 7=DATA（黄）；</li>
+</ol>
+<ol>
+<li><strong>接完验收</strong>：看那章的"接完怎么验"（万用表三项）与最后一章"线色与自查卡"；</li>
+</ol>
+<ol>
+<li><strong>读不到数</strong>：先跑 <code>python3 tools/diag_dht_line.py</code>，再对照那章的"现象 → 原因"表。</li>
+</ol>
+<hr>
+<h2>接线总览（三根线速查 + 硬件判据）</h2>
+<blockquote>这份目录是 <code>basic/</code> 的<strong>硬件入口</strong>：只讲一件事 —— 把 <strong>DHT11 温湿度模块</strong>接到树莓派 5 上，<br>让 <code>python3 run.py</code> 能读到真实温度与湿度。<br>软件怎么跑见 <code>../README.md</code>；验收怎么打勾见 <code>../验收说明.md</code>。</blockquote>
+<h4>0. 一句话接线（三根线）</h4>
+<table>
+<thead><tr><th>DHT11 侧</th><th>接到树莓派（物理脚）</th><th>BCM</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>VCC / + / VDD</td><td><strong>1</strong></td><td>—</td><td><strong>必须 3.3V</strong>；不要接 5V（物理脚 2/4）——数据电平会被拉到 5V，伤 GPIO</td></tr>
+<tr><td>GND / −</td><td><strong>6</strong></td><td>—</td><td>任意一个 GND 脚都行（脚 6/9/14/20/25/30/34/39）；<strong>必须共地</strong></td></tr>
+<tr><td>DATA / OUT / S</td><td><strong>7</strong></td><td>GPIO4</td><td>单总线数据线（双向）；裸四针传感器必须外接 4.7kΩ~10kΩ 上拉到 3.3V</td></tr>
+</tbody></table>
+<blockquote>记忆点：<strong>供电 3.3V、数据 GPIO4（物理脚 7）、一定要共地</strong>。</blockquote>
+<h4>1. 本目录有什么</h4>
+<table>
+<thead><tr><th>文件</th><th>什么时候看</th><th>内容</th></tr></thead>
+<tbody>
+<tr><td><code>01-引脚分配表.md</code></td><td>插线前先看</td><td>40-pin 逐脚分配、本基础版用到哪几个脚、空闲脚一览</td></tr>
+<tr><td><code>02-接线图.md</code></td><td>动手接线时</td><td>ASCII 接线图、逐线接续表、上拉电阻怎么接、万用表验证步骤</td></tr>
+<tr><td><code>03-供电与安全.md</code></td><td>接线前必读</td><td>3.3V/5V 不要接错、电流预算、断电插拔、防静电</td></tr>
+<tr><td><code>04-线色与自查卡.md</code></td><td>贴在工位上</td><td>一页纸内容：线色约定 + 通电前自查 + 现象对照</td></tr>
+<tr><td><code>04-线色与自查卡.pdf</code></td><td>打印带到工位</td><td>上面那份的 PDF（A4，由 <code>scripts/md2pdf.cjs</code> 生成）</td></tr>
+<tr><td><code>05-接线文档合集.md</code> / <code>05-接线文档合集.pdf</code></td><td><strong>打印这一份就够</strong></td><td>上面 1–4 全部合成的一份（含目录），PDF 由 <code>scripts/md2pdf.cjs</code> 生成</td></tr>
+</tbody></table>
+<h4>2. 接线速查（本基础版用到的 3 个脚）</h4>
+<table>
+<thead><tr><th>物理脚</th><th>BCM</th><th>用途</th><th>信号</th><th>建议线色</th><th>关键提醒</th></tr></thead>
+<tbody>
+<tr><td><strong>1</strong></td><td>—</td><td>VCC</td><td>供电</td><td>红</td><td><strong>必须 3.3V</strong>；不要接 5V（物理脚 2/4）——数据电平会被拉到 5V，伤 GPIO</td></tr>
+<tr><td><strong>6</strong></td><td>—</td><td>GND</td><td>地</td><td>黑</td><td>任意一个 GND 脚都行（脚 6/9/14/20/25/30/34/39）；<strong>必须共地</strong></td></tr>
+<tr><td><strong>7</strong></td><td>GPIO4</td><td>DATA</td><td>数据</td><td>黄</td><td>单总线数据线（双向）；裸四针传感器必须外接 4.7kΩ~10kΩ 上拉到 3.3V</td></tr>
+</tbody></table>
+<p><strong>其余 37 个脚本基础版全部空闲</strong>（完整分配见 <code>01-引脚分配表.md</code>）。</p>
+<h4>3. 三分钟接完的顺序</h4>
+<ol>
+<li><strong>断电</strong>（拔掉树莓派电源；带电插拔是烧 GPIO 的头号原因）；</li>
+</ol>
+<ol>
+<li>红线上 <strong>3.3V</strong>（物理脚 1/17），黑线接 <strong>GND</strong>（物理脚 6 或任意地脚）；</li>
+</ol>
+<ol>
+<li>黄线接<strong>数据脚 7（GPIO4）</strong>；</li>
+</ol>
+<ol>
+<li>如果是<strong>裸四针</strong>传感器：在 DATA 与 3.3V 之间接一个 4.7kΩ~10kΩ 电阻（三针模块通常已自带，不用接）；</li>
+</ol>
+<ol>
+<li>上电，跑自检与采集：</li>
+</ol>
+<pre><code>cd ~/raspberry-health-monitor/basic
+python3 tools/selfcheck.py            # 应看到"真硬件后端可用：lgpio"
+python3 tools/diag_dht_line.py        # 三态电平判据（读不到数据时用它定位）
+python3 run.py                        # 真实读数 + 动态曲线</code></pre>
+<h4>4. 硬件判据（验收用）</h4>
+<table>
+<thead><tr><th>#</th><th>判据</th><th>怎么验</th><th>期望</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>模块供电正确</td><td>万用表直流档量模块 VCC 与 GND 之间</td><td><strong>约 3.3V</strong>（不是 5V）</td></tr>
+<tr><td>2</td><td>共地</td><td>万用表蜂鸣档：树莓派 GND ↔ 模块 GND</td><td><strong>响</strong>（导通）</td></tr>
+<tr><td>3</td><td>数据线通</td><td>万用表蜂鸣档：模块 DATA ↔ <strong>物理脚 7</strong></td><td><strong>响</strong></td></tr>
+<tr><td>4</td><td>上拉存在（裸传感器）</td><td>断电量 DATA ↔ 3.3V 电阻</td><td>约 4.7kΩ~10kΩ</td></tr>
+<tr><td>5</td><td>空闲电平</td><td><code>python3 tools/diag_dht_line.py</code></td><td>上拉=1、下拉=0（线上没有器件强驱动）</td></tr>
+<tr><td>6</td><td>能读出数</td><td><code>python3 run.py --no-plot --duration 20</code></td><td>每行都是真实温湿度（不是"未知"）</td></tr>
+</tbody></table>
+<h4>5. 器件现状（<strong>诚实标注</strong>）</h4>
+<table>
+<thead><tr><th>项</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td>引脚号、供电、上拉电阻要求</td><td>✅ 来自代码与数据手册（<code>wire_docs.py --check</code> 每次提交前机器校验）</td></tr>
+<tr><td>文档里的命令是否真实存在</td><td>✅ 由检查器核对（<code>basic/tools/</code>、<code>basic/run.py</code> 的路径必须存在）</td></tr>
+<tr><td>本基础版的<strong>真机接线与读数</strong></td><td>⬜ <strong>未实测</strong>（树莓派当前不在线；接好后按上面第 4 节的判据逐条打勾）</td></tr>
+</tbody></table>
+<blockquote>⚠️ 报告与答辩请照实区分"纸面推导"与"真机实测"：本文档的所有数字都能在代码里找到出处，<br>但<strong>"文档自洽"不等于"真机已经读通"</strong>。</blockquote>
+<h4>6. 读到数据之后（软件侧速查）</h4>
+<table>
+<thead><tr><th>项</th><th>值</th><th>出处</th></tr></thead>
+<tbody>
+<tr><td>默认采样周期</td><td>3 秒（硬件要求 ≥2 秒）</td><td><code>basic/wire_spec.py</code>（与驱动常量同源）</td></tr>
+<tr><td>数据存哪</td><td><code>basic/data/dht11_日期_时刻.csv</code>（一次运行一个文件；由 <code>basic/store.py</code> 的 <code>default_csv_path()</code> 生成）</td><td><code>basic/store.py</code></td></tr>
+<tr><td>CSV 表头</td><td><code>index,timestamp,temperature_c,humidity_percent,status,note</code></td><td><code>basic/model.py</code> 的 <code>CSV_HEADER</code></td></tr>
+<tr><td>读失败怎么写</td><td>温度/湿度字段<strong>留空</strong>、<code>status=fail</code>、<code>note</code> 写原因（<strong>绝不写 0</strong>）</td><td><code>basic/model.py</code> 的 <code>Reading.to_csv_row()</code></td></tr>
+<tr><td>曲线窗口怎么开</td><td><code>python3 run.py</code>（无显示器：<code>--duration 60 --save curve.png</code>）</td><td><code>basic/plot.py</code></td></tr>
+</tbody></table>
+<hr>
+<h2>40-pin 引脚分配表</h2>
+<blockquote><strong>看物理脚号插线，看 BCM 编号写代码</strong> —— 两者不是偏移关系<br>（GPIO4 = 物理脚 7，但 GPIO27 = 物理脚 13）。<br>本表把 40 个脚<strong>全部列出</strong>（含未用的），方便你确认"这个脚到底能不能用"。</blockquote>
+<h4>1. 完整 40-pin 分配</h4>
+<p>「状态」列：<strong>✅ 本基础版使用</strong> / <strong>🔌 电源或地</strong> / <strong>🟡 保留</strong> / <strong>⚪ 空闲</strong></p>
+<table>
+<thead><tr><th>物理脚</th><th>BCM</th><th>默认功能</th><th>本基础版怎么用</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>—</td><td>3.3V</td><td>DHT11 VCC</td><td>✅ 本基础版使用</td></tr>
+<tr><td>2</td><td>—</td><td>5V</td><td>可给传感器供电（本基础版只用 3.3V）</td><td>🔌 电源</td></tr>
+<tr><td>3</td><td>GPIO2</td><td>GPIO2 / SDA1</td><td>I2C1 SDA（GPIO2）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>4</td><td>—</td><td>5V</td><td>可给传感器供电（本基础版只用 3.3V）</td><td>🔌 电源</td></tr>
+<tr><td>5</td><td>GPIO3</td><td>GPIO3 / SCL1</td><td>I2C1 SCL（GPIO3）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>6</td><td>—</td><td>GND</td><td>DHT11 GND</td><td>✅ 本基础版使用</td></tr>
+<tr><td>7</td><td>GPIO4</td><td>GPIO4</td><td>DHT11 DATA</td><td>✅ 本基础版使用</td></tr>
+<tr><td>8</td><td>GPIO14</td><td>GPIO14 / TXD</td><td>UART TXD（GPIO14）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>9</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>10</td><td>GPIO15</td><td>GPIO15 / RXD</td><td>UART RXD（GPIO15）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>11</td><td>GPIO17</td><td>GPIO17</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>12</td><td>GPIO18</td><td>GPIO18</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>13</td><td>GPIO27</td><td>GPIO27</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>14</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>15</td><td>GPIO22</td><td>GPIO22</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>16</td><td>GPIO23</td><td>GPIO23</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>17</td><td>—</td><td>3.3V</td><td>可给传感器供电（本基础版只用 3.3V）</td><td>🔌 电源</td></tr>
+<tr><td>18</td><td>GPIO24</td><td>GPIO24</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>19</td><td>GPIO10</td><td>GPIO10 / MOSI</td><td>SPI0 MOSI（GPIO10）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>20</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>21</td><td>GPIO9</td><td>GPIO9 / MISO</td><td>SPI0 MISO（GPIO9）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>22</td><td>GPIO25</td><td>GPIO25</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>23</td><td>GPIO11</td><td>GPIO11 / SCLK</td><td>SPI0 SCLK（GPIO11）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>24</td><td>GPIO8</td><td>GPIO8 / CE0</td><td>SPI0 CE0（GPIO8）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>25</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>26</td><td>GPIO7</td><td>GPIO7 / CE1</td><td>SPI0 CE1（GPIO7）</td><td>⚪ 空闲（固定功能）</td></tr>
+<tr><td>27</td><td>—</td><td>GPIO0 / ID_SD</td><td>HAT ID_SD（EEPROM 数据）</td><td>🟡 保留（不要用）</td></tr>
+<tr><td>28</td><td>—</td><td>GPIO1 / ID_SC</td><td>HAT ID_SC（EEPROM 时钟）</td><td>🟡 保留（不要用）</td></tr>
+<tr><td>29</td><td>GPIO5</td><td>GPIO5</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>30</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>31</td><td>GPIO6</td><td>GPIO6</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>32</td><td>GPIO12</td><td>GPIO12</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>33</td><td>GPIO13</td><td>GPIO13</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>34</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>35</td><td>GPIO19</td><td>GPIO19</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>36</td><td>GPIO16</td><td>GPIO16</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>37</td><td>GPIO26</td><td>GPIO26</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>38</td><td>GPIO20</td><td>GPIO20</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+<tr><td>39</td><td>—</td><td>GND</td><td>公共地（推荐用脚 6）</td><td>🔌 地</td></tr>
+<tr><td>40</td><td>GPIO21</td><td>GPIO21</td><td>可用于扩展（加蜂鸣器 / LED / 按键…）</td><td>⚪ 空闲</td></tr>
+</tbody></table>
+<h4>2. 统计</h4>
+<table>
+<thead><tr><th>类别</th><th>数量</th><th>物理脚</th></tr></thead>
+<tbody>
+<tr><td>3.3V</td><td>2</td><td>1、17</td></tr>
+<tr><td>5V（<strong>本基础版不要用</strong>）</td><td>2</td><td>2、4</td></tr>
+<tr><td>GND</td><td>8</td><td>6、9、14、20、25、30、34、39</td></tr>
+<tr><td>本基础版使用</td><td>3</td><td>1、6、7</td></tr>
+<tr><td>空闲（可扩展）</td><td>25</td><td>3、5、8、10、11、12、13、15、16、18、19、21、22、23、24、26、29、31、32、33、35、36、37、38、40</td></tr>
+<tr><td>保留（不要用）</td><td>2</td><td>27、28</td></tr>
+</tbody></table>
+<blockquote>⚠️ <strong>GND 只有 8 个脚</strong>：本基础版只用 1 个（脚 6），<br>以后加器件时建议用<strong>面包板地轨</strong>汇流，不要把好几根线硬塞进同一个物理脚。</blockquote>
+<h4>3. 常用扩展引脚（以后加功能时先看这里）</h4>
+<table>
+<thead><tr><th>想加什么</th><th>推荐引脚（物理脚 / BCM）</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>蜂鸣器（报警）</td><td>12 / GPIO18</td><td>需串 100Ω~1kΩ 限流</td></tr>
+<tr><td>LED 状态灯</td><td>15 / GPIO22（绿）、16 / GPIO23（黄）</td><td>每个都要串 220Ω~1kΩ</td></tr>
+<tr><td>按键（手动记录）</td><td>13 / GPIO27</td><td>一端接脚 13，另一端接 GND，用内部上拉</td></tr>
+<tr><td>第二个单总线器件</td><td>11 / GPIO17、29 / GPIO5</td><td>不要把两个器件并到同一条数据线</td></tr>
+</tbody></table>
+<p>⚠️ <strong>同一个 GPIO 只能有一个主人</strong>：两个器件抢一个脚，会出现"一动这个、那个也跟着变"<br>的诡异现象（本项目在监护系统里真的踩过：人体红外与按键撞脚，人一走过就误触发求助）。<br><code>basic/pins.py</code> 里的 <code>find_conflicts()</code> 就是查这个的。</p>
+<h4>4. 引脚号从哪来（<strong>不许手写</strong>）</h4>
+<table>
+<thead><tr><th>内容</th><th>唯一来源</th></tr></thead>
+<tbody>
+<tr><td>BCM ↔ 物理脚映射</td><td><code>basic/pins.py</code> 的 <code>BCM_TO_PHYSICAL</code></td></tr>
+<tr><td>数据脚默认值</td><td><code>basic/dht11read.py</code> 的 <code>Dht11Reader(pin=...)</code> 默认参数</td></tr>
+<tr><td>本表</td><td><code>python3 basic/tools/wire_docs.py --generate</code> 从上面两处生成</td></tr>
+</tbody></table>
+<p><strong>为什么强调这一点</strong>：本项目早期有一个驱动用 <code>pin + 1</code> 猜物理脚号，<br>把 GPIO27 报成"物理脚 28"（28 其实是 HAT ID_SC）—— 同学照着插线就插错了。<br>判据：<strong>任何形如 <code>pin + N</code> 的物理脚换算一律视为缺陷</strong>。</p>
+<hr>
+<h2>接线图与逐线接续表（含万用表验证）</h2>
+<h4>1. 接线图（示意图，只画本基础版要接的三根线）</h4>
+<pre><code> 树莓派 5 · 40-pin（俯视，只画要接的三个脚）  DHT11 模块端子
+
+ 脚  1★ 3.3V     ──────────●   VCC           （红线）
+
+ 脚  6★ GND      ──────────●   GND           （黑线）
+
+ 脚  7★ GPIO4    ──────────●   DATA          （黄线）
+
+  ① 三个物理脚：1（3.3V）、6（GND）、7（GPIO4）　★ = 本基础版用到的脚（其余 37 个空闲）
+  ② 裸四针传感器：在 DATA 与 3.3V 之间接一个 4.7kΩ~10kΩ 上拉电阻（三针模块通常已自带）
+  ③ 颜色只是约定：红线=电源、黑线=地、黄线=数据（换色可以，但要在验收记录里写明）
+  ④ DHT11 模块丝印可能是 VCC/DATA/GND，也可能是 + / out / −（对应关系见下面的逐线表）</code></pre>
+<blockquote>三针<strong>模块</strong>（带小板的成品）通常已经焊好上拉电阻，<strong>不用自己再接</strong>；<br>四针<strong>裸传感器</strong>（光板一个元件）必须外接 4.7kΩ~10kΩ 上拉，否则永远读不到（一直 NaN / 无应答）。</blockquote>
+<h4>2. 逐线接续表（照这个插，一根都别猜）</h4>
+<table>
+<thead><tr><th>信号</th><th>DHT11 侧丝印</th><th>树莓派物理脚</th><th>BCM</th><th>建议线色</th><th>关键提醒</th></tr></thead>
+<tbody>
+<tr><td>供电</td><td><code>VCC / + / VDD</code></td><td><strong>1</strong></td><td>—</td><td>红</td><td><strong>必须 3.3V</strong>；不要接 5V（物理脚 2/4）——数据电平会被拉到 5V，伤 GPIO</td></tr>
+<tr><td>地</td><td><code>GND / −</code></td><td><strong>6</strong></td><td>—</td><td>黑</td><td>任意一个 GND 脚都行（脚 6/9/14/20/25/30/34/39）；<strong>必须共地</strong></td></tr>
+<tr><td>数据</td><td><code>DATA / OUT / S</code></td><td><strong>7</strong></td><td>GPIO4</td><td>黄</td><td>单总线数据线（双向）；裸四针传感器必须外接 4.7kΩ~10kΩ 上拉到 3.3V</td></tr>
+</tbody></table>
+<p><strong>接线顺序</strong>：先电源 → 再地 → 最后信号。每插一根就检查一次有没有插错列。</p>
+<h4>3. 三种封装的差别（买到的可能是哪一种）</h4>
+<table>
+<thead><tr><th>封装</th><th>长相</th><th>需要上拉吗</th><th>供电</th></tr></thead>
+<tbody>
+<tr><td><strong>三针模块</strong></td><td>小板 + 3 个排针，丝印 <code>VCC/DATA/GND</code> 或 <code>+ / out / -</code></td><td><strong>不需要</strong>（板上已有）</td><td>3.3V（<strong>见第 4 节</strong>）</td></tr>
+<tr><td><strong>四针裸传感器</strong></td><td>光秃秃一个蓝色/白色元件，4 个长脚</td><td><strong>需要</strong> 4.7kΩ~10kΩ</td><td>3.3V（脚 1 或 17）</td></tr>
+<tr><td><strong>AM2302 / DHT22</strong></td><td>白色塑料壳，3 或 4 脚</td><td>模块版已自带</td><td>3.3V</td></tr>
+</tbody></table>
+<blockquote>本基础版的代码对 DHT11 / DHT22 都适用（都是"单总线、40 bit、校验和"），<br>只是量程判据按 DHT11 写死（0~50℃ / 20~90%RH）。</blockquote>
+<h4>4. 供电为什么必须 3.3V（<strong>本基础版最容易被坑的一点</strong>）</h4>
+<table>
+<thead><tr><th>事实</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>数据线电平 = 模块供电电压</td><td>DHT11 的 DATA 是<strong>开漏/上拉</strong>结构。模块接 5V 时，上拉把 DATA 拉到 <strong>5V</strong>；树莓派 GPIO 只耐受 <strong>3.3V</strong></td></tr>
+<tr><td>后果</td><td>轻则读数不稳、重则<strong>永久损坏 GPIO</strong>（甚至整块板）</td></tr>
+<tr><td>有些模块丝印写 5V</td><td>指的是 <strong>AM2302 那种带稳压的模块</strong>（板上有 3.3V LDO）。<strong>DHT11 不要接 5V</strong></td></tr>
+<tr><td>本基础上的做法</td><td>供电一律走 <strong>3.3V（物理脚 1/17）</strong>，5V（脚 2/4）本基础版<strong>不接任何东西</strong></td></tr>
+</tbody></table>
+<p><strong>判据（可执行）</strong>：上电后万用表量模块 <code>VCC</code> 对 <code>GND</code>，必须是 <strong>约 3.3V</strong>；<br>若量到 5V，立刻断电改线（这是"接线错误"里唯一会烧硬件的错）。</p>
+<h4>5. 接完怎么验（万用表 + 脚本，两套判据都要过）</h4>
+<h5>5.1 断电量电阻（防短路，30 秒）</h5>
+<table>
+<thead><tr><th>量哪里</th><th>档位</th><th>期望</th><th>不对说明什么</th></tr></thead>
+<tbody>
+<tr><td>3.3V ↔ GND（树莓派这侧，<strong>模块先拔掉</strong>）</td><td>电阻档</td><td>不导通（或读数很大）</td><td>导通 = 电源短路，<strong>绝对不能上电</strong></td></tr>
+<tr><td>模块 DATA ↔ 树莓派物理脚 7</td><td>蜂鸣档</td><td>响</td><td>不响 = 线插错列/断了</td></tr>
+<tr><td>模块 GND ↔ 树莓派 GND 脚</td><td>蜂鸣档</td><td>响</td><td>不响 = 没共地（读数必然乱跳）</td></tr>
+<tr><td>模块 DATA ↔ 3.3V（裸传感器）</td><td>电阻档</td><td>约 4.7kΩ~10kΩ</td><td>无穷大 = 上拉没接</td></tr>
+</tbody></table>
+<h5>5.2 上电量电压（判断器件有没有工作）</h5>
+<table>
+<thead><tr><th>量哪里</th><th>期望</th><th>不对时的含义</th></tr></thead>
+<tbody>
+<tr><td>模块 VCC ↔ GND</td><td><strong>约 3.3V</strong></td><td>0V = 没供上电；5V = 接错到 5V 脚（危险）</td></tr>
+<tr><td>DATA ↔ GND（空闲时）</td><td><strong>约 3.3V</strong>（高（约 3.3V））</td><td>0V = 线被拉死/接错；乱跳 = 没接上/接触不良</td></tr>
+</tbody></table>
+<h5>5.3 脚本判据（<code>basic/tools/diag_dht_line.py</code>）</h5>
+<pre><code>cd ~/raspberry-health-monitor/basic
+python3 tools/diag_dht_line.py            # 三态电平（上拉/下拉/浮空 各读 50 次）
+python3 tools/diag_dht_line.py --read 5   # 顺便连读 5 次，看真实应答</code></pre>
+<p>它会把"上拉=1、下拉=0"这类组合翻译成结论（<strong>哪一种组合对应哪种故障</strong>），<br>不要求你看懂寄存器。</p>
+<h5>5.4 最终判据（读得到数才算通）</h5>
+<pre><code>python3 run.py --no-plot --duration 20    # 20 秒，只采集与存档
+python3 run.py                            # 真实读数 + 动态曲线窗口</code></pre>
+<table>
+<thead><tr><th>期望</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>终端每行都是真实数值（如 <code>温度: 25.0 ℃，湿度: 58 %</code>）</td><td>这才是"通了"</td></tr>
+<tr><td>温度落在 0~50℃、湿度落在 20~90%RH</td><td>超出量程说明器件/接线有问题</td></tr>
+<tr><td>采样间隔 ≥3 秒（默认）</td><td>DHT11 两次读取必须间隔 ≥2 秒，否则返回陈旧数据</td></tr>
+</tbody></table>
+<h4>6. 现象 → 原因对照（按现象查）</h4>
+<table>
+<thead><tr><th>现象</th><th>最可能的原因</th><th>下一步</th></tr></thead>
+<tbody>
+<tr><td><code>只捕获到 0 个边沿：传感器没有应答</code></td><td>没供电 / 数据线插错列 / 没共地 / 裸传感器缺上拉</td><td>先量 VCC 是否 3.3V，再跑 <code>diag_dht_line.py</code></td></tr>
+<tr><td><code>校验和不符</code></td><td>线太长、接触不良、电源噪声、读取太快</td><td>缩短杜邦线、换线、确认间隔 ≥2 秒</td></tr>
+<tr><td>每次都是"未知"</td><td>DATA 接到别的脚（不是物理脚 7）</td><td>蜂鸣档量 DATA ↔ 脚 7</td></tr>
+<tr><td>读数偶尔对、偶尔乱</td><td>面包板接触不良 / 电源轨与信号插在同一列</td><td>换孔重插；面包板<strong>每一列纵向导通</strong>，别把电源和信号插同列</td></tr>
+<tr><td>中文变方框（曲线窗口）</td><td>缺中文字体</td><td><code>sudo apt install -y fonts-noto-cjk</code></td></tr>
+<tr><td><code>没有可用的 DHT11 读取后端</code></td><td>没装 lgpio，或是在电脑上跑</td><td><code>sudo apt install -y python3-lgpio</code>；电脑上用 <code>--mock</code></td></tr>
+</tbody></table>
+<blockquote>完整"现象 → 原因"还包括软件侧的（中文方框、matplotlib 缺失等），见 <code>../README.md</code> 第 7 节。</blockquote>
+<hr>
+<h2>供电与安全</h2>
+<blockquote>这一页只有 6 条规矩，但<strong>每一条都对应一次真实的硬件损坏或一周的排查</strong>。<br>本基础版只接一个 DHT11，风险很低 —— 但"以后加器件"时请回来重读第 5 节。</blockquote>
+<h4>1. 六条红线（照做）</h4>
+<table>
+<thead><tr><th>#</th><th>规矩</th><th>为什么</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><strong>插拔任何杜邦线之前先断电</strong>（拔电源，或 <code>sudo poweroff</code> 后等绿灯灭）</td><td>带电插拔最容易把 5V 蹭到 GPIO 上；热插拔还可能损坏 SD 卡上的文件系统</td></tr>
+<tr><td>2</td><td><strong>DHT11 供 3.3V，绝不接 5V</strong></td><td>数据电平会跟着供电变成 5V，超出 GPIO 耐压（见 <code>02-接线图.md</code> 第 4 节）</td></tr>
+<tr><td>3</td><td><strong>所有器件必须与树莓派共地</strong></td><td>不共地的典型症状：读数乱跳、时通时不通</td></tr>
+<tr><td>4</td><td><strong>不要用 40-pin 的 5V 脚给 3.3V 器件供电</strong>（脚 2、4）</td><td>本基础版<strong>一个 5V 器件都没有</strong>，那两脚直接空着</td></tr>
+<tr><td>5</td><td><strong>上电前先量电源对地有没有短路</strong></td><td>30 秒的检查能避免烧板（方法见 <code>02-接线图.md</code> 第 5.1 节）</td></tr>
+<tr><td>6</td><td><strong>手摸板子前先摸一下接地的金属</strong>（水管/机箱）</td><td>静电击穿是"什么都没做就坏了"的常见原因</td></tr>
+</tbody></table>
+<h4>2. 电源从哪来</h4>
+<table>
+<thead><tr><th>项</th><th>值</th><th>来源</th></tr></thead>
+<tbody>
+<tr><td>树莓派 5 官方电源要求</td><td><strong>5V/5A USB-C（官方 27W）</strong></td><td>官方规格（5A 是为了给 USB 外设留余量）</td></tr>
+<tr><td>本基础版的供电方式</td><td>树莓派 3.3V（物理脚 1 或 17）</td><td>只接一个 DHT11，不需要外部电源</td></tr>
+<tr><td>3.3V 轨电流上限</td><td>约 <strong>0.5 A（500 mA）</strong></td><td>40-pin 的 3.3V 由板载稳压器提供</td></tr>
+</tbody></table>
+<p><strong>电源不足的典型症状</strong>（不是"跑不起来"，而是"跑得诡异"）：<br>彩虹屏 / 反复重启 / I2C 器件时有时无 / 传感器读数乱跳。<br>看到这些先换电源，别急着改代码。</p>
+<h4>3. 电流预算（本基础版）</h4>
+<table>
+<thead><tr><th>器件</th><th>典型电流</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>DHT11 模块</td><td>0.5~2.5 mA</td><td>只在测量瞬间取电（本基础版唯一的负载）</td></tr>
+<tr><td><strong>合计</strong></td><td><strong>≤ 2.5 mA</strong></td><td>相对 500 mA 的 3.3V 上限，<strong>可忽略</strong></td></tr>
+</tbody></table>
+<blockquote>以后加器件（LCD、TFT、多个 LED）时，把它们的电流加进来重算；<br>接近 500 mA 就该考虑给器件单独供电（<strong>但地仍要共</strong>）。</blockquote>
+<h4>4. 电平匹配：什么时候需要电平转换</h4>
+<table>
+<thead><tr><th>器件输出</th><th>能否直连树莓派 GPIO</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><strong>3.3V 输出</strong>（DHT11 @3.3V 供电、常见的 HC-SR501 模块）</td><td>✅ 可以直连</td><td>本项目基础版就属于这一类</td></tr>
+<tr><td><strong>5V 输出</strong>（DHT11 误接 5V 时、HC-SR04 的 ECHO）</td><td>❌ <strong>绝对不行</strong></td><td>必须用 TXS0102 双向电平转换，或用 1kΩ+2kΩ 电阻分压</td></tr>
+<tr><td>开漏输出 + 上拉到 3.3V</td><td>✅ 可以</td><td>单总线（DHT11）就是这种形态：<strong>上拉接到 3.3V，而不是 5V</strong></td></tr>
+</tbody></table>
+<p><strong>记忆点</strong>：决定"能不能直连"的不是器件名字，而是<strong>它的输出电平是多少伏</strong>。<br>本基础版把 DHT11 接在 3.3V 上，所以数据线是 3.3V —— 这正是必须 3.3V 供电的根本原因。</p>
+<h4>5. 安全接线检查单（上电前逐条打勾）</h4>
+<ul>
+<li>[ ] 电源已<strong>断开</strong></li>
+<li>[ ] 3.3V ↔ GND 不导通（没有短路）</li>
+<li>[ ] 模块 VCC 接的是<strong>物理脚 1/17</strong>（3.3V），不是脚 2、4（5V）</li>
+<li>[ ] 模块 GND 接的是 <strong>GND 脚</strong>（推荐脚 6）</li>
+<li>[ ] DATA 接的是<strong>物理脚 7（GPIO4）</strong></li>
+<li>[ ] 裸四针传感器已接 4.7kΩ~10kΩ 上拉到 <strong>3.3V</strong>（不是 5V）</li>
+<li>[ ] 杜邦线插紧、没有跨列（面包板每一列纵向导通）</li>
+<li>[ ] 上电后模块 VCC 对 GND 约 3.3V</li>
+</ul>
+<h4>6. 出了问题怎么安全收尾</h4>
+<table>
+<thead><tr><th>情况</th><th>正确做法</th></tr></thead>
+<tbody>
+<tr><td>闻到焦味 / 板子发烫</td><td><strong>立刻拔电源</strong>，不要先看代码</td></tr>
+<tr><td>读数一直不对</td><td>断电 → 按 <code>02-接线图.md</code> 第 5 节重新量一遍 → 再上电</td></tr>
+<tr><td>树莓派起不来</td><td>断电，拔掉所有杜邦线，只留电源试开机（区分"接线问题"与"系统问题"）</td></tr>
+<tr><td>要收工放起来</td><td><code>sudo poweroff</code> → 等绿灯熄灭 → 再拔电源；器件装进塑料盒防潮防静电</td></tr>
+</tbody></table>
+<hr>
+<h2>线色与自查卡</h2>
+<blockquote>贴在工位上：接线时不用翻长文档，这一页就够了。<br>PDF 版：<code>04-线色与自查卡.pdf</code>（A4，生成命令在文件末尾）<br>—— 同目录的 <code>04-线色与自查卡.html</code> 是打印用的中间文件，不用管它。</blockquote>
+<h4>1. 线色约定（先定规矩，排错时省一半时间）</h4>
+<table>
+<thead><tr><th>线色</th><th>用途</th><th>接到哪</th></tr></thead>
+<tbody>
+<tr><td>🔴 红</td><td>电源</td><td>3.3V（物理脚 1/17）</td></tr>
+<tr><td>⚫ 黑</td><td>地</td><td>GND（物理脚 6 或任意地脚）</td></tr>
+<tr><td>🟡 黄</td><td>数据</td><td><strong>物理脚 7（GPIO4）</strong></td></tr>
+</tbody></table>
+<blockquote>手上的线颜色不全也没关系 —— <strong>约定好一套并写下来</strong>比"颜色好看"重要得多。</blockquote>
+<h4>2. 三根线速查</h4>
+<table>
+<thead><tr><th>DHT11 侧</th><th>树莓派物理脚</th><th>BCM</th><th>线色</th></tr></thead>
+<tbody>
+<tr><td>VCC / + / VDD</td><td><strong>1</strong></td><td>—</td><td>红</td></tr>
+<tr><td>GND / −</td><td><strong>6</strong></td><td>—</td><td>黑</td></tr>
+<tr><td>DATA / OUT / S</td><td><strong>7</strong></td><td>GPIO4</td><td>黄</td></tr>
+</tbody></table>
+<h4>3. 上电前 30 秒自查</h4>
+<ul>
+<li>[ ] 断电量过：3.3V ↔ GND <strong>不导通</strong>（没短路）</li>
+<li>[ ] 红 = 3.3V（脚 1/17）　⚫ 黑 = GND（脚 6）　🟡 黄 = 数据（脚 7）</li>
+<li>[ ] 裸四针传感器：DATA ↔ 3.3V 之间接了 4.7kΩ~10kΩ 电阻</li>
+<li>[ ] 杜邦线插紧、没插在同一列（面包板每列纵向导通）</li>
+</ul>
+<h4>4. 上电后 30 秒自查</h4>
+<pre><code>cd ~/raspberry-health-monitor/basic
+python3 tools/selfcheck.py            # 看后端是不是 lgpio
+python3 tools/diag_dht_line.py        # 三态电平结论
+python3 run.py --no-plot --duration 20</code></pre>
+<table>
+<thead><tr><th>看到什么</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>温度: 25.0 ℃，湿度: 58 %</code></td><td>✅ 通了</td></tr>
+<tr><td><code>只捕获到 0 个边沿</code></td><td>器件没应答：查供电 / 数据线 / 共地 / 上拉</td></tr>
+<tr><td><code>校验和不符</code></td><td>时序抖动：换短线、确认间隔 ≥2 秒</td></tr>
+<tr><td><code>没有可用的 DHT11 读取后端</code></td><td>没装 lgpio 或不在树莓派上跑</td></tr>
+</tbody></table>
+<h4>5. 引脚速查（本基础版只用这 3 个）</h4>
+<table>
+<thead><tr><th>物理脚</th><th>功能</th><th>本基础版用途</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>3.3V</td><td>DHT11 VCC</td></tr>
+<tr><td>6</td><td>GND</td><td>DHT11 GND</td></tr>
+<tr><td>7</td><td>GPIO4</td><td>DHT11 DATA</td></tr>
+</tbody></table>
+<p>其余 37 个脚空闲（完整表见 <code>01-引脚分配表.md</code>）。</p>
+<h4>6. 红线三条（背下来）</h4>
+<ol>
+<li><strong>插拔线先断电</strong>；</li>
+</ol>
+<ol>
+<li><strong>DHT11 接 3.3V，不接 5V</strong>；</li>
+</ol>
+<ol>
+<li><strong>必须共地</strong>。</li>
+</ol>
+<h4>7. 这份 PDF 怎么来的</h4>
+<pre><code>cd ~/raspberry-health-monitor
+node scripts/md2pdf.cjs --in basic/hardware/04-线色与自查卡.md --out basic/hardware/04-线色与自查卡.pdf --title "基础版 · DHT11 线色与自查卡"</code></pre>
+<blockquote>改了 md 之后请重新生成 PDF（两份必须同步）；<br>没有 Node/Edge 也不影响接线 —— md 里内容是全的，PDF 只是给打印用的。</blockquote>
+<hr></body></html>

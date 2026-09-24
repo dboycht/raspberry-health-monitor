@@ -200,6 +200,62 @@ class TestWiringDiagramLayout(unittest.TestCase):
             wire_spec.DATA_PHYSICAL = saved
 
 
+class TestCollection(unittest.TestCase):
+    """打印合集（把 5 份文档合成一份可打印的 Markdown → PDF）的判据。"""
+
+    def test_合集文件存在且与生成结果一致(self):
+        path = wire_docs.HW_DIR / wire_docs.COLLECTION_MD
+        self.assertTrue(path.exists(), "缺少打印合集 Markdown")
+        self.assertEqual(path.read_text(encoding="utf-8"), wire_docs.build_collection())
+
+    def test_合集包含全部章节(self):
+        text = (wire_docs.HW_DIR / wire_docs.COLLECTION_MD).read_text(encoding="utf-8")
+        for title in wire_docs.COLLECTION_TOC:
+            self.assertIn(f"## {title}", text, f"合集缺少章节：{title}")
+
+    def test_合集里有必备的打印产物(self):
+        for name in (wire_docs.COLLECTION_PDF, wire_docs.COLLECTION_HTML):
+            path = wire_docs.HW_DIR / name
+            self.assertTrue(path.exists(), f"缺少打印产物 {name}（用 scripts/md2pdf.cjs 导出）")
+            self.assertGreater(path.stat().st_size, 10_000)
+
+    def test_有序列表不会被挤成一行(self):
+        """实测踩到：`md2pdf.cjs` 对有序列表的续行判定只认 `-`/`*`，
+
+        所以 `1. 2. 3.` 连着写会被渲染成**一行**。判据：相邻的两个有序列表项之间必须有空行。
+        """
+        text = (wire_docs.HW_DIR / wire_docs.COLLECTION_MD).read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for index, line in enumerate(lines[:-1]):
+            if wire_docs._ORDERED_ITEM_RE.match(line) and wire_docs._ORDERED_ITEM_RE.match(lines[index + 1]):
+                self.fail(f"第 {index + 1}、{index + 2} 行是相邻的两个有序列表项（渲染会挤成一行）：{line!r}")
+
+    def test_指向仓库文件的链接已降级成纯文本(self):
+        """打印件里没有 `../README.md` 这些文件，路径留在正文里只会让人困惑。
+
+        ⚠️ 断言只针对 markdown 链接语法（`](路径)`）：**行内反引号里的文件名是"提到某文件"**，
+        不是链接，打印出来照样看得懂，所以不算漏改。
+        """
+        text = (wire_docs.HW_DIR / wire_docs.COLLECTION_MD).read_text(encoding="utf-8")
+        self.assertNotIn("](../", text)
+        self.assertNotIn("](hardware/", text)
+        self.assertNotIn("](basic/", text)
+        self.assertNotIn("](04-", text)
+
+    def test_降级链接会保留文字(self):
+        self.assertEqual(wire_docs._plain_links("见 [README](../README.md) 与 [规范](docs/x.md)"),
+                         "见 README 与 规范")
+        self.assertEqual(wire_docs._plain_links("[官网](https://example.com)"),
+                         "[官网](https://example.com)")
+        self.assertEqual(wire_docs._plain_links("[跳到第 3 节](#sec3)"), "跳到第 3 节")
+
+    def test_合集里的关键事实与单份文档一致(self):
+        text = (wire_docs.HW_DIR / wire_docs.COLLECTION_MD).read_text(encoding="utf-8")
+        self.assertEqual(wire_docs.check_required_facts(text), [])
+        self.assertIn(f"脚 {wire_spec.DATA_PHYSICAL}", text)
+        self.assertIn(wire_spec.pullup_text(), text)
+
+
 class TestDiagInterpretation(unittest.TestCase):
     """三态电平判据的测试（**真机读数由人跑脚本，这里的判据逻辑必须机器可测**）。"""
 
