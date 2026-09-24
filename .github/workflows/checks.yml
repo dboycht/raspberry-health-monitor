@@ -26,7 +26,7 @@ jobs:
       - name: 安装 pytest
         run: python -m pip install --upgrade pip pytest
 
-      - name: 项目自检（9 项：配置 / 驱动注册表 / 引脚冲突 / 文档一致性 / 自检 / 单测 / 演示）
+      - name: 项目自检（10 项：配置 / 驱动注册表 / 引脚冲突 / 文档一致性 / 自检 / 单测 / 演示 / 基础版）
         working-directory: rpi
         env:
           PYTHONIOENCODING: utf-8

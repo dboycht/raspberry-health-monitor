@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""项目验证脚本：把"体检 + 单测 + 演示 + 配置一致性"一次跑完。
+"""项目验证脚本：把"体检 + 单测 + 演示 + 配置一致性 + 基础版"一次跑完。
 
 用途：**每次提交前跑一遍**，或每周合练时确认大家的改动没有互相破坏。
 
 用法（在 ``rpi/`` 目录下）::
 
-    python scripts/validate.py              # 全部检查
-    python scripts/validate.py --quick      # 跳过单测（只做体检/配置/演示）
+    python scripts/validate.py              # 全部 10 项检查
+    python scripts/validate.py --quick      # 跳过单测/演示/基础版（只做静态检查）
     python scripts/validate.py --real       # 额外提示哪些检查需要真机
 
 退出码：0 = 全部通过；1 = 有检查失败（打印失败项）。
@@ -200,6 +200,42 @@ def check_demo() -> Tuple[bool, str]:
     return False, f"演示失败（退出码 {proc.returncode}）：\n      " + "\n      ".join((proc.stderr or "").strip().splitlines()[-8:])
 
 
+def check_basic_version() -> Tuple[bool, str]:
+    """基础版（``basic/``，课程作业 H 的最小可用版）自检 + 单测。
+
+    为什么要并进提交前检查：基础版是**另一条独立可交付的路径**
+    （一个文件夹拷走就能交作业），它坏掉不会让主项目单测变红——
+    2026-09-24 就真的出过一次"基础版回放把演示数据删了"却没人发现。
+    这里跑两个**不依赖硬件**的命令：`basic/tools/selfcheck.py` 与 `basic/tests`。
+    """
+    root = RPI_DIR.parent
+    selfcheck = subprocess.run(
+        [sys.executable, str(root / "basic" / "tools" / "selfcheck.py")],
+        cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+    )
+    if selfcheck.returncode != 0:
+        tail = "\n      ".join((selfcheck.stdout or "").strip().splitlines()[-6:])
+        return False, f"基础版自检未通过：\n      {tail}"
+    summary = ""
+    for line in (selfcheck.stdout or "").splitlines():
+        if line.startswith("结果："):
+            summary = line.strip()
+    # 单测（用 pytest 的路径规则不需要额外配置：basic/tests/conftest.py 自己加了 sys.path）
+    tests = subprocess.run(
+        [sys.executable, "-m", "pytest", "basic/tests", "-q"],
+        cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+    )
+    if tests.returncode != 0:
+        tail = "\n      ".join((tests.stdout or "").strip().splitlines()[-8:])
+        return False, f"基础版单测失败：\n      {tail}"
+    passed = ""
+    for line in reversed((tests.stdout or "").splitlines()):
+        if "passed" in line or "failed" in line:
+            passed = line.strip()
+            break
+    return True, f"{summary or '基础版自检通过'}；单测 {passed or 'OK'}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="树莓派健康监护项目验证脚本")
     parser.add_argument("--quick", action="store_true", help="跳过单测与演示（只做静态检查）")
@@ -218,6 +254,7 @@ def main() -> int:
     if not args.quick:
         checks.append(Check("单元测试", check_tests))
         checks.append(Check("端到端演示", check_demo))
+        checks.append(Check("基础版（basic/）", check_basic_version))
 
     print("=" * 78)
     print("树莓派健康监护项目 · 验证报告")

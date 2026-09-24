@@ -69,6 +69,26 @@ python -m pytest -q          # 全部单元测试（不需要硬件、不需要 
 > 没有 pytest 也能跑：`python -m unittest discover -s tests -v`（测试全部用标准库 `unittest` 编写，
 > 因为树莓派上不应该为跑测试而额外装东西）。
 
+### 只想交课程作业？用 `basic/`（**一个文件夹，三条命令**）
+
+课程任务 **H（温湿度测量 + 动态曲线）** 有一条**最小可用路径**，专门放在
+[`basic/`](basic/README.md)：不 import 主项目任何代码，整个文件夹拷走就能交。
+
+```powershell
+cd D:\code\DeepSeekHarness\raspberry-health-monitor\basic
+
+python run.py --mock            # 没有树莓派/没有传感器也能看到动态曲线（合成数据）
+python run.py                   # 树莓派上真实读取 DHT11（GPIO4 = 物理脚 7）
+python run.py --no-plot         # 只采集与存档（CSV）
+python run.py --replay          # 离线回放演示数据，验证"读 → 存 → 画"这条链路
+python tools\selfcheck.py       # 基础版自检（8 项，不依赖硬件）
+```
+
+- 采集周期可配（默认 3 秒；DHT11 硬件要求 ≥2 秒），每次采样**立刻写进 CSV**（拔电源也不丢）；
+- 动态曲线：温度（红，左轴 ℃）+ 湿度（蓝，右轴 %），标题实时显示"最新一次读数"；
+- 硬件、文档与"实测 / 未实测"声明见 [`basic/README.md`](basic/README.md) 与
+  [`basic/验收说明.md`](basic/验收说明.md)。
+
 ## 2. 树莓派上的部署（有硬件时）
 
 ```bash
@@ -141,10 +161,11 @@ raspberry-health-monitor/
 │   ├── config/devices.json   设备与阈值配置（换器件不改代码）
 │   └── tests/                单元测试（unittest；无需硬件）
 ├── android/                              ← 安卓监护 App（Kotlin + Jetpack Compose）
+├── basic/                                ← **课程作业 H 的最小可用版**（温湿度 + 动态曲线，可单独交）
 ├── hardware/                             ← 硬件文档：引脚分配、接线图、供电与安全
 ├── docs/                                 ← 接口规格、报警规则、开发规范、通信协议
 ├── contrib/                              ← 团队分工与提交规范
-├── .github/workflows/checks.yml          ← CI：每次推送自动跑单测 + 9 项检查（无需硬件）
+├── .github/workflows/checks.yml          ← CI：每次推送自动跑单测 + 10 项检查（无需硬件）
 └── CONTRIBUTING.md                       ← 贡献指南（提交前必过的三条）
 ```
 
@@ -173,7 +194,6 @@ raspberry-health-monitor/
 - 想继续加分（上云/MQTT/更多功能）：**[`docs/手册/07-拓展与上云.md`](docs/手册/07-拓展与上云.md)**
 
 ## 5. 核心设计（答辩会被问到的点）
-
 1. **端-边-云三层**
    - **端**：传感器与执行器（MAX30102、DHT11、TMP36、HC-SR501、LCD、蜂鸣器、音箱、LED）
    - **边**：树莓派本地完成采集、判定、报警——**断网也能报警**（不依赖云端）
@@ -219,7 +239,8 @@ raspberry-health-monitor/
 | `python -m health_monitor selfcheck --mock` | 不接硬件的代码链路体检 |
 | `python -m health_monitor selfcheck --real` | 真实硬件体检（树莓派上跑） |
 | `sudo python3 scripts/hardware_test.py` | **真机验收测试单**（逐项过关 + 失败时给排查命令） |
-| `python scripts/validate.py` | 提交前 8 项检查（体检 / 引脚冲突 / 单测 / 演示） |
+| `python scripts/validate.py` | 提交前 **10 项**检查（体检 / 引脚冲突 / 单测 / 演示 / **基础版**） |
+| `python basic/tools/selfcheck.py` | **基础版** 8 项自检（课程作业 H；不依赖硬件） |
 | `python -m health_monitor serve --mock` | 模拟模式起服务（PC 上联调安卓端） |
 | `python -m health_monitor serve --real` | 正式运行 |
 | `python -m health_monitor demo` | 一键演完整个报警链路 |
@@ -232,26 +253,29 @@ raspberry-health-monitor/
 - 版本单一来源：`rpi/health_monitor/__init__.py` 的 `__version__`（HTTP `/api/v1/health` 会返回它）
 - 当前版本：**1.0.1**
 
-## 9. 验证基线（2026-09-21 实测）
+## 9. 验证基线（2026-09-24 实测）
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
-| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **9 项全 PASS** |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **503 passed, 1 skipped, 177 subtests** |
+| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **10 项全 PASS** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **566 passed, 1 skipped, 296 subtests** |
 | 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
-| 驱动注册表 | `python -m health_monitor drivers` | 11 个驱动全部可构造 |
+| 驱动注册表 | `python -m health_monitor drivers` | 12 个驱动全部可构造 |
 | 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
-| 文档一致性 | `python scripts/check_docs.py` | 22 份文档链接可解析；报警码三方一致 |
+| 文档一致性 | `python scripts/check_docs.py` | 27 份文档链接可解析；报警码三方一致 |
+| **基础版（课程作业 H）** | `python basic/tools/selfcheck.py` + `python -m pytest basic/tests -q` | **自检 8 项全 PASS；单测 73 passed** |
 | OneNET token 算法自检 | `python scripts/onenet_token.py --selftest` | md5/sha1/sha256 手算对照通过 |
 | 同步 + 入库验收 | `python scripts/check_sync.py --hash` | 两侧文件一致；无误忽略源码 |
 | 安卓端单元测试 | 见 `docs/手册/06-安卓开发指南.md` 的构建命令 | **78 passed** |
 | 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.31 MB |
-| CI | `.github/workflows/checks.yml` | 每次推送自动跑上面两套（无硬件）；最近一次 **success** |
+| CI | `.github/workflows/checks.yml` | 每次推送自动跑上面两套（无硬件） |
 
-> ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**。真实器件读数、真实 I2C/SPI 时序、
+> ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**（真机 `validate.py` 上一次实测 9/9，
+> 但**本轮改动尚未在树莓派上复测——树莓派当前离线**）。真实器件读数、真实 I2C/SPI 时序、
 > 蓝牙音箱配对、手机与树莓派的真实局域网往返**都还没验过**——
-> 这些必须由真人接硬件后跑 `python -m health_monitor selfcheck --real` 与真机联调。
+> 这些必须由真人接硬件后跑 `python -m health_monitor selfcheck --real` 与真机联调；
+> 基础版对应的真机验证清单见 [`basic/验收说明.md`](basic/验收说明.md)。
 
 ## 10. 许可
 

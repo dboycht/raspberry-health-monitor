@@ -1,0 +1,7 @@
+# 基础版运行数据（CSV / 小结 JSON）
+#
+# 与仓库根的 .gitignore 同一条纪律：**运行产生的数据不入库**，
+# 仓库里只保留一份演示样本（sample_demo.csv，供"没硬件也能跑通画图"用）。
+*
+!.gitignore
+!sample_demo.csv

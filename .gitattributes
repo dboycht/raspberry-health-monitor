@@ -15,6 +15,7 @@
 *.kt    text eol=lf
 *.xml   text eol=lf
 *.toml  text eol=lf
+*.csv   text eol=lf
 *.service text eol=lf
 gradlew text eol=lf
 
