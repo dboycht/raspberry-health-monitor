@@ -180,7 +180,18 @@ def _probe_targets(text: str, base: Path | None = None) -> List[str]:
         if (base / target).exists() or (ROOT / target).exists():
             return
         # ② 在仓库里按后缀唯一命中（文档里的"部分路径"写法，如 `core/rules.py`）
-        hits = SUFFIX_INDEX.get(target)
+        # ⚠️ 先把 `./`、`../` 这类相对前缀归一化掉（2026-09-24 加）：
+        #    文档里写 `../hardware/xx.md`、`../../README.md` 是**正常且更清晰**的写法，
+        #    但后缀索引里存的是"从仓库根算起的路径后缀"，带 `../` 的写法永远匹配不上，
+        #    于是被误报成"引用了不存在的路径"（而文件其实存在）。
+        #    判据应是"仓库里能否唯一找到一个以此路径结尾的真实文件"，
+        #    所以把前导的 `./` / `../` 去掉再查后缀索引。
+        #    ⚠️ 这里**刻意不再加"兜底只查文件名"**：那会把归一化的作用掩盖掉
+        #    （用"注入故障后自测仍通过"实测发现兜底让归一化变成死代码）。
+        normalized = target
+        while normalized.startswith(("./", "../")):
+            normalized = normalized[3:] if normalized.startswith("../") else normalized[2:]
+        hits = SUFFIX_INDEX.get(normalized) or SUFFIX_INDEX.get(target)
         if hits:
             if len(hits) > 1 and target not in AMBIGUOUS:
                 AMBIGUOUS.add(target)
@@ -315,9 +326,20 @@ def self_test() -> List[str]:
         global SUFFIX_INDEX
         if not SUFFIX_INDEX:
             SUFFIX_INDEX = build_suffix_index()
+        # ★ `../` 归一化的回归用例要用"**必须经过归一化才可能命中**"的路径当靶子。
+        #   教训（2026-09-24）：先前两次都写成空断言 ——
+        #     ① `../hardware/README.md`：即使删掉归一化，也会退化成只查 `README.md` 而命中；
+        #     ② `../docs/<唯一文件>.md`：正则去掉 `../` 后与原名相同，同样不需要归一化就能命中。
+        #   真正有区分力的靶子 = **归一化后的路径必须是仓库里的唯一后缀**，
+        #   且**文件名本身不足以命中**（例如带目录的 `docs/任务原件.md`）。
+        #   判据：注入"删掉归一化"的故障后，自测**必须报警**（本轮已实测通过）。
+        rel_real = "../../docs/任务原件.md"      # 归一化后 = docs/任务原件.md（唯一）
+        rel_missing = "../../docs/99-还是没有.md"  # 带 ../ 的假引用，仍必须被抓到
         payload = (
             f"正常引用 `{real_target}`\n\n"
             "悬空引用 `docs/99-不存在文档.md`\n\n"
+            f"相对引用 `{rel_real}`\n\n"
+            f"相对悬空 `{rel_missing}`\n\n"
             "```gitignore\n/data/\n/logs/\n```\n"
         )
         targets = _probe_targets(payload, base=probe_dir)
@@ -330,6 +352,14 @@ def self_test() -> List[str]:
             problems.append("自测失败：围栏代码块里的 .gitignore 片段被误判成文件引用")
         if real_target in targets:
             problems.append("自测失败：真实存在的文件被误报为悬空引用")
+        if rel_real in targets:
+            problems.append(
+                f"自测失败：带 `../` 的真实引用（{rel_real}）被误报 → 路径归一化失效了"
+            )
+        if rel_missing not in targets:
+            problems.append(
+                f"自测失败：带 `../` 的悬空引用（{rel_missing}）没被抓到 → 归一化把真问题也放过了"
+            )
     finally:
         try:
             probe_file.unlink()
