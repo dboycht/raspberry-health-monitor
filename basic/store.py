@@ -93,9 +93,14 @@ class CsvStore:
             return True
 
     def save(self, reading: Reading) -> None:
-        """写一行并**立刻落盘**（flush + fsync，拔电源也不丢已采数据）。"""
+        """写一行并**立刻落盘**（flush + fsync，拔电源也不丢已采数据）。
+
+        换行符**显式写 LF**（``lineterminator="\\n"``）：
+        CSV 是跨平台交换格式，Windows 上默认写出 CRLF 会让"同一个文件在两台机器上
+        逐字节不一样"，用 diff / 哈希核对数据时凭空出现整文件差异。
+        """
         with open(self.path, "a", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
+            writer = csv.writer(handle, lineterminator="\n")
             if self._needs_header():
                 writer.writerow(CSV_HEADER)
             writer.writerow(reading.to_csv_row())
@@ -106,7 +111,8 @@ class CsvStore:
     def save_summary(self, payload: dict) -> Path:
         """把运行小结写成同名的 ``.summary.json``（给报告/验收看）。"""
         target = self.path.with_suffix(".summary.json")
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        with open(target, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2))
         return target
 
     # ------------------------------------------------------------------

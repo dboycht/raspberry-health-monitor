@@ -81,11 +81,14 @@ python run.py --mock            # 没有树莓派/没有传感器也能看到动
 python run.py                   # 树莓派上真实读取 DHT11（GPIO4 = 物理脚 7）
 python run.py --no-plot         # 只采集与存档（CSV）
 python run.py --replay          # 离线回放演示数据，验证"读 → 存 → 画"这条链路
-python tools\selfcheck.py       # 基础版自检（8 项，不依赖硬件）
+python tools\selfcheck.py       # 基础版自检（10 项，不依赖硬件）
+python tools\wire_docs.py --check   # 接线文档与代码是否一致（接线事实机器校验）
 ```
 
 - 采集周期可配（默认 3 秒；DHT11 硬件要求 ≥2 秒），每次采样**立刻写进 CSV**（拔电源也不丢）；
 - 动态曲线：温度（红，左轴 ℃）+ 湿度（蓝，右轴 %），标题实时显示"最新一次读数"；
+- **接线文档 5 份**（图 / 逐线表 / 供电安全 / 线色自查卡 PDF）在
+  [`basic/hardware/`](basic/hardware/README.md)：每个数字都由代码生成，`--check` 机器校验；
 - 硬件、文档与"实测 / 未实测"声明见 [`basic/README.md`](basic/README.md) 与
   [`basic/验收说明.md`](basic/验收说明.md)。
 

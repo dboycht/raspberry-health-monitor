@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]          # 仓库根
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from basic import __version__                        # noqa: E402
+from basic import __version__, wire_spec                # noqa: E402
 from basic.dht11read import (                        # noqa: E402
     Dht11Error,
     Dht11Reader,
@@ -154,6 +154,33 @@ def check_backends() -> Tuple[bool, str]:
     return True, f"真硬件后端可用：{backend}"
 
 
+def check_wiring_facts() -> Tuple[bool, str]:
+    """接线事实自查：引脚 / 电源 / 地 / 上拉 / 采样周期 是否自洽（不读文档）。"""
+    problems = wire_spec.self_check()
+    if problems:
+        return False, "；".join(str(p) for p in problems)
+    return True, wire_spec.summary()
+
+
+def check_wiring_docs() -> Tuple[bool, str]:
+    """接线文档校验：文档必须与代码**逐字符一致**，且关键事实齐全、引用的脚本存在。
+
+    ⚠️ 先跑生成器自己的**注入自测**：一个"看起来在跑、其实一直没匹配"的检查器
+    比没有检查器更危险（本项目在文档检查器上真的踩过这个坑）。
+    """
+    from basic.tools import wire_docs
+
+    guard = wire_docs.self_test()
+    if guard:
+        return False, "文档检查器自检失败（守卫可能已失效）：" + "；".join(guard)
+    problems = wire_docs.check_all()
+    if problems:
+        head = "；".join(problems[:3])
+        more = f"（共 {len(problems)} 项）" if len(problems) > 3 else ""
+        return False, f"接线文档与代码不一致{more}：{head}（修完跑 `python3 basic/tools/wire_docs.py --generate`）"
+    return True, f"{len(wire_docs.DOCUMENTS)} 份接线文档与代码逐字符一致，关键事实齐全，引用脚本均存在"
+
+
 def check_matplotlib() -> Tuple[bool, str]:
     try:
         import matplotlib
@@ -209,16 +236,18 @@ def make_demo_file(path: Path, samples: int = DEMO_SAMPLES, interval_s: float = 
             ok=True,
         ))
     readme = path.with_suffix(".README.txt")
-    readme.write_text(
+    readme_text = (
         "演示数据说明（basic/data/sample_demo.csv）\n"
         "==========================================\n"
         "这是**合成数据**：由 `python3 basic/tools/selfcheck.py --make-demo` 生成（走 mock 路径），\n"
         "用途是让没有树莓派 / 没有 DHT11 的同学也能验证\n"
         "「周期读取 → 存 CSV → 画动态曲线」这条链路（`python3 run.py --replay`）。\n"
         "它**不代表任何真实测量结果**，报告与答辩中请勿当作真机数据引用。\n"
-        "重新生成：python3 basic/tools/selfcheck.py --make-demo\n",
-        encoding="utf-8",
+        "重新生成：python3 basic/tools/selfcheck.py --make-demo\n"
     )
+    # 显式 LF：与仓库 .gitattributes 的纪律一致（Windows 上默认写 CRLF 会造成"跨平台假 diff"）
+    with open(readme, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(readme_text)
     return path
 
 
@@ -235,6 +264,8 @@ def run_checks(make_demo: bool = False) -> int:
         ("CSV 存档（缺失值不写 0）", lambda: check_store()),
         ("曲线数据窗口", lambda: check_series()),
         ("演示数据 sample_demo.csv", lambda: check_demo_data(make_demo=make_demo)),
+        ("接线事实（引脚/电源/上拉/周期）", lambda: check_wiring_facts()),
+        ("接线文档（与代码一致）", lambda: check_wiring_docs()),
         ("DHT11 后端探测", lambda: check_backends()),
         ("matplotlib（画图依赖）", lambda: check_matplotlib()),
     ]
