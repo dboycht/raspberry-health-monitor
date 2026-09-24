@@ -37,9 +37,17 @@ GND（或 -）        GND（物理脚 6/9/14/…）      任意一个 GND 脚
 
 ⚠️ 三针模块（自带 10k 上拉电阻）可直接插；**裸四针传感器**必须在 DATA 与 3.3V 之间
 外接一个 4.7k~10k 上拉电阻，否则读数会一直是 NaN/超时。
-⚠️ 树莓派 5 上手工用 ``lgpio`` 打单总线时序很容易失败（内核调度抖动 > 微秒级精度要求），
-所以本驱动**只用 gpiozero 的 ``DHT11`` 器件类**；没装 gpiozero 会抛
-:class:`DeviceInitError` 并提示 ``sudo apt install -y python3-gpiozero``。
+
+读取后端（**真机实测得出的两个后端**）
+-------------------------------------
+1. **gpiozero 的 ``DHT11`` 类**（gpiozero < 2.0 才有）；
+2. **本项目自实现的单总线时序（lgpio）** —— 2026-09-24 在真机上发现：
+   Debian 13 的 ``python3-gpiozero 2.0.1`` **已彻底移除 DHT11/DHT22**
+   （源码里没有 ``class DHT11``，apt 里也没有任何 dht 包），
+   而 DHT11 正是课程任务 H 的主角，**不能因为第三方库改版就读不了**。
+   自实现版用 lgpio 的 ``callback`` **纳秒级边沿时间戳**算高低电平宽度
+   （0 约 26µs / 1 约 70µs，阈值取 50µs），比在 Python 里紧循环轮询稳得多。
+   ``open()`` 会优先用 gpiozero，没有就自动退回 lgpio，并记一条 INFO 日志。
 
 负责人（团队分工时填）
 ----------------------
@@ -48,6 +56,7 @@ GND（或 -）        GND（物理脚 6/9/14/…）      任意一个 GND 脚
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -63,6 +72,8 @@ from ..hal.exceptions import (
 )
 from ..hal.models import AmbientSample, DeviceKind, now_ts
 from ..hal.pins import BCM_TO_PHYSICAL, bcm_to_physical, describe_pin
+
+_LOG = logging.getLogger(__name__)
 
 # ==========================================================================
 # 第一部分：纯逻辑（可单测，不碰任何硬件）
@@ -251,6 +262,10 @@ class Dht11(Device):
         self.max_temperature_c = float(max_temperature_c)
 
         self._sensor: Any = None            # gpiozero 的 DHT11 器件对象（真实模式才有）
+        #: 真实模式下实际使用的后端："gpiozero"（有 DHT11 类时）或 "lgpio"（自实现单总线）
+        self._backend: str = "none"
+        self._lgpio: Any = None             # lgpio 模块（自实现后端用）
+        self._lgpio_handle: Any = None      # gpiochip 句柄
         self._mock_opened_at = 0.0          # mock 模式的"打开时刻"（真实秒表）
         self._mock_inject_count = 0         # 注入值被真正读取的次数（测试用探针）
         self._injected: Optional[Tuple[float, float]] = None  # mock 注入值
@@ -280,15 +295,37 @@ class Dht11(Device):
             return
 
         try:
-            # 函数内延迟导入：PC 上开发/跑测试时不该因为没装 gpiozero 而 import 失败
+            # 首选：gpiozero 的 DHT11 器件类（gpiozero < 2.0 才有）
             from gpiozero import DHT11 as GpioDHT11  # type: ignore import-not-found
+            import_error: Optional[BaseException] = None
         except ImportError as exc:
-            raise DeviceInitError(
-                f"DHT11（GPIO{self.pin}）初始化失败：未安装 gpiozero（{exc}）。"
-                "树莓派上执行 `sudo apt install -y python3-gpiozero`；"
-                "PC 上开发请用 mock=True"
-            ) from exc
+            GpioDHT11 = None            # type: ignore assignment
+            import_error = exc
 
+        if GpioDHT11 is None:
+            # ⚠️ 2026-09-24 真机实测：Debian 13 的 python3-gpiozero 2.0.1 **已移除 DHT11/DHT22**，
+            #    源码里连 `class DHT11` 都找不到（apt 也没有任何 dht 包）。
+            #    此时退回**本项目自己用 lgpio 边沿时间戳实现的单总线读取**，
+            #    而不是直接报"未安装 gpiozero"——否则课程任务 H（温湿度测量）在真机上直接跑不起来。
+            self._backend = "lgpio"
+            try:
+                self._lgpio_open()
+            except DeviceInitError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise DeviceInitError(
+                    f"DHT11（GPIO{self.pin}）用 lgpio 初始化失败：{type(exc).__name__}: {exc}。"
+                    "排查：① 是否装了 python3-lgpio；② 是否有别的进程占着该引脚；"
+                    "③ 是否在 PC 上误用了 mock=False"
+                ) from exc
+            self._opened = True
+            _LOG.info(
+                "DHT11 使用内置 lgpio 单总线读取（当前 gpiozero 无 DHT11 类：%s）",
+                import_error,
+            )
+            return
+
+        self._backend = "gpiozero"
         try:
             # 必须显式封顶温度：DHT11 在 0℃ 以下会返回负值，gpiozero 默认会把它
             # 当成"读数无效"抛异常（NegativeTempError），显式给出量程更可控。
@@ -303,6 +340,153 @@ class Dht11(Device):
                 "④ 是否在 PC 上误用了 mock=False"
             ) from exc
         self._opened = True
+
+    # ------------------------------------------------------------------
+    # internal：自实现单总线读取（lgpio）
+    # ------------------------------------------------------------------
+
+    def _lgpio_open(self) -> None:
+        """打开 gpiochip，为自实现的单总线读取做准备。
+
+        ⚠️ 用 ``lgpio.gpiochip_open(0)``：**不要写死 gpiochip4**——
+        树莓派 5 上 40-pin 排针确实在 gpiochip4，但其它型号/系统在 0，
+        lgpio 的 0 号句柄会自动选中正确的那个（更省事也更可移植）。
+        """
+        import lgpio  # type: ignore import-not-found - 函数内延迟导入，PC 上不装也能 import 本模块
+
+        self._lgpio = lgpio
+        self._lgpio_handle = lgpio.gpiochip_open(0)
+
+    def _lgpio_close(self) -> None:
+        if getattr(self, "_lgpio_handle", None) is not None and self._lgpio is not None:
+            for pin in (self.pin,):
+                try:
+                    self._lgpio.gpio_free(self._lgpio_handle, pin)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                self._lgpio.gpiochip_close(self._lgpio_handle)
+            except Exception:  # noqa: BLE001
+                pass
+        self._lgpio_handle = None
+
+    def _read_lgpio_raw(self) -> Tuple[float, float]:
+        """用**边沿时间戳**解 DHT11 的单总线帧（不靠 Python 轮询微秒级电平）。
+
+        为什么用时间戳而不是轮询（这是本驱动能读通的关键）：
+        DHT11 每个 bit 靠"高电平持续时间"区分（约 26µs = 0，约 70µs = 1），
+        Python 里紧循环轮询的抖动往往大于 26µs，会大量误码；而 lgpio 的
+        ``callback`` 回调自带**纳秒级时间戳**，用两个边沿的时间差算宽度就很稳。
+
+        Returns:
+            ``(温度℃, 湿度%RH)``，整数形式（DHT11 分辨率就是 1℃ / 1%RH）。
+
+        Raises:
+            DeviceIOError: 时序不合法 / 校验和不符 / 传感器未应答。
+        """
+        lg = self._lgpio
+        h = self._lgpio_handle
+        edges: list[tuple[int, int]] = []      # [(level, timestamp_ns)]
+        cb = None
+        try:
+            # ① 拉低 ≥18ms 作为起始信号（数据手册：主机拉低至少 18ms）
+            lg.gpio_claim_output(h, self.pin, 0)
+            time.sleep(0.020)
+            # ② 释放总线，改成输入并注册**双边沿**回调
+            lg.gpio_free(h, self.pin)
+            lg.gpio_claim_alert(h, self.pin, lg.BOTH_EDGES, lg.SET_PULL_UP)
+            cb = lg.callback(h, self.pin, lg.BOTH_EDGES,
+                             lambda chip, gpio, level, ts: edges.append((level, ts)))
+            # ③ DHT11 应答 + 40 bit 数据 ≈ 4ms；给足 40ms 余量后取消回调
+            time.sleep(0.040)
+        except Exception as exc:  # noqa: BLE001
+            raise DeviceIOError(
+                f"DHT11（GPIO{self.pin}）单总线时序失败：{type(exc).__name__}: {exc}"
+            ) from exc
+        finally:
+            if cb is not None:
+                try:
+                    cb.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                lg.gpio_free(h, self.pin)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # 一帧理论边沿数：起始低 + 应答高 + 40 位 ×（低 + 高）+ 收尾低 = 2 + 80 + 1 = 83
+        # （驱动只要求"能解出 40 位"，这里留 5% 余量，避免把偶发抖动误判成没应答）
+        MIN_EDGES_PLAUSIBLE = 79
+        if not edges:
+            raise DeviceIOError(
+                f"DHT11（GPIO{self.pin}）没有任何边沿：传感器完全没应答。"
+                "排查：① 裸传感器要接 4.7k~10k 上拉电阻；② VCC=3.3V；"
+                "③ DATA 是否接在 GPIO4（物理脚 7）；④ 杜邦线是否过长/接触不良"
+            )
+        if len(edges) < MIN_EDGES_PLAUSIBLE:
+            raise DeviceIOError(
+                f"DHT11（GPIO{self.pin}）疑似未应答：只捕获到 {len(edges)} 个边沿"
+                f"（完整一帧约 83 个）。排查：① 上拉电阻（4.7k~10k）；② VCC=3.3V；"
+                "③ DATA 是否在 GPIO4（物理脚 7）；④ 杜邦线是否过长/接触不良"
+            )
+
+        # ④ 解码：把每个"高电平段"的宽度算出来，再映射成 bit。
+        #    ⚠️ 关键坑（2026-09-24 用合成时序做单测时抓到，真机上表现为"校验和不符"）：
+        #    应答信号本身是一段 **约 80µs 的高电平**，它是**第一个高电平段**。
+        #    而数据位里"1"也有约 70µs —— 二者宽度**几乎一样**，靠阈值根本分不开！
+        #    早前版本试图用"滤掉 >200µs 的宽脉冲"来去应答，结果 80µs 的应答没被滤掉，
+        #    于是 41 个宽度被截成前 40 个 → **整体错位一位** → 校验和必然不符。
+        #    正确做法：**按协议位置丢掉第一个高电平段**（应答恒在最前），不做宽度猜测。
+        widths_us: list[float] = []
+        i = 1
+        # 逐对扫描边沿：只有 (高, 低) 这样的相邻对才构成一个"高电平段"。
+        # ⚠️ 边界（用合成时序单测抓到的 off-by-one）：一帧 82 个边沿 =
+        #    2（起始低 + 应答高）+ 40×2（每位的低 + 高）；
+        #    高电平段的起点依次是 1,3,…,79，**最后一对要用到下标 80**。
+        #    条件就写成最直白的形式：只要 i+1 还是合法下标，就继续。
+        while i + 1 < len(edges):
+            level, ts_high = edges[i]
+            nxt_level, ts_low = edges[i + 1]
+            if level == 1 and nxt_level == 0:
+                widths_us.append((ts_low - ts_high) / 1000.0)
+                i += 2
+            else:
+                i += 1
+        # 收尾：若最后一个元素是"高电平上升沿"（后面没有边沿表示它结束），
+        # 它就不是一个完整的高电平段，直接忽略（DHT11 帧不会这样结束，属防御）。
+
+        if not widths_us:
+            raise DeviceIOError(
+                f"DHT11（GPIO{self.pin}）捕获到的边沿里没有任何完整的高电平段"
+                "（多为上拉缺失或时序抖动）"
+            )
+        # 丢掉应答（协议规定它在最前面），其余才是 40 个数据位
+        data_widths = widths_us[1:]
+        #: 宽度上限（µs）：超过它说明采样里混入了噪声/中断延迟，宁可报错也不要解出脏数据
+        MAX_BIT_WIDTH_US = 200.0
+        data_widths = [w for w in data_widths if 0.0 < w < MAX_BIT_WIDTH_US]
+        if len(data_widths) < 40:
+            raise DeviceIOError(
+                f"DHT11（GPIO{self.pin}）数据位不足：只解出 {len(data_widths)}/40 个 bit"
+                "（多为上拉缺失或时序抖动；可多试几次）"
+            )
+        bits = [1 if w > 50.0 else 0 for w in data_widths[:40]]
+
+        data = bytearray()
+        for byte_index in range(5):
+            value = 0
+            for bit in bits[byte_index * 8:(byte_index + 1) * 8]:
+                value = (value << 1) | bit
+            data.append(value)
+        checksum = (sum(data[:4])) & 0xFF
+        if checksum != data[4]:
+            raise DeviceIOError(
+                f"DHT11 校验和不符：算出 0x{checksum:02X}，收到 0x{data[4]:02X}"
+                "（时序抖动导致误码；检查上拉电阻与线长，并确保读取间隔 ≥2 秒）"
+            )
+        humidity = float(data[0]) + float(data[1]) / 10.0     # DHT11 小数位恒为 0
+        temperature = float(data[2]) + float(data[3]) / 10.0
+        return temperature, humidity
 
     def read(self) -> AmbientSample:
         """读一次温湿度。
@@ -396,6 +580,8 @@ class Dht11(Device):
             except Exception:  # noqa: BLE001 - 关闭失败不应影响收尾
                 pass
             self._sensor = None
+        self._lgpio_close()          # 自实现后端（lgpio）也要释放 gpiochip
+        self._backend = "none"
         self._cache.reset()
         self._injected = None
         self._opened = False
@@ -407,6 +593,13 @@ class Dht11(Device):
     def _read_hardware(self) -> Tuple[float, float]:
         """读一次真实传感器（带重试）。
 
+        两个后端（``open()`` 时决定，见 ``self._backend``）：
+
+        - ``gpiozero``：gpiozero < 2.0 提供 ``DHT11`` 类时走它；
+        - ``lgpio``：Debian 13 的 gpiozero 2.0.1 **删掉了 DHT11/DHT22 支持**，
+          此时用本项目自实现的单总线时序（边沿时间戳解码），
+          **保证课程任务 H（温湿度测量）在真机上真的能跑**。
+
         Returns:
             ``(温度℃, 湿度%RH)``；数值可能是 NaN 或超量程，由调用方用纯函数判定。
 
@@ -416,9 +609,12 @@ class Dht11(Device):
         last_error = ""
         for attempt in range(1, self.retries + 1):
             try:
-                temperature_c = float(self._sensor.temperature)
-                humidity_percent = float(self._sensor.humidity)
-            except Exception as exc:  # noqa: BLE001 - gpiozero 抛的异常类型很杂
+                if self._backend == "lgpio":
+                    temperature_c, humidity_percent = self._read_lgpio_raw()
+                else:
+                    temperature_c = float(self._sensor.temperature)
+                    humidity_percent = float(self._sensor.humidity)
+            except Exception as exc:  # noqa: BLE001 - 两个后端抛的异常都很杂
                 last_error = f"{type(exc).__name__}: {exc}"
             else:
                 if not (math.isnan(temperature_c) or math.isnan(humidity_percent)):
@@ -428,9 +624,10 @@ class Dht11(Device):
                 self._sleep(0.1)  # DHT11 需要 ≥1s 才能再次转换；重试留出余量
 
         raise DeviceIOError(
-            f"DHT11（GPIO{self.pin}，{physical_pin(self.pin)}）连续 {self.retries} 次读取失败："
-            f"{last_error}。排查线索：① 上拉电阻（4.7k~10k）有没有接；"
-            "② 供电是否 3.3V；③ 读取间隔是否 ≥2 秒；④ 杜邦线是否过长/接触不良"
+            f"DHT11（GPIO{self.pin}，{physical_pin(self.pin)}，后端 {self._backend}）"
+            f"连续 {self.retries} 次读取失败：{last_error}。排查线索："
+            "① 上拉电阻（4.7k~10k）有没有接；② 供电是否 3.3V；"
+            "③ 读取间隔是否 ≥2 秒；④ 杜邦线是否过长/接触不良"
         )
 
     # ------------------------------------------------------------------

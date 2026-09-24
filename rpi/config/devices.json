@@ -69,18 +69,18 @@
     },
     "tft": {
       "driver": "tft_spi",
-      "enabled": false,
+      "enabled": true,
       "optional": true,
       "read_interval_s": 2,
       "params": {
-        "controller": "auto",
+        "controller": "st7735_1.8_128x160",
         "spi_bus": 0,
         "spi_device": 1,
         "dc_pin": 24,
         "reset_pin": 25,
         "backlight_pin": -1,
-        "rotate": 90,
-        "baudrate": 24000000
+        "rotate": 0,
+        "baudrate": 16000000
       }
     },
     "speaker": {
@@ -107,8 +107,7 @@
       "params": {
         "pins": {
           "green": 22,
-          "yellow": 23,
-          "red": 24
+          "yellow": 23
         }
       }
     },

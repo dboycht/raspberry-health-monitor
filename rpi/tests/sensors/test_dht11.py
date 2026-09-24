@@ -303,17 +303,35 @@ class TestDht11Driver(unittest.TestCase):
         dev.close()
 
     def test_真实模式初始化失败抛DeviceInitError且带线索(self) -> None:
-        """PC 上（没装 gpiozero）打开真实模式必须抛 DeviceInitError 并提示安装命令。"""
+        """真实模式下若两个后端都不可用，必须抛 DeviceInitError 并给出可执行的安装命令。
+
+        ⚠️ 2026-09-24 起有两个后端（见 `sensors/dht11.py` 模块头）：
+        1. gpiozero 的 ``DHT11`` 类（gpiozero < 2.0 才有）；
+        2. **本项目自实现的 lgpio 单总线读取**（Debian 13 的 gpiozero 2.0.1 已删掉 DHT11）。
+        所以断言**不能再写死 gpiozero** —— 要断言"错误信息里明确指出了缺哪个后端、
+        并给出对应的安装命令"，这样无论本机装的是哪种情况都成立。
+        """
         dev = Dht11(pin=4, mock=False)
         try:
             dev.open()
         except DeviceInitError as exc:
             text = str(exc)
             self.assertIn("DHT11", text)
-            self.assertIn("gpiozero", text)
-            self.assertIn("python3-gpiozero", text)
+            self.assertTrue(
+                ("lgpio" in text) or ("gpiozero" in text),
+                f"错误信息应写清缺哪个后端：{text}",
+            )
+            self.assertTrue(
+                ("python3-lgpio" in text) or ("python3-gpiozero" in text),
+                f"错误信息应给出可执行的安装命令：{text}",
+            )
+            self.assertIn("mock=False", text, "PC 上开发要提示别用 mock=False")
         except Exception as exc:  # noqa: BLE001 - 真树莓派上可能真的成功，跳过
             self.skipTest(f"本机环境不支持真实 GPIO：{type(exc).__name__}")
+        else:
+            # 真的打开了（本机有 GPIO）→ 关掉即可，不算失败
+            dev.close()
+            self.skipTest("本机可用真实 GPIO，跳过'初始化失败'路径")
         finally:
             dev.close()
 

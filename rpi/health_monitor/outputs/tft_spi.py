@@ -23,7 +23,7 @@ SCL / CLK      脚 23（GPIO11）    SPI0 SCLK
 SDA / MOSI/DIN 脚 19（GPIO10）    SPI0 MOSI
 RES / RST      脚 22（GPIO25）    复位（低电平复位）
 DC / RS        脚 18（GPIO24）    命令/数据选择（0=命令 1=数据）
-CS / CE        脚 24（GPIO8）     SPI0 CE0 —— **若 MCP3002 占了 CE0，把 TFT 换到 CE1=脚 26**
+CS / CE        脚 26（GPIO7）     SPI0 **CE1** —— 本项目固定用它（CE0=脚 24 被 MCP3002 占用）
 BLK / BL/LED   脚 1 或 33（3.3V） 背光；接 GPIO 可调光（可选）
 =============  ==================  ==========================================
 

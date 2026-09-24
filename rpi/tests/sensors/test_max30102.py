@@ -369,17 +369,50 @@ class TestMax30102Driver(unittest.TestCase):
         self.assertTrue(dev._opened)
         dev.close()
 
-    def test_真实模式初始化失败抛DeviceInitError且带线索(self) -> None:
-        """PC 上（没装 smbus2/没接 I2C）打开真实模式必须给出可读的排查线索。"""
+    def test_版本号不对时报错且带线索(self) -> None:
+        """★ 用**注入的假总线**制造"版本寄存器读回 0x00"，确定性验证失败路径。
+
+        ⚠️ 为什么不能像早前那样"直接 open(mock=False) 然后断言会抛错"
+        （2026-09-24 真机踩到）：那条写法**依赖这台机器碰巧没接传感器**——
+        开发机上没接 → 抛错 → 通过；真机上接了 MAX30102 → 打开成功 → 断言失败。
+        测试必须能**控制自己的环境**：这里用 MockBus 注入一个错误版本号，
+        无论机器上有没有真实硬件，走的都是同一条失败路径。
+        """
+        from health_monitor.hal.mock_bus import MockBus
+
+        bus = MockBus()
+        bus.on_i2c_read = lambda _bus, _addr, _n: bytes([0x00])   # 版本寄存器应为 0x15
+        dev = Max30102(mock=False, bus=bus)
+        try:
+            with self.assertRaises(DeviceInitError) as ctx:
+                dev.open()
+            text = str(ctx.exception)
+            self.assertIn("MAX30102", text)
+            self.assertIn("0x21", text, "要指出是哪个寄存器")
+            # 线索的关键词按驱动实际文案断言（它给的是"地址不对/器件没焊好/I2C 误码"）
+            self.assertTrue(
+                any(k in text for k in ("地址", "I2C", "误码")),
+                f"要给出可执行的排查线索：{text}",
+            )
+        finally:
+            dev.close()
+
+    def test_真机上能打开则必须能自检(self) -> None:
+        """反过来：若这台机器**真的有** MAX30102，打开就必须成功且自检通过。
+
+        这样一台机器上两种结果都有意义：
+        没硬件 → 上一條测失败路径；有硬件 → 本条测成功路径。**不再依赖环境碰巧**。
+        """
+        from health_monitor.hal.exceptions import DeviceError
+
         dev = Max30102(mock=False)
         try:
             dev.open()
-        except DeviceInitError as exc:
-            text = str(exc)
-            self.assertIn("MAX30102", text)
-            self.assertTrue("i2cdetect" in text or "3.3V" in text)
-        except Exception as exc:  # noqa: BLE001 - 真树莓派上可能真的成功，跳过
-            self.skipTest(f"本机环境不支持真实 I2C：{type(exc).__name__}")
+        except (DeviceInitError, DeviceError) as exc:
+            self.skipTest(f"本机没有可用的 MAX30102（正常）：{type(exc).__name__}")
+        try:
+            result = dev.self_check()
+            self.assertTrue(result["ok"], result.get("detail"))
         finally:
             dev.close()
 

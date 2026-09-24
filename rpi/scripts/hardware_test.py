@@ -156,6 +156,24 @@ def check_devices() -> List[Tuple[str, bool, str]]:
     return out
 
 
+def find_tool(name: str) -> str:
+    """找可执行文件：先查 PATH，再查常见管理目录。
+
+    ⚠️ 为什么不能只用 ``shutil.which``（2026-09-24 真机踩到）：
+    ``i2cdetect`` 由 i2c-tools 装在 **/usr/sbin**，而普通用户（非 root）的 PATH
+    在 Debian 上**不含 /usr/sbin**，于是 ``shutil.which("i2cdetect")`` 返回 None，
+    体检就报"i2cdetect 不可用"——**明明装了却说没装**，很容易误导排查方向。
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+    for directory in ("/usr/sbin", "/sbin", "/usr/local/sbin", "/usr/bin", "/bin"):
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return ""
+
+
 def check_tools() -> List[Tuple[str, bool, str, str]]:
     """检查外部工具/库是否可用（缺失时给出安装命令）。"""
     items: List[Tuple[str, bool, str, str]] = []
@@ -164,7 +182,7 @@ def check_tools() -> List[Tuple[str, bool, str, str]]:
         ("espeak-ng", "sudo apt install -y espeak-ng"),
         ("aplay", "sudo apt install -y alsa-utils"),
     ):
-        found = shutil.which(tool)
+        found = find_tool(tool)
         items.append((tool, bool(found), found or "未找到", install))
     for module, install in (
         ("smbus2", "sudo apt install -y python3-smbus  或  pip3 install smbus2"),
@@ -181,11 +199,12 @@ def check_tools() -> List[Tuple[str, bool, str, str]]:
 
 def i2c_scan() -> Optional[Dict[int, str]]:
     """用 i2cdetect 扫描总线；返回 ``{地址: 原样文本}``。失败返回 None。"""
-    if not shutil.which("i2cdetect"):
+    tool = find_tool("i2cdetect")
+    if not tool:
         return None
     try:
         proc = subprocess.run(
-            ["i2cdetect", "-y", "1"], capture_output=True, text=True, timeout=10, check=False
+            [tool, "-y", "1"], capture_output=True, text=True, timeout=10, check=False
         )
     except Exception:  # noqa: BLE001
         return None
