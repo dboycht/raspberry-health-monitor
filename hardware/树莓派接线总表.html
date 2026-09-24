@@ -56,6 +56,34 @@
 <li><strong>所有器件必须与树莓派共地</strong>（不共地的典型症状：读数乱跳、I2C 时通时不通）。</li>
 </ul>
 <hr>
+<h2>0.5 电源与 GND 逐器件对照（<strong>接线时先看这张</strong>）</h2>
+<p>树莓派上 <strong>GND 共 8 个脚：6、9、14、20、25、30、34、39</strong>（脚 6/9/14/20/25/30/34/39 都是同一个"地"）。<br><strong>所有器件的地最终都必须连到树莓派的这些脚之一</strong>（互相之间怎么连无所谓，只要是同一个地）。</p>
+<h3>如果要逐个直插排针（不共用地轨）</h3>
+<table>
+<thead><tr><th>器件</th><th>电源脚</th><th><strong>GND 接到</strong></th></tr></thead>
+<tbody>
+<tr><td>MAX30102</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>6</strong></td></tr>
+<tr><td>LCD1602 转接板</td><td>脚 <strong>2</strong>（5V）</td><td>脚 <strong>9</strong></td></tr>
+<tr><td>DHT11</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>14</strong></td></tr>
+<tr><td>HC-SR501</td><td>脚 <strong>2</strong>（5V）</td><td>脚 <strong>20</strong></td></tr>
+<tr><td>TFT 彩屏</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>39</strong></td></tr>
+<tr><td>MCP3002</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>30</strong></td></tr>
+<tr><td>TMP36</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>34</strong></td></tr>
+<tr><td>LED 绿/黄（共阴）</td><td>—（阴极不接电源）</td><td>脚 <strong>39</strong>（与 TFT、蜂鸣器共用一个 GND 脚即可）</td></tr>
+<tr><td>蜂鸣器</td><td>—（<code>+</code> 接脚 12）</td><td>脚 <strong>39</strong>（与 LED 共地即可）</td></tr>
+<tr><td>求救按键</td><td>一端接脚 13</td><td>另一端 → 脚 <strong>25</strong></td></tr>
+<tr><td>（拓展）HC-SR04</td><td>脚 <strong>2</strong>（5V）</td><td>脚 <strong>20</strong>（与 HC-SR501 共用）</td></tr>
+</tbody></table>
+<blockquote>8 个 GND 要分给 10 个器件，<strong>必然有多个器件共用一个 GND 脚</strong>（把若干根杜邦线拧在一个脚上，或走面包板地轨）。</blockquote>
+<h3>推荐：用面包板地轨（最省事，也最不容易错）</h3>
+<pre><code>树莓派脚 6（GND） ──一根线──&gt; 面包板【蓝色地轨（−）】
+树莓派脚 2（5V）  ──一根线──&gt; 面包板【红色电源轨（+）】
+树莓派脚 1（3.3V）──一根线──&gt; 面包板【另一条独立的轨（例如黄色轨）】</code></pre>
+<p>然后<strong>每个器件的 GND 都插到蓝色地轨上任意孔</strong>即可（同一根轨上的孔是全部导通的）。</p>
+<blockquote>⚠️ 两条红线：<br>1. <strong>红色轨（5V）与黄色轨（3.3V）绝不能连在一起</strong>——会把 5V 灌进 3.3V，可能烧器件；<br>2. 面包板<strong>每一列纵向也是导通的</strong>，别把电源与信号插在同一列。</blockquote>
+<h3>怎么验证"地真的共了"（万用表蜂鸣档）</h3>
+<p>黑表笔放在<strong>树莓派脚 6（GND）</strong>，红表笔依次点<strong>每个器件的 GND 脚</strong>：<br><strong>响（导通）= 共地正确</strong>；不响 = 该器件的 GND 没接好（此时它的读数必然乱跳或读不到）。</p>
+<hr>
 <h2>1. 树莓派 40-pin 接线汇总</h2>
 <table>
 <thead><tr><th>物理脚</th><th>BCM</th><th>固定功能</th><th>接谁</th></tr></thead>
@@ -64,7 +92,7 @@
 <tr><td>2</td><td>—</td><td><strong>5V</strong></td><td><strong>LCD1602 转接板 VCC</strong>、<strong>HC-SR501 VCC</strong>（两者都必须 5V）；拓展 HC-SR04 VCC</td></tr>
 <tr><td>3</td><td>GPIO2</td><td>I2C1 SDA</td><td>MAX30102 SDA ＋ LCD SDA（并挂）</td></tr>
 <tr><td>5</td><td>GPIO3</td><td>I2C1 SCL</td><td>MAX30102 SCL ＋ LCD SCL（并挂）</td></tr>
-<tr><td>6</td><td>—</td><td>GND</td><td>公共地（所有器件 GND）</td></tr>
+<tr><td>6</td><td>—</td><td>GND</td><td>MAX30102 GND（也可作为全板公共地，见第 0.5 节）</td></tr>
 <tr><td>7</td><td>GPIO4</td><td>GPIO</td><td>DHT11 DATA</td></tr>
 <tr><td>9</td><td>—</td><td>GND</td><td>LCD GND</td></tr>
 <tr><td>11</td><td>GPIO17</td><td>GPIO</td><td>HC-SR501 OUT</td></tr>
@@ -81,13 +109,13 @@
 <tr><td>22</td><td>GPIO25</td><td>GPIO</td><td>TFT RESET</td></tr>
 <tr><td>23</td><td>GPIO11</td><td>SPI0 SCLK</td><td>MCP3002 CLK ＋ TFT SCK</td></tr>
 <tr><td>24</td><td>GPIO8</td><td>SPI0 CE0</td><td><strong>MCP3002 CS（独占，不许给别人）</strong></td></tr>
-<tr><td>25</td><td>—</td><td>GND</td><td>蜂鸣器 −</td></tr>
+<tr><td>25</td><td>—</td><td>GND</td><td><strong>求救按键另一端</strong></td></tr>
 <tr><td>26</td><td>GPIO7</td><td>SPI0 CE1</td><td><strong>TFT CS（独占，不许给别人）</strong></td></tr>
 <tr><td>29</td><td>GPIO5</td><td>GPIO</td><td>（拓展）HC-SR04 TRIG</td></tr>
-<tr><td>30</td><td>—</td><td>GND</td><td>LED 公共地</td></tr>
+<tr><td>30</td><td>—</td><td>GND</td><td>MCP3002 VSS（GND）</td></tr>
 <tr><td>31</td><td>GPIO6</td><td>GPIO</td><td>（拓展）HC-SR04 ECHO（<strong>须电平转换</strong>）</td></tr>
-<tr><td>34</td><td>—</td><td>GND</td><td>按键另一端</td></tr>
-<tr><td>39</td><td>—</td><td>GND</td><td>（拓展）HC-SR04 GND</td></tr>
+<tr><td>34</td><td>—</td><td>GND</td><td><strong>TMP36 GND</strong></td></tr>
+<tr><td>39</td><td>—</td><td>GND</td><td>LED 阴极共地 ＋ 蜂鸣器 <code>−</code>（拓展 HC-SR04 GND 也接这里）</td></tr>
 </tbody></table>
 <hr>
 <h2>2. 必接器件（六个）</h2>
@@ -127,7 +155,7 @@
 <tbody>
 <tr><td>VCC</td><td><strong>2</strong>（5V）</td><td>⚠️ <strong>必须 5V</strong>！接 3.3V 会工作不稳、误触发、探测距离明显变短</td></tr>
 <tr><td>OUT</td><td><strong>11</strong>（GPIO17）</td><td>输出 <strong>3.3V 电平，可直连</strong>，不需要电平转换</td></tr>
-<tr><td>GND</td><td><strong>6 / 9 / 14</strong>（任一 GND）</td><td>必须共地，不共地读数必然乱跳</td></tr>
+<tr><td>GND</td><td><strong>20</strong>（GND）</td><td>必须共地，不共地读数必然乱跳</td></tr>
 </tbody></table>
 <blockquote>记忆点：<strong>HC-SR501 是"5V 供电、3.3V 输出"</strong>，而 HC-SR04 是"5V 供电、<strong>5V</strong> 输出"（后者必须加电平转换）。<br>⚠️ 市面上部分廉价仿制 HC-SR501 可能没有板载电平转换，若量到 OUT 为 5V 就必须加压降。</blockquote>
 <h3>2.5 蜂鸣器</h3>
@@ -135,22 +163,23 @@
 <thead><tr><th>蜂鸣器</th><th>接树莓派物理脚</th><th>说明</th></tr></thead>
 <tbody>
 <tr><td>+(长脚)</td><td>12（GPIO18）</td><td>串 100Ω~1kΩ 限流</td></tr>
-<tr><td>−(短脚)</td><td>25（GND）</td><td></td></tr>
+<tr><td>−(短脚)</td><td><strong>39（GND）</strong></td><td>与 LED 共用一个 GND 脚即可</td></tr>
 </tbody></table>
-<h3>2.6 LED 三色状态灯（每个都要串 220Ω~1kΩ）</h3>
+<h3>2.6 LED 状态灯（每个都要串 220Ω~1kΩ）</h3>
 <table>
 <thead><tr><th>LED</th><th>阳极经电阻接</th><th>阴极接</th><th>含义</th></tr></thead>
 <tbody>
-<tr><td>绿</td><td>15（GPIO22）</td><td>30（GND）</td><td>一切正常</td></tr>
-<tr><td>黄</td><td>16（GPIO23）</td><td>30（GND）</td><td>需要注意</td></tr>
-<tr><td>红</td><td>18（GPIO24）</td><td>30（GND）</td><td>正在报警</td></tr>
+<tr><td>绿</td><td>15（GPIO22）</td><td><strong>39（GND）</strong></td><td>一切正常</td></tr>
+<tr><td>黄</td><td>16（GPIO23）</td><td><strong>39（GND）</strong></td><td>需要注意</td></tr>
+<tr><td>~~红~~</td><td>~~18（GPIO24）~~</td><td>—</td><td><strong>本项目不接</strong>：GPIO24 让给 TFT 的 A0（见 4.1）</td></tr>
 </tbody></table>
+<blockquote>两个 LED 的阴极可以拧在一起接同一个 GND 脚（39），地是共通的。</blockquote>
 <h3>2.7 求救按键</h3>
 <table>
 <thead><tr><th>按键</th><th>接树莓派物理脚</th><th>说明</th></tr></thead>
 <tbody>
 <tr><td>一端</td><td>13（GPIO27）</td><td></td></tr>
-<tr><td>另一端</td><td>34（GND）</td><td></td></tr>
+<tr><td>另一端</td><td><strong>34（GND）</strong></td><td></td></tr>
 <tr><td>消抖电容（可选）</td><td>与按键两端并联 0.1µF</td><td>按键抖动大时加</td></tr>
 </tbody></table>
 <p>程序已启用 GPIO27 内部上拉，<strong>不需要</strong>外接上拉电阻：按下即为低电平。</p>
@@ -162,7 +191,7 @@
 <thead><tr><th>MCP3002 脚</th><th>接树莓派物理脚</th><th>说明</th></tr></thead>
 <tbody>
 <tr><td>VDD / VCC</td><td>1</td><td>3.3V</td></tr>
-<tr><td>VSS / GND</td><td>6</td><td></td></tr>
+<tr><td>VSS / GND</td><td><strong>30</strong></td><td>GND（见第 0.5 节的 GND 分配）</td></tr>
 <tr><td>CLK</td><td>23</td><td>GPIO11 / SCLK</td></tr>
 <tr><td>DIN</td><td>19</td><td>GPIO10 / MOSI</td></tr>
 <tr><td>DOUT</td><td>21</td><td>GPIO9 / MISO</td></tr>
@@ -176,7 +205,7 @@
 <tbody>
 <tr><td>左脚 (+Vs)</td><td>物理脚 1（3.3V）</td><td></td></tr>
 <tr><td>中脚 (VOUT)</td><td>MCP3002 的 CH0</td><td></td></tr>
-<tr><td>右脚 (GND)</td><td>物理脚 6（GND）</td><td></td></tr>
+<tr><td>右脚 (GND)</td><td>物理脚 34（GND）</td><td>与树莓派共地</td></tr>
 <tr><td>去耦电容</td><td>V+ 与 GND 之间并 0.1µF</td><td>强烈建议，能明显稳住读数</td></tr>
 </tbody></table>
 <p>注意：TMP36 与 MCP3002 必须共地，且都用 3.3V。用 5V 给 ADC 会超出其输入范围。</p>
@@ -207,8 +236,8 @@
 <table>
 <thead><tr><th>TFT 丝印</th><th>接树莓派物理脚</th><th>说明</th></tr></thead>
 <tbody>
-<tr><td>VCC</td><td>1</td><td>先试 3.3V</td></tr>
-<tr><td>GND</td><td>6</td><td></td></tr>
+<tr><td>VCC</td><td>1</td><td>3.3V</td></tr>
+<tr><td>GND</td><td><strong>25</strong></td><td>GND（见第 0.5 节的 GND 分配）</td></tr>
 <tr><td>SCK</td><td>23</td><td>与 MCP3002 共用 SPI 时钟</td></tr>
 <tr><td>SDA</td><td>19</td><td>与 MCP3002 共用 MOSI</td></tr>
 <tr><td>CS</td><td>26</td><td>GPIO7 / CE1，独占</td></tr>
