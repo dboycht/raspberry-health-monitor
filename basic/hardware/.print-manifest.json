@@ -1,0 +1,12 @@
+{
+  "note": "由 wire_docs.py --generate 写出；记录打印产物及其源 md 的哈希，用来发现'忘了重新导出 PDF'",
+  "sources": {
+    "04-线色与自查卡.md": {
+      "sha256": "b227cb1e27aeefcdefa4ebf597f3b0556ee2bba41e01497d04d57df089e54500",
+      "outputs": {
+        "04-线色与自查卡.pdf": "3534521c3c586792dce2f345d4689336b3805c0a86c4386fdf90662becc24b71",
+        "04-线色与自查卡.html": "efb1d256eb1b6b2b71248c4da5ae12b1f4a3dd721cb28d2cd2c36b5a669fe1da"
+      }
+    }
+  }
+}

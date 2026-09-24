@@ -44,7 +44,10 @@ if str(BASIC_DIR.parent) not in sys.path:
 from basic import __version__, pins, wire_spec  # noqa: E402
 from basic.model import CSV_HEADER  # noqa: E402
 from basic.store import default_csv_path  # noqa: E402
-from basic.wire_spec import (  # noqa: E402
+# ⚠️ 全部事实**通过 `wire_spec.X` 访问**（下面这些名字只为 IDE/静态检查可发现，运行时不用）：
+#    这样单测可以注入（例如把 DATA_PHYSICAL 改成 40，验证"换引脚后图仍对齐"），
+#    而 `from ... import DATA_PHYSICAL` 会把值绑死在导入那一刻，注入就失效了。
+from basic.wire_spec import (  # noqa: E402,F401
     DATA_BCM,
     DATA_PHYSICAL,
     FIXED_FUNCTION_PHYSICAL,
@@ -99,40 +102,79 @@ def _table(headers: List[str], rows: List[List[str]], aligns: Optional[List[str]
 
 
 def _gnd_list_text() -> str:
-    return "、".join(str(p) for p in GND_PHYSICAL)
+    return "、".join(str(p) for p in wire_spec.GND_PHYSICAL)
+
+
+def _canvas(rows: int, cols: int, fill: str = " ") -> List[List[str]]:
+    return [[fill] * cols for _ in range(rows)]
+
+
+def _put(canvas: List[List[str]], row: int, col: int, text: str) -> None:
+    """把 ``text`` 写在 ``(row, col)``，允许越界自动扩展（不抛异常，便于拼图）。"""
+    width = len(canvas[0]) if canvas else max(col + len(text), 1)
+    while len(canvas) <= row:
+        canvas.append([" "] * width)
+    line = canvas[row]
+    need = col + len(text) - len(line)
+    if need > 0:
+        line.extend([" "] * need)
+    for offset, char in enumerate(text):
+        line[col + offset] = char
+
+
+def _line(canvas: List[List[str]], row: int, col_from: int, col_to: int) -> None:
+    """在第 ``row`` 行从 ``col_from`` 画到 ``col_to``（含两端）的横线。"""
+    for col in range(col_from, col_to + 1):
+        _put(canvas, row, col, "─")
+
+
+def _render(canvas: List[List[str]]) -> str:
+    return "\n".join("".join(row).rstrip() for row in canvas)
 
 
 def pinout_diagram() -> str:
-    """40-pin 布局图（两列，与实物排针一致）：标出本基础版用到的脚。"""
+    """40-pin 布局图（两列，与实物排针一致）：标出本基础版用到的脚。
+
+    ⚠️ **对齐由列号保证，不靠手写空格**：这就是本函数存在的理由 ——
+    手写 ASCII 图时，只要插入或替换一个数字（例如数据脚从 4 变成 17），
+    整张图就会错位。做法是先算好"内列/外列"的列号，再按列号填字符。
+    """
     usage = wire_spec.pin_usage()
     left = list(range(1, 41, 2))       # 1,3,5,...,39（内侧一列）
     right = list(range(2, 41, 2))      # 2,4,6,...,40（外侧一列）
 
-    def mark(physical: int) -> str:
-        """给一个脚加上标记：★ = 本基础版使用。"""
-        return "★" if physical in usage else " "
+    left_num_col = 2
+    left_func_col = 6
+    right_func_col = left_func_col + 16
+    right_num_col = right_func_col + 14
+    sep_col = right_func_col - 2
+    total_cols = right_num_col + 4
 
-    lines = ["```", "                树莓派 5 · 40-pin 排针（俯视，USB 口朝下）", ""]
-    lines.append("        3.3V/GPIO ──────── 内侧一列 ┈┈┈ 外侧一列 ──────── 5V/GPIO")
-    for left_pin, right_pin in zip(left, right):
-        l_func = PHYSICAL_FUNCTION[left_pin]
-        r_func = PHYSICAL_FUNCTION[right_pin]
-        l_use = usage.get(left_pin, "")
-        r_use = usage.get(right_pin, "")
-        l_text = f"{left_pin:>2}{mark(left_pin)} {l_func:<14}"
-        r_text = f"{r_func:<14}{mark(right_pin)} {right_pin:>2}"
-        suffix = ""
-        if l_use or r_use:
-            suffix = "   ← " + "；".join(filter(None, [f"脚{left_pin}: {l_use}" if l_use else "",
-                                                        f"脚{right_pin}: {r_use}" if r_use else ""]))
-        lines.append(f"  {l_text} ┃ {r_text}{suffix}")
-    lines.append("")
-    lines.append("  ★ = 本基础版用到的脚（DHT11 一条线 + 电源 + 地）")
-    lines.append(f"  电源 3.3V：脚 {'、'.join(map(str, V33_PHYSICAL))}　　5V（本基础版不要用）：脚 {'、'.join(map(str, V5_PHYSICAL))}")
-    lines.append(f"  GND：脚 {_gnd_list_text()}（任意一个都行，推荐脚 {GND_RECOMMENDED}）")
-    lines.append(f"  预留不用：脚 27、28（{RESERVED_PHYSICAL[27]}、{RESERVED_PHYSICAL[28]}）")
-    lines.append("```")
-    return "\n".join(lines)
+    canvas = _canvas(0, total_cols)
+    _put(canvas, 0, 20, "树莓派 5 · 40-pin 排针（俯视，USB 口朝下）")
+    _put(canvas, 2, left_num_col, "物理脚")
+    _put(canvas, 2, left_func_col, "功能")
+    _put(canvas, 2, right_func_col, "功能")
+    _put(canvas, 2, right_num_col, "物理脚")
+
+    for index, (left_pin, right_pin) in enumerate(zip(left, right)):
+        row = 4 + index
+        _put(canvas, row, left_num_col, f"{left_pin:>2}{'★' if left_pin in usage else ' '}")
+        _put(canvas, row, left_func_col, f"{wire_spec.PHYSICAL_FUNCTION[left_pin]:<14}")
+        _put(canvas, row, sep_col, "┃")
+        _put(canvas, row, right_func_col, f"{wire_spec.PHYSICAL_FUNCTION[right_pin]:<14}")
+        _put(canvas, row, right_num_col, f"{'★' if right_pin in usage else ' '}{right_pin:>2}")
+
+    lines = _render(canvas).rstrip().splitlines()
+    used_text = "、".join(f"{p}({wire_spec.pin_usage()[p]})" for p in sorted(usage))
+    legend = [
+        "",
+        f"  ★ = 本基础版用到的脚：{used_text}",
+        f"  3.3V 电源：物理脚 {'、'.join(map(str, wire_spec.V33_PHYSICAL))}　　5V（本基础版不要用）：物理脚 {'、'.join(map(str, wire_spec.V5_PHYSICAL))}",
+        f"  GND：物理脚 {_gnd_list_text()}（任意一个都行，推荐物理脚 {wire_spec.GND_RECOMMENDED}）",
+        f"  保留不用：物理脚 27、28（{wire_spec.RESERVED_PHYSICAL[27]}、{wire_spec.RESERVED_PHYSICAL[28]}）",
+    ]
+    return "```\n" + "\n".join(lines + legend) + "\n```"
 
 
 def _wire_rows() -> List[List[str]]:
@@ -179,7 +221,7 @@ def build_index() -> str:
     _wire_rows_min(),
     ["---", ":---:", "---", "---"],
 )}
-> 记忆点：**供电 3.3V、数据 GPIO{DATA_BCM}（物理脚 {DATA_PHYSICAL}）、一定要共地**。
+> 记忆点：**供电 3.3V、数据 GPIO{wire_spec.DATA_BCM}（物理脚 {wire_spec.DATA_PHYSICAL}）、一定要共地**。
 
 ## 1. 本目录有什么
 
@@ -204,8 +246,8 @@ def build_index() -> str:
 ## 3. 三分钟接完的顺序
 
 1. **断电**（拔掉树莓派电源；带电插拔是烧 GPIO 的头号原因）；
-2. 红线上 **3.3V**（物理脚 {'/'.join(map(str, V33_PHYSICAL))}），黑线接 **GND**（物理脚 {GND_RECOMMENDED} 或任意地脚）；
-3. 黄线接**数据脚 {DATA_PHYSICAL}（GPIO{DATA_BCM}）**；
+2. 红线上 **3.3V**（物理脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}），黑线接 **GND**（物理脚 {wire_spec.GND_RECOMMENDED} 或任意地脚）；
+3. 黄线接**数据脚 {wire_spec.DATA_PHYSICAL}（GPIO{wire_spec.DATA_BCM}）**；
 4. 如果是**裸四针**传感器：在 DATA 与 3.3V 之间接一个 {wire_spec.pullup_text()} 电阻（三针模块通常已自带，不用接）；
 5. 上电，跑自检与采集：
 
@@ -222,7 +264,7 @@ python3 run.py                        # 真实读数 + 动态曲线
 | --- | --- | --- | --- |
 | 1 | 模块供电正确 | 万用表直流档量模块 VCC 与 GND 之间 | **约 3.3V**（不是 5V） |
 | 2 | 共地 | 万用表蜂鸣档：树莓派 GND ↔ 模块 GND | **响**（导通） |
-| 3 | 数据线通 | 万用表蜂鸣档：模块 DATA ↔ **物理脚 {DATA_PHYSICAL}** | **响** |
+| 3 | 数据线通 | 万用表蜂鸣档：模块 DATA ↔ **物理脚 {wire_spec.DATA_PHYSICAL}** | **响** |
 | 4 | 上拉存在（裸传感器） | 断电量 DATA ↔ 3.3V 电阻 | 约 {wire_spec.pullup_text()} |
 | 5 | 空闲电平 | `python3 tools/diag_dht_line.py` | 上拉=1、下拉=0（线上没有器件强驱动） |
 | 6 | 能读出数 | `python3 run.py --no-plot --duration 20` | 每行都是真实温湿度（不是"未知"） |
@@ -242,7 +284,7 @@ python3 run.py                        # 真实读数 + 动态曲线
 
 | 项 | 值 | 出处 |
 | --- | --- | --- |
-| 默认采样周期 | {RECOMMENDED_INTERVAL_S:g} 秒（硬件要求 ≥{MIN_INTERVAL_S:g} 秒） | `basic/wire_spec.py`（与驱动常量同源） |
+| 默认采样周期 | {wire_spec.RECOMMENDED_INTERVAL_S:g} 秒（硬件要求 ≥{wire_spec.MIN_INTERVAL_S:g} 秒） | `basic/wire_spec.py`（与驱动常量同源） |
 | 数据存哪 | `basic/data/dht11_日期_时刻.csv`（一次运行一个文件；由 `basic/store.py` 的 `default_csv_path()` 生成） | `basic/store.py` |
 | CSV 表头 | `{",".join(CSV_HEADER)}` | `basic/model.py` 的 `CSV_HEADER` |
 | 读失败怎么写 | 温度/湿度字段**留空**、`status=fail`、`note` 写原因（**绝不写 0**） | `basic/model.py` 的 `Reading.to_csv_row()` |
@@ -268,17 +310,17 @@ def build_pin_table() -> str:
     usage = wire_spec.pin_usage()
     rows: List[List[str]] = []
     for physical in range(1, 41):
-        function = PHYSICAL_FUNCTION[physical]
+        function = wire_spec.PHYSICAL_FUNCTION[physical]
         bcm = pins.physical_to_bcm(physical)
         bcm_text = f"GPIO{bcm}" if bcm is not None else "—"
         if physical in usage:
             status, assign = "✅ 本基础版使用", usage[physical]
-        elif physical in RESERVED_PHYSICAL:
-            status, assign = "🟡 保留（不要用）", RESERVED_PHYSICAL[physical]
+        elif physical in wire_spec.RESERVED_PHYSICAL:
+            status, assign = "🟡 保留（不要用）", wire_spec.RESERVED_PHYSICAL[physical]
         elif function in ("3.3V", "5V"):
             status, assign = "🔌 电源", "可给传感器供电（本基础版只用 3.3V）"
         elif function == "GND":
-            status, assign = "🔌 地", "公共地（推荐用脚 " + str(GND_RECOMMENDED) + "）"
+            status, assign = "🔌 地", "公共地（推荐用脚 " + str(wire_spec.GND_RECOMMENDED) + "）"
         elif physical in FIXED_FUNCTION_PHYSICAL:
             status, assign = "⚪ 空闲（固定功能）", FIXED_FUNCTION_PHYSICAL[physical]
         else:
@@ -289,13 +331,13 @@ def build_pin_table() -> str:
     free_gpio = [
         p for p in range(1, 41)
         if p not in usage
-        and PHYSICAL_FUNCTION[p] not in ("3.3V", "5V", "GND")
-        and p not in RESERVED_PHYSICAL
+        and wire_spec.PHYSICAL_FUNCTION[p] not in ("3.3V", "5V", "GND")
+        and p not in wire_spec.RESERVED_PHYSICAL
     ]
     return f"""{_header("01 · 引脚分配表（树莓派 5 · 40-pin）")}
 
 > **看物理脚号插线，看 BCM 编号写代码** —— 两者不是偏移关系
-> （GPIO4 = 物理脚 {DATA_PHYSICAL}，但 GPIO27 = 物理脚 13）。
+> （GPIO4 = 物理脚 {wire_spec.DATA_PHYSICAL}，但 GPIO27 = 物理脚 13）。
 > 本表把 40 个脚**全部列出**（含未用的），方便你确认"这个脚到底能不能用"。
 
 ## 1. 完整 40-pin 分配
@@ -312,14 +354,14 @@ def build_pin_table() -> str:
 
 | 类别 | 数量 | 物理脚 |
 | --- | ---: | --- |
-| 3.3V | {len(V33_PHYSICAL)} | {'、'.join(map(str, V33_PHYSICAL))} |
-| 5V（**本基础版不要用**） | {len(V5_PHYSICAL)} | {'、'.join(map(str, V5_PHYSICAL))} |
-| GND | {len(GND_PHYSICAL)} | {_gnd_list_text()} |
+| 3.3V | {len(wire_spec.V33_PHYSICAL)} | {'、'.join(map(str, wire_spec.V33_PHYSICAL))} |
+| 5V（**本基础版不要用**） | {len(wire_spec.V5_PHYSICAL)} | {'、'.join(map(str, wire_spec.V5_PHYSICAL))} |
+| GND | {len(wire_spec.GND_PHYSICAL)} | {_gnd_list_text()} |
 | 本基础版使用 | {len(used)} | {'、'.join(map(str, used))} |
 | 空闲（可扩展） | {len(free_gpio)} | {'、'.join(map(str, free_gpio))} |
-| 保留（不要用） | {len(RESERVED_PHYSICAL)} | {'、'.join(map(str, sorted(RESERVED_PHYSICAL)))} |
+| 保留（不要用） | {len(wire_spec.RESERVED_PHYSICAL)} | {'、'.join(map(str, sorted(wire_spec.RESERVED_PHYSICAL)))} |
 
-> ⚠️ **GND 只有 8 个脚**：本基础版只用 1 个（脚 {GND_RECOMMENDED}），
+> ⚠️ **GND 只有 8 个脚**：本基础版只用 1 个（脚 {wire_spec.GND_RECOMMENDED}），
 > 以后加器件时建议用**面包板地轨**汇流，不要把好几根线硬塞进同一个物理脚。
 
 ## 3. 常用扩展引脚（以后加功能时先看这里）
@@ -354,34 +396,57 @@ def build_pin_table() -> str:
 # ==========================================================================
 
 
+def wiring_diagram() -> str:
+    """ASCII 接线图（**按列号拼出来**，插值对齐不靠手写空格）。
+
+    结构（自左向右）：树莓派 40-pin 的三个脚 → 三根线 → 传感器模块的三个端子。
+    画的规则：先算好"引脚列 / 走线列 / 端子列"，再用 ``_put`` 往画布上填字符 ——
+    所以以后数据脚从 4 改成 17，整张图**仍然对齐**（手写空格做不到这一点）。
+    """
+    #: 三个信号：(物理脚, 功能标签, 线色, 传感器端子名)
+    rows_spec = [
+        (wire_spec.V33_PHYSICAL[0], "3.3V", "红", "VCC"),
+        (wire_spec.GND_RECOMMENDED, "GND", "黑", "GND"),
+        (int(wire_spec.DATA_PHYSICAL or 0), f"GPIO{wire_spec.DATA_BCM}", "黄", "DATA"),
+    ]
+    pin_col, wire_col, dot_col, term_col, note_col = 1, 16, 26, 30, 44
+    step = 2
+    title_row = 0
+    canvas = _canvas(0, 100)
+    _put(canvas, title_row, pin_col, "树莓派 5 · 40-pin（俯视，只画要接的三个脚）")
+    _put(canvas, title_row, term_col, "DHT11 模块端子")
+    first_row = title_row + 2
+    terminal_rows: List[int] = []
+    for index, (physical, label, color, terminal) in enumerate(rows_spec):
+        row = first_row + index * step
+        terminal_rows.append(row)
+        star = "★" if physical in wire_spec.pin_usage() else " "
+        _put(canvas, row, pin_col, f"脚 {physical:>2}{star} {label:<6}")
+        _line(canvas, row, wire_col, dot_col)
+        _put(canvas, row, dot_col, "●")
+        _put(canvas, row, term_col, f"{terminal:<5}")
+        _put(canvas, row, note_col, f"（{color}线）")
+
+    picture = _render(canvas).rstrip()
+    used = wire_spec.pin_usage()
+    legend = [
+        "",
+        f"  ① 三个物理脚：{'、'.join(f'{p}（{label}）' for p, label, _c, _t in rows_spec)}"
+        f"　★ = 本基础版用到的脚（其余 37 个空闲）",
+        f"  ② 裸四针传感器：在 DATA 与 3.3V 之间接一个 {wire_spec.pullup_text()} 上拉电阻（三针模块通常已自带）",
+        "  ③ 颜色只是约定：红线=电源、黑线=地、黄线=数据（换色可以，但要在验收记录里写明）",
+        "  ④ DHT11 模块丝印可能是 VCC/DATA/GND，也可能是 + / out / −（对应关系见下面的逐线表）",
+    ]
+    return "```\n" + picture + "\n" + "\n".join(legend) + "\n```"
+
+
 def build_wiring_diagram() -> str:
     pull_text = wire_spec.pullup_text()
     return f"""{_header("02 · 接线图与逐线接续表（DHT11 → 树莓派 5）")}
 
-## 1. 接线图（俯视示意图）
+## 1. 接线图（示意图，只画本基础版要接的三根线）
 
-```
-                    ┌──────────────────────────────┐
-                    │        树莓派 5（40-pin）      │
-                    │                              │
-        3.3V  脚 1 ──┼──● 红线 ────────────────┐    │
-                    │                          │    │
-        GND   脚 6 ──┼──● 黑线 ──────────┐     │    │
-                    │                   │     │    │
-   GPIO{DATA_BCM} 脚 {DATA_PHYSICAL} ──┼──● 黄线 ────┐  │    │    │
-                    │                   │  │  │    │
-                    └───────────────────┼──┼──┼────┘
-                                        │  │  │
-                        ┌───────────────┼──┼──┼──────────┐
-                        │  DHT11 模块    │  │  │           │
-                        │   VCC ●────────┘  │  │  （红→3.3V）│
-                        │   GND ●───────────┘  │  （黑→GND） │
-                        │  DATA ●──────────────┘  （黄→GPIO{DATA_BCM}）│
-                        │                            │
-                        │  ★ 裸四针传感器还要接上拉：   │
-                        │    DATA ──[{pull_text}]── 3.3V   │
-                        └────────────────────────────┘
-```
+{wiring_diagram()}
 
 > 三针**模块**（带小板的成品）通常已经焊好上拉电阻，**不用自己再接**；
 > 四针**裸传感器**（光板一个元件）必须外接 {pull_text} 上拉，否则永远读不到（一直 NaN / 无应答）。
@@ -405,7 +470,7 @@ def build_wiring_diagram() -> str:
 | **AM2302 / DHT22** | 白色塑料壳，3 或 4 脚 | 模块版已自带 | 3.3V |
 
 > 本基础版的代码对 DHT11 / DHT22 都适用（都是"单总线、40 bit、校验和"），
-> 只是量程判据按 DHT11 写死（{TEMP_RANGE_C[0]:.0f}~{TEMP_RANGE_C[1]:.0f}℃ / {HUMI_RANGE_PCT[0]:.0f}~{HUMI_RANGE_PCT[1]:.0f}%RH）。
+> 只是量程判据按 DHT11 写死（{wire_spec.TEMP_RANGE_C[0]:.0f}~{wire_spec.TEMP_RANGE_C[1]:.0f}℃ / {wire_spec.HUMI_RANGE_PCT[0]:.0f}~{wire_spec.HUMI_RANGE_PCT[1]:.0f}%RH）。
 
 ## 4. 供电为什么必须 3.3V（**本基础版最容易被坑的一点**）
 
@@ -414,7 +479,7 @@ def build_wiring_diagram() -> str:
 | 数据线电平 = 模块供电电压 | DHT11 的 DATA 是**开漏/上拉**结构。模块接 5V 时，上拉把 DATA 拉到 **5V**；树莓派 GPIO 只耐受 **3.3V** |
 | 后果 | 轻则读数不稳、重则**永久损坏 GPIO**（甚至整块板） |
 | 有些模块丝印写 5V | 指的是 **AM2302 那种带稳压的模块**（板上有 3.3V LDO）。**DHT11 不要接 5V** |
-| 本基础上的做法 | 供电一律走 **3.3V（物理脚 {'/'.join(map(str, V33_PHYSICAL))}）**，5V（脚 {'/'.join(map(str, V5_PHYSICAL))}）本基础版**不接任何东西** |
+| 本基础上的做法 | 供电一律走 **3.3V（物理脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}）**，5V（脚 {'/'.join(map(str, wire_spec.V5_PHYSICAL))}）本基础版**不接任何东西** |
 
 **判据（可执行）**：上电后万用表量模块 `VCC` 对 `GND`，必须是 **约 3.3V**；
 若量到 5V，立刻断电改线（这是"接线错误"里唯一会烧硬件的错）。
@@ -426,7 +491,7 @@ def build_wiring_diagram() -> str:
 | 量哪里 | 档位 | 期望 | 不对说明什么 |
 | --- | --- | --- | --- |
 | 3.3V ↔ GND（树莓派这侧，**模块先拔掉**） | 电阻档 | 不导通（或读数很大） | 导通 = 电源短路，**绝对不能上电** |
-| 模块 DATA ↔ 树莓派物理脚 {DATA_PHYSICAL} | 蜂鸣档 | 响 | 不响 = 线插错列/断了 |
+| 模块 DATA ↔ 树莓派物理脚 {wire_spec.DATA_PHYSICAL} | 蜂鸣档 | 响 | 不响 = 线插错列/断了 |
 | 模块 GND ↔ 树莓派 GND 脚 | 蜂鸣档 | 响 | 不响 = 没共地（读数必然乱跳） |
 | 模块 DATA ↔ 3.3V（裸传感器） | 电阻档 | 约 {pull_text} | 无穷大 = 上拉没接 |
 
@@ -435,7 +500,7 @@ def build_wiring_diagram() -> str:
 | 量哪里 | 期望 | 不对时的含义 |
 | --- | --- | --- |
 | 模块 VCC ↔ GND | **约 3.3V** | 0V = 没供上电；5V = 接错到 5V 脚（危险） |
-| DATA ↔ GND（空闲时） | **约 3.3V**（{IDLE_LEVEL}） | 0V = 线被拉死/接错；乱跳 = 没接上/接触不良 |
+| DATA ↔ GND（空闲时） | **约 3.3V**（{wire_spec.IDLE_LEVEL}） | 0V = 线被拉死/接错；乱跳 = 没接上/接触不良 |
 
 ### 5.3 脚本判据（`basic/tools/diag_dht_line.py`）
 
@@ -458,16 +523,16 @@ python3 run.py                            # 真实读数 + 动态曲线窗口
 | 期望 | 说明 |
 | --- | --- |
 | 终端每行都是真实数值（如 `温度: 25.0 ℃，湿度: 58 %`） | 这才是"通了" |
-| 温度落在 {TEMP_RANGE_C[0]:.0f}~{TEMP_RANGE_C[1]:.0f}℃、湿度落在 {HUMI_RANGE_PCT[0]:.0f}~{HUMI_RANGE_PCT[1]:.0f}%RH | 超出量程说明器件/接线有问题 |
-| 采样间隔 ≥{RECOMMENDED_INTERVAL_S:g} 秒（默认） | DHT11 两次读取必须间隔 ≥{MIN_INTERVAL_S:g} 秒，否则返回陈旧数据 |
+| 温度落在 {wire_spec.TEMP_RANGE_C[0]:.0f}~{wire_spec.TEMP_RANGE_C[1]:.0f}℃、湿度落在 {wire_spec.HUMI_RANGE_PCT[0]:.0f}~{wire_spec.HUMI_RANGE_PCT[1]:.0f}%RH | 超出量程说明器件/接线有问题 |
+| 采样间隔 ≥{wire_spec.RECOMMENDED_INTERVAL_S:g} 秒（默认） | DHT11 两次读取必须间隔 ≥{wire_spec.MIN_INTERVAL_S:g} 秒，否则返回陈旧数据 |
 
 ## 6. 现象 → 原因对照（按现象查）
 
 | 现象 | 最可能的原因 | 下一步 |
 | --- | --- | --- |
 | `只捕获到 0 个边沿：传感器没有应答` | 没供电 / 数据线插错列 / 没共地 / 裸传感器缺上拉 | 先量 VCC 是否 3.3V，再跑 `diag_dht_line.py` |
-| `校验和不符` | 线太长、接触不良、电源噪声、读取太快 | 缩短杜邦线、换线、确认间隔 ≥{MIN_INTERVAL_S:g} 秒 |
-| 每次都是"未知" | DATA 接到别的脚（不是物理脚 {DATA_PHYSICAL}） | 蜂鸣档量 DATA ↔ 脚 {DATA_PHYSICAL} |
+| `校验和不符` | 线太长、接触不良、电源噪声、读取太快 | 缩短杜邦线、换线、确认间隔 ≥{wire_spec.MIN_INTERVAL_S:g} 秒 |
+| 每次都是"未知" | DATA 接到别的脚（不是物理脚 {wire_spec.DATA_PHYSICAL}） | 蜂鸣档量 DATA ↔ 脚 {wire_spec.DATA_PHYSICAL} |
 | 读数偶尔对、偶尔乱 | 面包板接触不良 / 电源轨与信号插在同一列 | 换孔重插；面包板**每一列纵向导通**，别把电源和信号插同列 |
 | 中文变方框（曲线窗口） | 缺中文字体 | `sudo apt install -y fonts-noto-cjk` |
 | `没有可用的 DHT11 读取后端` | 没装 lgpio，或是在电脑上跑 | `sudo apt install -y python3-lgpio`；电脑上用 `--mock` |
@@ -482,8 +547,8 @@ python3 run.py                            # 真实读数 + 动态曲线窗口
 
 
 def build_power_safety() -> str:
-    low_ma, high_ma = MODULE_CURRENT_MA
-    rail_ma = PI_3V3_RAIL_A * 1000
+    low_ma, high_ma = wire_spec.MODULE_CURRENT_MA
+    rail_ma = wire_spec.PI_3V3_RAIL_A * 1000
     return f"""{_header("03 · 供电与安全（接线前必读）")}
 
 > 这一页只有 6 条规矩，但**每一条都对应一次真实的硬件损坏或一周的排查**。
@@ -496,7 +561,7 @@ def build_power_safety() -> str:
 | 1 | **插拔任何杜邦线之前先断电**（拔电源，或 `sudo poweroff` 后等绿灯灭） | 带电插拔最容易把 5V 蹭到 GPIO 上；热插拔还可能损坏 SD 卡上的文件系统 |
 | 2 | **DHT11 供 3.3V，绝不接 5V** | 数据电平会跟着供电变成 5V，超出 GPIO 耐压（见 [`02-接线图.md`](02-接线图.md) 第 4 节） |
 | 3 | **所有器件必须与树莓派共地** | 不共地的典型症状：读数乱跳、时通时不通 |
-| 4 | **不要用 40-pin 的 5V 脚给 3.3V 器件供电**（脚 {'、'.join(map(str, V5_PHYSICAL))}） | 本基础版**一个 5V 器件都没有**，那两脚直接空着 |
+| 4 | **不要用 40-pin 的 5V 脚给 3.3V 器件供电**（脚 {'、'.join(map(str, wire_spec.V5_PHYSICAL))}） | 本基础版**一个 5V 器件都没有**，那两脚直接空着 |
 | 5 | **上电前先量电源对地有没有短路** | 30 秒的检查能避免烧板（方法见 [`02-接线图.md`](02-接线图.md) 第 5.1 节） |
 | 6 | **手摸板子前先摸一下接地的金属**（水管/机箱） | 静电击穿是"什么都没做就坏了"的常见原因 |
 
@@ -504,9 +569,9 @@ def build_power_safety() -> str:
 
 | 项 | 值 | 来源 |
 | --- | --- | --- |
-| 树莓派 5 官方电源要求 | **{PI_PSU}** | 官方规格（5A 是为了给 USB 外设留余量） |
-| 本基础版的供电方式 | {POWER_MODE} | 只接一个 DHT11，不需要外部电源 |
-| 3.3V 轨电流上限 | 约 **{PI_3V3_RAIL_A:g} A（{rail_ma:.0f} mA）** | 40-pin 的 3.3V 由板载稳压器提供 |
+| 树莓派 5 官方电源要求 | **{wire_spec.PI_PSU}** | 官方规格（5A 是为了给 USB 外设留余量） |
+| 本基础版的供电方式 | {wire_spec.POWER_MODE} | 只接一个 DHT11，不需要外部电源 |
+| 3.3V 轨电流上限 | 约 **{wire_spec.PI_3V3_RAIL_A:g} A（{rail_ma:.0f} mA）** | 40-pin 的 3.3V 由板载稳压器提供 |
 
 **电源不足的典型症状**（不是"跑不起来"，而是"跑得诡异"）：
 彩虹屏 / 反复重启 / I2C 器件时有时无 / 传感器读数乱跳。
@@ -537,9 +602,9 @@ def build_power_safety() -> str:
 
 - [ ] 电源已**断开**
 - [ ] 3.3V ↔ GND 不导通（没有短路）
-- [ ] 模块 VCC 接的是**物理脚 {'/'.join(map(str, V33_PHYSICAL))}**（3.3V），不是脚 {'、'.join(map(str, V5_PHYSICAL))}（5V）
-- [ ] 模块 GND 接的是 **GND 脚**（推荐脚 {GND_RECOMMENDED}）
-- [ ] DATA 接的是**物理脚 {DATA_PHYSICAL}（GPIO{DATA_BCM}）**
+- [ ] 模块 VCC 接的是**物理脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}**（3.3V），不是脚 {'、'.join(map(str, wire_spec.V5_PHYSICAL))}（5V）
+- [ ] 模块 GND 接的是 **GND 脚**（推荐脚 {wire_spec.GND_RECOMMENDED}）
+- [ ] DATA 接的是**物理脚 {wire_spec.DATA_PHYSICAL}（GPIO{wire_spec.DATA_BCM}）**
 - [ ] 裸四针传感器已接 {wire_spec.pullup_text()} 上拉到 **3.3V**（不是 5V）
 - [ ] 杜邦线插紧、没有跨列（面包板每一列纵向导通）
 - [ ] 上电后模块 VCC 对 GND 约 3.3V
@@ -573,9 +638,9 @@ def build_quick_card() -> str:
 
 | 线色 | 用途 | 接到哪 |
 | --- | --- | --- |
-| 🔴 红 | 电源 | 3.3V（物理脚 {'/'.join(map(str, V33_PHYSICAL))}） |
-| ⚫ 黑 | 地 | GND（物理脚 {GND_RECOMMENDED} 或任意地脚） |
-| 🟡 黄 | 数据 | **物理脚 {DATA_PHYSICAL}（GPIO{DATA_BCM}）** |
+| 🔴 红 | 电源 | 3.3V（物理脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}） |
+| ⚫ 黑 | 地 | GND（物理脚 {wire_spec.GND_RECOMMENDED} 或任意地脚） |
+| 🟡 黄 | 数据 | **物理脚 {wire_spec.DATA_PHYSICAL}（GPIO{wire_spec.DATA_BCM}）** |
 
 > 手上的线颜色不全也没关系 —— **约定好一套并写下来**比"颜色好看"重要得多。
 
@@ -590,7 +655,7 @@ def build_quick_card() -> str:
 ## 3. 上电前 30 秒自查
 
 - [ ] 断电量过：3.3V ↔ GND **不导通**（没短路）
-- [ ] 红 = 3.3V（脚 {'/'.join(map(str, V33_PHYSICAL))}）　⚫ 黑 = GND（脚 {GND_RECOMMENDED}）　🟡 黄 = 数据（脚 {DATA_PHYSICAL}）
+- [ ] 红 = 3.3V（脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}）　⚫ 黑 = GND（脚 {wire_spec.GND_RECOMMENDED}）　🟡 黄 = 数据（脚 {wire_spec.DATA_PHYSICAL}）
 - [ ] 裸四针传感器：DATA ↔ 3.3V 之间接了 {pull_text} 电阻
 - [ ] 杜邦线插紧、没插在同一列（面包板每列纵向导通）
 
@@ -607,14 +672,14 @@ python3 run.py --no-plot --duration 20
 | --- | --- |
 | `温度: 25.0 ℃，湿度: 58 %` | ✅ 通了 |
 | `只捕获到 0 个边沿` | 器件没应答：查供电 / 数据线 / 共地 / 上拉 |
-| `校验和不符` | 时序抖动：换短线、确认间隔 ≥{MIN_INTERVAL_S:g} 秒 |
+| `校验和不符` | 时序抖动：换短线、确认间隔 ≥{wire_spec.MIN_INTERVAL_S:g} 秒 |
 | `没有可用的 DHT11 读取后端` | 没装 lgpio 或不在树莓派上跑 |
 
 ## 5. 引脚速查（本基础版只用这 3 个）
 
 {_table(
     ["物理脚", "功能", "本基础版用途"],
-    [[p, PHYSICAL_FUNCTION[p], usage[p]] for p in sorted(usage)],
+    [[p, wire_spec.PHYSICAL_FUNCTION[p], usage[p]] for p in sorted(usage)],
     [":---:", "---", "---"],
 )}
 
@@ -654,6 +719,88 @@ DOCUMENTS: Dict[str, Callable[[], str]] = {
 #: 生成/校验时必须存在的其它文件（PDF 与它的中间 HTML，由 `scripts/md2pdf.cjs` 产出）
 REQUIRED_FILES: Tuple[str, ...] = ("04-线色与自查卡.pdf", "04-线色与自查卡.html")
 
+#: 记录"打印产物是用哪一版 md 生成的"的清单文件
+MANIFEST_NAME = ".print-manifest.json"
+
+#: 需要"打印产物与 md 必须同步"的文档：md 名 → 由它生成的产物
+PRINT_SOURCES: Dict[str, Tuple[str, ...]] = {
+    "04-线色与自查卡.md": ("04-线色与自查卡.pdf", "04-线色与自查卡.html"),
+}
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def write_print_manifest(target_dir: Path = HW_DIR) -> Path:
+    """记录每个打印产物的源 md 的哈希（生成时写）。
+
+    ⚠️ 为什么需要（真问题）：生成器只写了 md，PDF 是**另一个命令**（`scripts/md2pdf.cjs`）产的。
+    如果只检查"PDF 存在"，那么"改了 md、忘了重新导出 PDF"就会被漏过去 ——
+    打印出来的自查卡与正文不一致，正好是最难发现的一类错误。
+    所以把"当时源文件的哈希"记在清单里，`--check` 时比对：
+    md 变了而清单没更新 ⇒ 报"打印产物已过期"。
+    """
+    import json
+
+    manifest = {
+        "note": "由 wire_docs.py --generate 写出；记录打印产物及其源 md 的哈希，用来发现'忘了重新导出 PDF'",
+        "sources": {
+            source: {
+                "sha256": _sha256(target_dir / source),
+                "outputs": {
+                    name: (_sha256(target_dir / name) if (target_dir / name).exists() else None)
+                    for name in outputs
+                },
+            }
+            for source, outputs in PRINT_SOURCES.items()
+            if (target_dir / source).exists()
+        },
+    }
+    path = target_dir / MANIFEST_NAME
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    return path
+
+
+def check_print_sync(target_dir: Path = HW_DIR) -> List[str]:
+    """校验打印产物与"生成清单时的版本"一致（哈希比对，见 :func:`write_print_manifest`）。
+
+    ⚠️ 这里**只管"产物有没有被换过/丢失"**：改了 md 之后正确做法是
+    ① 重新导出 PDF/HTML ② 再跑 `--generate`（它会把新哈希写进清单）。
+    所以本检查能发现"PDF 被手改/丢失/回退"，而流程性疏漏由文档里那句
+    "改了 md 之后请重新生成 PDF" 与人工验收兜住（机器无法判断"人有没有记得"）。
+    """
+    import json
+
+    problems: List[str] = []
+    manifest_path = target_dir / MANIFEST_NAME
+    if not manifest_path.exists():
+        return [f"缺少打印产物清单：{manifest_path}（跑 `--generate` 会重建）"]
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"打印产物清单读不出来：{exc}"]
+
+    for source, info in (manifest.get("sources") or {}).items():
+        source_path = target_dir / source
+        if not source_path.exists():
+            problems.append(f"清单里记录的源文件不存在：{source}")
+            continue
+        for output, recorded in (info.get("outputs") or {}).items():
+            output_path = target_dir / output
+            if not output_path.exists():
+                problems.append(f"缺少打印产物：{output}（由 {source} 生成，命令在该文档末尾）")
+                continue
+            if recorded and _sha256(output_path) != recorded:
+                problems.append(
+                    f"打印产物与清单不一致：{output} 被改过或已回退 —— "
+                    f"请重新导出（命令在 `{source}` 末尾）再跑 `--generate`"
+                )
+    return problems
+
 
 def _write_lf(path: Path, text: str) -> None:
     """以 **LF** 换行写入（跨平台一致）。
@@ -668,13 +815,14 @@ def _write_lf(path: Path, text: str) -> None:
 
 
 def generate_all(target_dir: Path = HW_DIR) -> List[Path]:
-    """把全部文档写到磁盘，返回写入的文件列表。"""
+    """把全部文档写到磁盘，返回写入的文件列表（并刷新打印产物清单）。"""
     target_dir.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
     for name, builder in DOCUMENTS.items():
         path = target_dir / name
         _write_lf(path, builder())
         written.append(path)
+    written.append(write_print_manifest(target_dir))
     return written
 
 
@@ -716,6 +864,7 @@ def check_all(target_dir: Path = HW_DIR) -> List[str]:
     for extra in REQUIRED_FILES:
         if not (target_dir / extra).exists():
             problems.append(f"缺少必需文件：{target_dir / extra}（PDF，见 `04-线色与自查卡.md` 末尾的生成命令）")
+    problems.extend(check_print_sync(target_dir))
     return problems
 
 
@@ -723,7 +872,7 @@ def check_required_facts(corpus: str) -> List[str]:
     """关键事实必须出现在文档里（纯文本判据，可注入自测）。"""
     return [
         f"文档里缺少关键事实「{label}」= {fact!r}（生成器可能漏渲染了这一项）"
-        for label, fact in REQUIRED_FACTS.items()
+        for label, fact in wire_spec.REQUIRED_FACTS.items()
         if fact not in corpus
     ]
 
@@ -763,9 +912,9 @@ def self_test() -> List[str]:
     再造一段正常文本，断言它**不**误报。
     """
     problems: List[str] = []
-    # "好文本" = 把所有要求的关键事实都放进去（**从 REQUIRED_FACTS 自己拼**，
+    # "好文本" = 把所有要求的关键事实都放进去（**从 wire_spec.REQUIRED_FACTS 自己拼**，
     # 这样以后新增一条关键事实时，自测不会因为"没跟上"而假红）
-    good = "；".join(f"{label}={fact}" for label, fact in REQUIRED_FACTS.items())
+    good = "；".join(f"{label}={fact}" for label, fact in wire_spec.REQUIRED_FACTS.items())
     if wire_spec.pullup_text() not in good:
         problems.append("自测构造有误：好文本里应当含上拉电阻（否则'不误报'这条断言没有意义）")
 

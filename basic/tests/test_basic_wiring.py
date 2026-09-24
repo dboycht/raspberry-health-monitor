@@ -104,6 +104,26 @@ class TestWiringDocuments(unittest.TestCase):
             after = {path.name: path.read_text(encoding="utf-8") for path in first}
             self.assertEqual(before, after)
 
+    def test_打印产物清单存在且被校验(self):
+        self.assertTrue((wire_docs.HW_DIR / wire_docs.MANIFEST_NAME).exists())
+        self.assertEqual(wire_docs.check_print_sync(), [])
+
+    def test_打印产物被改动必须被抓到(self):
+        """★ 守卫有效性：把 PDF 换成别的内容，检查器**必须**报警。"""
+        import shutil
+        import tempfile as _tempfile
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            for name in list(wire_docs.DOCUMENTS) + list(wire_docs.REQUIRED_FILES):
+                shutil.copy2(wire_docs.HW_DIR / name, target / name)
+            wire_docs.generate_all(target)                      # 重建清单（记录当前 PDF 哈希）
+            self.assertEqual(wire_docs.check_print_sync(target), [])
+            (target / "04-线色与自查卡.pdf").write_bytes(b"%PDF-1.4 fake")   # 篡改
+            problems = wire_docs.check_print_sync(target)
+            self.assertTrue(problems, "打印产物被改却没人报警 —— 守卫形同虚设")
+            self.assertIn("不一致", problems[0])
+
     def test_关键事实在文档里查得到(self):
         """物理脚号 / 供电 / 上拉 这些数字必须真的出现在文档正文里。"""
         corpus = "\n".join(
@@ -132,6 +152,52 @@ class TestWiringDocuments(unittest.TestCase):
             self.assertNotIn("TODO", text, f"{name} 里有未完成的 TODO")
             self.assertNotIn("{DATA_BCM}", text, f"{name} 里有未替换的占位符")
             self.assertNotIn("None", text.replace("NoneType", ""), f"{name} 里渲染出了 None")
+
+
+class TestWiringDiagramLayout(unittest.TestCase):
+    """ASCII 接线图的**对齐判据**（手写空格的图一定会错位，所以必须机器盯）。"""
+
+    def _rows(self) -> list:
+        diagram = wire_docs.wiring_diagram()
+        block = diagram.split("```")[1]
+        return [line for line in block.splitlines() if "●" in line]
+
+    def test_三个端子竖着对齐(self):
+        rows = self._rows()
+        self.assertEqual(len(rows), 3, f"接线图里应有 3 个端子（●），实际 {len(rows)} 个")
+        columns = {line.index("●") for line in rows}
+        self.assertEqual(len(columns), 1, f"三个端子的列号不一致（图错位了）：{sorted(columns)}")
+
+    def test_三个端子按电源地数据顺序(self):
+        rows = self._rows()
+        text = "\n".join(rows)
+        self.assertLess(text.index("VCC"), text.index("GND"))
+        self.assertLess(text.index("GND"), text.index("DATA"))
+
+    def test_每根线都有线色(self):
+        rows = self._rows()
+        for color in ("（红线）", "（黑线）", "（黄线）"):
+            self.assertTrue(any(color in line for line in rows), f"图里缺少线色标注 {color}")
+
+    def test_图上出现的物理脚就是接线事实(self):
+        diagram = wire_docs.wiring_diagram()
+        for physical in (wire_spec.V33_PHYSICAL[0], wire_spec.GND_RECOMMENDED, wire_spec.DATA_PHYSICAL):
+            self.assertIn(f"脚 {physical:>2}", diagram)
+
+    def test_对齐不依赖手写空格(self):
+        """★ 把数据脚换成一个两位数列号，图**必须仍然对齐**。
+
+        这条断言是"程序化拼图"的存在理由：手写空格的图在插入或替换数字后会错位。
+        判据 = 换引脚后三个端子的列号依旧一致，且数据脚那一行确实写的是新物理脚。
+        """
+        saved = wire_spec.DATA_PHYSICAL
+        try:
+            wire_spec.DATA_PHYSICAL = 40        # 换成两位数列号（真实布局里 40 也是合法脚）
+            rows = self._rows()
+            self.assertEqual(len({line.index("●") for line in rows}), 1, "换引脚后图错位了")
+            self.assertIn("脚 40", "\n".join(rows))
+        finally:
+            wire_spec.DATA_PHYSICAL = saved
 
 
 class TestDiagInterpretation(unittest.TestCase):
