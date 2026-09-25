@@ -27,6 +27,9 @@ from typing import List, Optional
 if __package__ in (None, ""):  # pragma: no cover - 只影响"直接执行脚本"的路径
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+#: `basic/` 目录本身（用于定位随作业一起交的字体，见 `FONT_SEARCH_DIRS`）
+BASIC_DIR = Path(__file__).resolve().parent
+
 from basic.dht11read import Dht11Error, Dht11Reader, MIN_INTERVAL_S  # noqa: E402
 from basic.console import safe_text  # noqa: E402
 from basic.model import Reading  # noqa: E402
@@ -40,11 +43,167 @@ from basic.store import (  # noqa: E402
     load_rows,
 )
 
-#: 中文显示优先使用的字体（树莓派上建议 `sudo apt install -y fonts-noto-cjk`）
+#: 中文显示优先使用的字体。
+#: ⚠️ 这里是**候选清单**，实际用哪个要问过 matplotlib 的字体管理器（见 `pick_cjk_font`）——
+#: 2026-09-25 真机实测：树莓派上没装 fonts-noto-cjk，matplotlib 就一路退到列表末尾的
+#: **DejaVu Sans（没有中文字形）**，于是每画一帧都刷一排
+#: `UserWarning: Glyph 28201 ... missing from font(s) DejaVu Sans`，
+#: 导出的 PNG 里中文全变方框（而终端日志一切正常，很容易漏看）。
 CJK_FONTS = [
-    "Noto Sans CJK SC", "WenQuanYi Zen Hei", "WenQuanYi Micro Hei",
-    "Microsoft YaHei", "SimHei", "PingFang SC", "DejaVu Sans",
+    # 首选：Noto Sans CJK（**拉丁数字 + 中文都全**；Debian 的 fonts-noto-cjk 装的就是它）
+    "Noto Sans CJK SC", "Noto Sans CJK JP", "Noto Sans SC", "Source Han Sans SC",
+    # 备选
+    "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Microsoft YaHei", "SimHei", "PingFang SC",
+    # ⚠️ 最后才是 Droid Sans Fallback：**它只有 CJK 字形、没有任何拉丁字符**
+    #    （实测 `font has '0': False`）⇒ 单独用它会让图里所有数字变方框（ERROR.md E39）。
+    #    放在备选里是因为"有中文总比没有好"，但调用方应当优先选到 Noto。
+    "Droid Sans Fallback",
 ]
+
+
+def _normalize_font_name(name: str) -> str:
+    """把字体名归一化后再比：`WenQuanYi Zen Hei` / `wqy-zenhei` 视为同一个。"""
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+#: 会**主动扫描**的字体目录（找到字体文件就 `addfont` 注册进来）。
+#: 为什么需要（2026-09-25 真机实测，ERROR.md E39）：把字体文件拷进
+#: `~/.local/share/fonts/` 之后，**matplotlib 的字体缓存里还没有它** ——
+#: 直接 `pick_cjk_font()` 仍然只看得到旧的 Droid Sans Fallback（那个只有 CJK 字形、
+#: 没有拉丁数字）。主动扫一遍并注册，就不依赖"用户手动重建字体缓存"。
+#: 第一条 `basic/fonts/` 是**随作业一起交的字体**（拉丁 + 中文都全的 Noto Sans CJK），
+#: 这样"把 basic/ 拷到任意树莓派上"都能出中文图，不用先 sudo 装 fonts-noto-cjk。
+FONT_SEARCH_DIRS = (
+    str(BASIC_DIR / "fonts"),
+    "~/.local/share/fonts",
+    "~/.fonts",
+    "/usr/local/share/fonts",
+    "/usr/share/fonts/opentype/noto",
+    "/usr/share/fonts/truetype/noto",
+)
+
+
+def register_local_fonts() -> int:
+    """把常见字体目录里的字体文件注册进 matplotlib；返回这次注册的个数（幂等）。"""
+    import glob
+    import os
+
+    import matplotlib.font_manager as fm
+
+    added = 0
+    for directory in FONT_SEARCH_DIRS:
+        path = os.path.expanduser(directory)
+        if not os.path.isdir(path):
+            continue
+        for pattern in ("**/*.ttc", "**/*.otf", "**/*.ttf"):
+            for font_file in glob.glob(os.path.join(path, pattern), recursive=True):
+                try:
+                    fm.fontManager.addfont(font_file)
+                    added += 1
+                except Exception:  # noqa: BLE001 - 单个字体坏了不该影响画图
+                    continue
+    return added
+
+
+def pick_cjk_font(available: Optional[List[str]] = None) -> Optional[str]:
+    """从**系统真的装了**的字体里挑一个能显示中文的（挑不到返回 ``None``）。
+
+    为什么要问字体管理器而不是直接写死一个名字：写死的名字没装时 matplotlib **不报错**，
+    只是静默退到默认字体、把中文画成方框（本项目踩过，见 `CJK_FONTS` 的注释）。
+
+    匹配顺序：① 候选清单里的名字（归一化后精确匹配）→ ② 名字里带中文字体常见字样兜底
+    （各发行版命名差异很大：`wqy-zenhei`、`Droid Sans Fallback`、`Source Han Sans`…）。
+    """
+    import matplotlib.font_manager as fm
+
+    names = list(available if available is not None else fm.get_font_names())
+    normalized = {_normalize_font_name(n): n for n in names}
+    for candidate in CJK_FONTS:
+        hit = normalized.get(_normalize_font_name(candidate))
+        if hit is not None:
+            return hit
+    # 退一步：名字里带中文字体常见字样也算候选（发行版命名差异很大：
+    # `Noto Sans CJK JP`、`wqy-zenhei`、`Source Han Sans SC`…）；
+    # ⚠️ 排序让 **Noto/思源** 优先于 Droid Sans Fallback —— 后者只有 CJK 字形、
+    #    没有拉丁数字（ERROR.md E39）。
+    tokens = ("notosanscjk", "notosanssc", "sourcehansans", "cjk", "wqy", "wenquanyi", "droidsansfallback")
+    candidates = [n for n in sorted(names) if any(t in _normalize_font_name(n) for t in tokens)]
+    for token in tokens:
+        for name in candidates:
+            if token in _normalize_font_name(name):
+                return name
+    return None
+
+
+def _cjk_font_file(family: str) -> Optional[str]:
+    """拿到某个字体家族对应的**文件路径**（拿不到返回 ``None``）。"""
+    import matplotlib.font_manager as fm
+
+    try:
+        return fm.findfont(fm.FontProperties(family=family), fallback_to_default=False)
+    except Exception:  # noqa: BLE001 - 找不到就是找不到，不该让画图挂掉
+        return None
+
+
+def cjk_font_chain() -> List[str]:
+    """返回**可直接吃的字体链**：拉丁通用字体在前、CJK 字体在后。
+
+    ⚠️ 2026-09-25 真机实测（ERROR.md E39）踩了三层，逐条记下来：
+    1. **顺序**：CJK 字体放**第一位** ⇒ 图里所有**数字/单位变方框**
+       （树莓派自带那个 `DroidSansFallbackFull.ttf` **只有 CJK 字形**，实测 `'0'` 都不含）；
+    2. **matplotlib 3.11 在"单个文本对象内部"不做逐字回退**：
+       链写成 `['DejaVu Sans', 'Droid Sans Fallback']` 时中文仍是方框（实测 7 条缺字形警告）
+       ⇒ 靠"两个都不全的字体拼起来"这条路**在文本内部走不通**；
+    3. **正解是换一个"拉丁 + 中文都全"的字体**：`fonts-noto-cjk`（本项目已把
+       `NotoSansCJK-Regular.ttc` 放到 `~/.local/share/fonts/` 并把字体**源文件**写进
+       `basic/fonts/`，不需要 sudo 装系统包）⇒ 实测**缺字形警告 0 条**。
+
+    所以：`pick_cjk_font()` 会优先选到 Noto；选不到时才退回 Droid（那时中文能显示、
+    但数字可能要试 `--font` 或装字体，见 README）。
+    """
+    import matplotlib.font_manager as fm
+
+    chosen = _register_then_pick()
+    chain = ["DejaVu Sans"]
+    if chosen is None:
+        return chain
+    path = _cjk_font_file(chosen)
+    if path:
+        try:
+            fm.fontManager.addfont(path)          # 按文件注册，比只写家族名可靠
+        except Exception:  # noqa: BLE001 - 注册失败就退回"只用家族名"
+            pass
+    chain.append(chosen)
+    chain.extend(name for name in CJK_FONTS if name != chosen)
+    return chain
+
+
+def _register_then_pick() -> Optional[str]:
+    """先注册本地字体再挑 —— 否则新拷进来的字体（缓存里还没有）会被漏掉。"""
+    first = pick_cjk_font()
+    if first is not None and "droid" not in _normalize_font_name(first):
+        return first                              # 已经挑到"较好的"（例如 Noto）就不折腾
+    register_local_fonts()
+    return pick_cjk_font() or first
+
+
+def configure_cjk_font() -> Optional[str]:
+    """把 matplotlib 的中文显示配好；返回实际选中的中文字体名（挑不到返回 ``None``）。
+
+    挑不到时的提醒是**刻意**的：让用户知道"图里的中文会是方框"以及一行修复命令，
+    而不是让一张方框图悄悄交上去。
+
+    判据（老实话）：**选完必须真的渲染一次并看图** —— `pick_cjk_font()` 只能证明
+    "这个名字在系统里"，证明不了"matplotlib 渲染时真的用它"（本轮两层坑都是这么来的）。
+    """
+    import matplotlib.pyplot as plt
+
+    chain = cjk_font_chain()
+    plt.rcParams["font.sans-serif"] = chain
+    #: 有些图会显式传 `fontfamily=`，这里把 family 别名也指过去（双保险）
+    plt.rcParams["font.family"] = "sans-serif"
+    plt.rcParams["axes.unicode_minus"] = False
+    return chain[1] if len(chain) > 1 else None
 
 
 def read_once(reader: Dht11Reader, index: int, now: Optional[float] = None) -> Reading:
@@ -165,12 +324,17 @@ class CurveWindow:
                  save_path: str = "") -> None:
         import matplotlib.pyplot as plt
 
+        # ⚠️ 建图**之前**再配一次字体（2026-09-25 真机实测，ERROR.md E39）：
+        #    只在启动时配一次并不保险 —— 中途重新 import pyplot / 换后端会把
+        #    `rcParams["font.sans-serif"]` 打回默认，结果是"数字正常、中文全方框"。
+        configure_cjk_font()
         self.plt = plt
         self.series = series
         self.use_index = use_index
         self.source_text = source_text
         self.interval_s = interval_s
         self.save_path = save_path
+        self._cjk_prop = None            # 中文字体属性（首次刷新时解析并缓存，见 _apply_font_to_all_text）
         self.fig, self.ax_temp = plt.subplots(figsize=(9, 5))
         # 给底部留出空间：横轴标签 + 两行状态行都要放得下（判据见几何断言测试）
         self.fig.subplots_adjust(bottom=0.21)
@@ -207,6 +371,10 @@ class CurveWindow:
         else:
             text = f"最新一次读数　　温度: {latest[0]:.1f} ℃　　湿度: {latest[1]:.0f} %"
         self.title.set_text(text)
+        # ⚠️ 每次刷新都把字体属性重新挂一遍（2026-09-25 真机实测，ERROR.md E39）：
+        #    标题文字每次 set_text 后都会重新解析字体，回退链在**动态刷新**里同样不可靠
+        #    （实测原地 draw 时中文是方框）。挂在文本对象上才稳。
+        self._apply_font_to_all_text()
 
         if xs:
             self.ax_temp.set_xlim(min(xs), max(xs) if max(xs) > min(xs) else min(xs) + 1)
@@ -230,8 +398,41 @@ class CurveWindow:
         )
         self.fig.canvas.draw_idle()
 
+    def _apply_font_to_all_text(self) -> None:
+        """把中文字体的 `FontProperties` 直接挂到**每一个文本对象**上。
+
+        为什么必须这么"笨"（2026-09-25 真机实测，ERROR.md E39）：
+        `rcParams["font.sans-serif"]` 的**回退链**在动态刷新与换 DPI 导出时都不可靠 ——
+        同一个窗口实测：`draw()` 缺字形 0 条，但 `savefig(dpi=110)` **43 条**
+        （DPI 变了 ⇒ matplotlib 重新解析字体，回退链没跟上），
+        而**每次 `set_text` 之后**同样会退回默认字体 ⇒ 屏幕上的曲线标题变方框。
+        直接把字体属性挂到文本对象上就不依赖链（实测导出与刷新都是 0 条）。
+
+        性能：`FontProperties` 只构造一次并缓存（每 3 秒刷新一次不该反复查字体表）。
+        """
+        from matplotlib.text import Text
+
+        if getattr(self, "_cjk_prop", None) is None:
+            chosen = pick_cjk_font()
+            if chosen is None:
+                self._cjk_prop = False            # 标记"没有可用中文字体"，别反复查
+            else:
+                import matplotlib.font_manager as fm
+
+                path = _cjk_font_file(chosen)
+                self._cjk_prop = fm.FontProperties(fname=path) if path else fm.FontProperties(family=chosen)
+        if not self._cjk_prop:
+            return
+        prop = self._cjk_prop
+        for text in self.fig.findobj(Text):
+            try:
+                text.set_fontproperties(prop)
+            except Exception:  # noqa: BLE001 - 个别对象不接受就跳过，不影响出图
+                continue
+
     def save(self) -> None:
         if self.save_path:
+            self._apply_font_to_all_text()
             self.fig.savefig(self.save_path, dpi=110, bbox_inches="tight")
 
     def xlabel_bbox(self):
@@ -293,8 +494,9 @@ def run_curve(args: argparse.Namespace) -> int:
                 matplotlib.use("Agg")
             import matplotlib.pyplot as plt
 
-            plt.rcParams["font.sans-serif"] = CJK_FONTS
-            plt.rcParams["axes.unicode_minus"] = False
+            if configure_cjk_font() is None:
+                print(safe_text("⚠️ 没找到中文字体，图里的中文会变成方框。装一个即可："))
+                print("   sudo apt install -y fonts-noto-cjk")
             window = CurveWindow(series, args.xaxis == "index", reader.describe(),
                                  args.interval, save_path=args.save)
         except ImportError:
@@ -366,8 +568,9 @@ def run_replay(args: argparse.Namespace) -> int:
             matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        plt.rcParams["font.sans-serif"] = CJK_FONTS
-        plt.rcParams["axes.unicode_minus"] = False
+        if configure_cjk_font() is None:
+            print(safe_text("⚠️ 没找到中文字体，图里的中文会变成方框。装一个即可："))
+            print("   sudo apt install -y fonts-noto-cjk")
     except ImportError:
         print(safe_text("❌ 回放需要 matplotlib（它本来就是演示画图用的）：sudo apt install -y python3-matplotlib python3-tk"))
         return 2

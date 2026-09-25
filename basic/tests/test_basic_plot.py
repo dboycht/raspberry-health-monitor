@@ -14,9 +14,78 @@ import unittest
 from pathlib import Path
 
 from basic.dht11read import Dht11Error, Dht11Reader, MIN_INTERVAL_S, ReadResult
-from basic.plot import Runner, read_once
+from basic.plot import CJK_FONTS, Runner, configure_cjk_font, pick_cjk_font, read_once
 from basic.series import Series
 from basic.store import CsvStore
+
+
+class TestCjkFontSelection(unittest.TestCase):
+    """中文字体要**问过系统**再选，不能写死一个名字（2026-09-25 真机实测）。
+
+    真机踩到：树莓派上没装 fonts-noto-cjk，而原来的清单末尾挂着 **DejaVu Sans**
+    ⇒ matplotlib 静默退到它 ⇒ 每帧刷一排 `Glyph … missing from font(s) DejaVu Sans`，
+    导出的 PNG 里中文全变方框（终端日志却一切正常）。
+
+    判据：
+    1. 系统装了候选字体 ⇒ 选它（例如树莓派上的 `Droid Sans Fallback`）；
+    2. 一个候选都没有 ⇒ 返回 None（调用方据此**提醒用户**装字体），而不是悄悄出方框图；
+    3. 名字大小写/发行版命名差异要能匹配上（用"名字含 cjk/wqy/droid sans fallback"兜底）。
+    """
+
+    def test_装了候选字体就选它(self):
+        self.assertEqual(pick_cjk_font(["DejaVu Sans", "Noto Sans CJK SC"]), "Noto Sans CJK SC")
+
+    def test_一个候选都没有时返回None(self):
+        self.assertIsNone(pick_cjk_font(["DejaVu Sans", "Arial"]))
+
+    def test_名字大小写与别名兜底(self):
+        # 精确匹配（归一化后）：`dejavu sans` 这种大小写差异要能对上候选清单
+        self.assertEqual(pick_cjk_font(["dejavu sans", "wqy-zenhei"]), "wqy-zenhei",
+                         "带连字符的系统名应当被识别为中文字体（返回系统里的真名）")
+        self.assertEqual(pick_cjk_font(["DejaVu Sans", "noto sans cjk sc"]), "noto sans cjk sc")
+        # 兜底：名字里带 droid sans fallback ⇒ 树莓派上实际可用的那个
+        self.assertEqual(pick_cjk_font(["Droid Sans Fallback"]), "Droid Sans Fallback")
+
+    def test_本机选择结果可用且会写进rcParams(self):
+        """本机跑：选中的字体必须真的在系统字体名里（挑不到就返回 None，也不许抛异常）。"""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        chosen = configure_cjk_font()
+        if chosen is not None:
+            import matplotlib.font_manager as fm
+
+            names = {n.lower() for n in fm.get_font_names()}
+            self.assertIn(chosen.lower(), names, "配置的字体必须真的存在，否则等于没配")
+        self.assertIn("axes.unicode_minus", matplotlib.rcParams)
+
+    def test_字体链里拉丁字体必须排在中文字体前面(self):
+        """★★ 2026-09-25 真机回归（ERROR.md E39）：**数字变方框**的坑。
+
+        树莓派上可用的 `DroidSansFallbackFull.ttf` **只含 CJK 字形、没有拉丁数字**；
+        我们一开始把 CJK 字体放在字体链**第一位** ⇒ 那张曲线图里所有数字/单位全变方框。
+        正确顺序 = 拉丁字体在前、CJK 在后（matplotlib 会逐字回退）。
+        """
+        import matplotlib
+
+        matplotlib.use("Agg")
+        configure_cjk_font()
+        chain = [str(name) for name in matplotlib.rcParams["font.sans-serif"]]
+        self.assertTrue(chain, "字体链不能为空")
+        self.assertEqual(chain[0].lower(), "dejavu sans",
+                         f"第一位必须是含拉丁字形的通用字体（否则数字会变方框）：{chain[:3]}")
+        chosen = pick_cjk_font()
+        if chosen is not None:
+            self.assertIn(chosen, chain, "选中的中文字体必须在链里（兜底用）")
+            self.assertGreater(chain.index(chosen), 0, "中文字体不能排在第一位")
+
+    def test_候选清单里不再挂没有中文字形的字体(self):
+        """★ 回归：清单里**不许**出现 DejaVu Sans 这种"没有中文字形"的兜底项。
+
+        它就是"静默退化成方框"的入口 —— 系统一个中文字体都没有时，
+        正确的行为是返回 None（让调用方提醒用户），而不是假装配好了。
+        """
+        self.assertNotIn("DejaVu Sans", CJK_FONTS)
 
 
 class FakeBackend:

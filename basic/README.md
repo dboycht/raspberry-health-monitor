@@ -99,7 +99,11 @@ basic/
 ├── data/
 │   ├── sample_demo.csv    演示数据（合成，入库；没硬件的同学靠它跑通画图）
 │   └── dht11_*.csv        运行时产生的数据（**不入库**，见 data/.gitignore）
-├── evidence/curve_demo.png 曲线样张（截图证据，入库）
+├── evidence/curve_demo.png 曲线样张（**合成数据**）
+├── evidence/curve_real_111.png ★**真机实测曲线**（111 个样本，成功 111 / 失败 0）
+├── evidence/真机采集_111样本.csv 上面那张图的原始数据（真机）
+├── fonts/NotoSansCJK-Regular.ttc ★随作业自带的中文字体（拉丁+中文都全，OFL 1.1）
+│                           —— 程序自动加载；没有它图里的中文会变方框
 ├── hardware/              ★**接线表**（由代码生成，勿手改）
 │   ├── 接线表.md/.pdf       ★**两张表**：树莓派接线 + 元件接线（上机只看这**一份**）
 │   └── _旧文档存档/         历史细节（40-pin 全表 / 接线图 / 供电安全 / 线色卡 / 合集），需要时再看
@@ -107,7 +111,7 @@ basic/
 │   ├── selfcheck.py       10 项自检（不依赖硬件）
 │   ├── wire_docs.py       接线表**生成 + 校验**（--generate / --check）
 │   └── diag_dht_line.py   数据线诊断（三态电平 → 结论）
-└── tests/                 117 项单测（不需要硬件）
+└── tests/                 125 项单测（不需要硬件）
 ```
 
 > 🤖 `hardware/接线表.md` 由 `python3 tools/wire_docs.py --generate` 生成。
