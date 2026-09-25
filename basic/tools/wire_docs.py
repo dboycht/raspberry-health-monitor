@@ -177,7 +177,7 @@ def build_wiring_table() -> str:
 | 默认采样周期 | {wire_spec.RECOMMENDED_INTERVAL_S:g} 秒（硬件要求 ≥{wire_spec.MIN_INTERVAL_S:g} 秒） | `basic/wire_spec.py`（与驱动常量同源） |
 | 温度量程 | {wire_spec.TEMP_RANGE_C[0]:g} ~ {wire_spec.TEMP_RANGE_C[1]:g} ℃ | `basic/dht11read.py` |
 | 湿度量程 | {wire_spec.HUMI_RANGE_PCT[0]:g} ~ {wire_spec.HUMI_RANGE_PCT[1]:g} % | `basic/dht11read.py` |
-| 供电 / 电流 | {wire_spec.MODULE_VOLTAGE} V，约 {wire_spec.MODULE_CURRENT_MA} mA | `basic/wire_spec.py` |
+| 供电 / 电流 | 供电 {wire_spec.MODULE_VOLTAGE}，电流约 {wire_spec.MODULE_CURRENT_MA[0]} ~ {wire_spec.MODULE_CURRENT_MA[1]} mA | `basic/wire_spec.py` |
 | 数据存哪 | `basic/data/dht11_日期_时刻.csv`（一次运行一个文件） | `basic/store.py` 的 `default_csv_path()` |
 | CSV 表头 | `{",".join(CSV_HEADER)}` | `basic/model.py` 的 `CSV_HEADER` |
 | 读失败怎么写 | 温度/湿度字段**留空**、`status=fail`、`note` 写原因（**绝不写 0**） | `basic/model.py` 的 `Reading.to_csv_row()` |
