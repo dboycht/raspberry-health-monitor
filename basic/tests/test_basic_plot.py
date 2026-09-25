@@ -19,6 +19,15 @@ from basic.series import Series
 from basic.store import CsvStore
 
 
+try:
+    import matplotlib  # noqa: F401
+
+    HAS_MATPLOTLIB = True
+except ImportError:  # pragma: no cover - CI / 干净机器上没装 matplotlib 是常态
+    HAS_MATPLOTLIB = False
+
+
+@unittest.skipUnless(HAS_MATPLOTLIB, "matplotlib 是可选依赖（没装就跳过字体相关测试）")
 class TestCjkFontSelection(unittest.TestCase):
     """中文字体要**问过系统**再选，不能写死一个名字（2026-09-25 真机实测）。
 
@@ -26,10 +35,14 @@ class TestCjkFontSelection(unittest.TestCase):
     ⇒ matplotlib 静默退到它 ⇒ 每帧刷一排 `Glyph … missing from font(s) DejaVu Sans`，
     导出的 PNG 里中文全变方框（终端日志却一切正常）。
 
+    ⚠️ 整个类**必须能在没装 matplotlib 的机器上跳过**（CI 就是这种机器）：
+    基础版把 matplotlib 当**可选依赖**，字体测试硬依赖它会让 `validate.py` 第 10 项在 CI 上红
+    （2026-09-25 实测踩到，见 ERROR.md E39）。
+
     判据：
-    1. 系统装了候选字体 ⇒ 选它（例如树莓派上的 `Droid Sans Fallback`）；
+    1. 系统装了候选字体 ⇒ 选它（例如树莓派上的 `Noto Sans CJK`）；
     2. 一个候选都没有 ⇒ 返回 None（调用方据此**提醒用户**装字体），而不是悄悄出方框图；
-    3. 名字大小写/发行版命名差异要能匹配上（用"名字含 cjk/wqy/droid sans fallback"兜底）。
+    3. 名字大小写/发行版命名差异要能匹配上（用"名字含 cjk/wqy/noto"兜底）。
     """
 
     def test_装了候选字体就选它(self):

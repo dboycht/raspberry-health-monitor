@@ -84,11 +84,17 @@ FONT_SEARCH_DIRS = (
 
 
 def register_local_fonts() -> int:
-    """把常见字体目录里的字体文件注册进 matplotlib；返回这次注册的个数（幂等）。"""
+    """把常见字体目录里的字体文件注册进 matplotlib；返回这次注册的个数（幂等）。
+
+    ⚠️ 没装 matplotlib 时直接返回 0（不抛）：matplotlib 是可选依赖。
+    """
     import glob
     import os
 
-    import matplotlib.font_manager as fm
+    try:
+        import matplotlib.font_manager as fm
+    except ImportError:  # pragma: no cover
+        return 0
 
     added = 0
     for directory in FONT_SEARCH_DIRS:
@@ -113,10 +119,16 @@ def pick_cjk_font(available: Optional[List[str]] = None) -> Optional[str]:
 
     匹配顺序：① 候选清单里的名字（归一化后精确匹配）→ ② 名字里带中文字体常见字样兜底
     （各发行版命名差异很大：`wqy-zenhei`、`Droid Sans Fallback`、`Source Han Sans`…）。
-    """
-    import matplotlib.font_manager as fm
 
-    names = list(available if available is not None else fm.get_font_names())
+    ⚠️ **没装 matplotlib 时不要抛异常**：基础版把 matplotlib 当**可选依赖**，
+    这个函数被测试与"提示装字体"的路径调用，抛出去会让"没装 matplotlib"变成红。
+    """
+    try:
+        import matplotlib.font_manager as fm
+
+        names = list(available if available is not None else fm.get_font_names())
+    except ImportError:  # pragma: no cover - 没装 matplotlib 时无法查系统字体
+        return None
     normalized = {_normalize_font_name(n): n for n in names}
     for candidate in CJK_FONTS:
         hit = normalized.get(_normalize_font_name(candidate))
@@ -137,11 +149,11 @@ def pick_cjk_font(available: Optional[List[str]] = None) -> Optional[str]:
 
 def _cjk_font_file(family: str) -> Optional[str]:
     """拿到某个字体家族对应的**文件路径**（拿不到返回 ``None``）。"""
-    import matplotlib.font_manager as fm
-
     try:
+        import matplotlib.font_manager as fm
+
         return fm.findfont(fm.FontProperties(family=family), fallback_to_default=False)
-    except Exception:  # noqa: BLE001 - 找不到就是找不到，不该让画图挂掉
+    except Exception:  # noqa: BLE001 - 没装 matplotlib / 找不到字体，都不该让调用方挂掉
         return None
 
 
