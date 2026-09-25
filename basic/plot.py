@@ -28,6 +28,7 @@ if __package__ in (None, ""):  # pragma: no cover - 只影响"直接执行脚本
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from basic.dht11read import Dht11Error, Dht11Reader, MIN_INTERVAL_S  # noqa: E402
+from basic.console import safe_text  # noqa: E402
 from basic.model import Reading  # noqa: E402
 from basic.pins import describe_pin  # noqa: E402
 from basic.series import Series  # noqa: E402
@@ -264,7 +265,7 @@ def run_curve(args: argparse.Namespace) -> int:
         reader = Dht11Reader(pin=args.pin, mock=args.mock, min_interval_s=max(args.interval, MIN_INTERVAL_S))
         backend = reader.open()
     except Dht11Error as exc:
-        print(f"❌ 打不开 DHT11：{exc}")
+        print(safe_text(f"❌ 打不开 DHT11：{exc}"))
         return 2
     print(f"数据源：{reader.describe()}　后端：{backend}")
 
@@ -293,7 +294,7 @@ def run_curve(args: argparse.Namespace) -> int:
             window = CurveWindow(series, args.xaxis == "index", reader.describe(),
                                  args.interval, save_path=args.save)
         except ImportError:
-            print("⚠️ 没装 matplotlib，改用『只记录不画图』模式。装上即可看曲线：")
+            print(safe_text("⚠️ 没装 matplotlib，改用『只记录不画图』模式。装上即可看曲线："))
             print("   sudo apt install -y python3-matplotlib python3-tk")
     else:
         print("（--no-plot：只采集与存档，不画图）")
@@ -349,7 +350,7 @@ def run_replay(args: argparse.Namespace) -> int:
     #    后者的语义是"下次写入前清空文件"，会把要回放的数据删掉（真的踩过）。
     rows = load_rows(path, limit=args.window)
     if not rows:
-        print(f"❌ {path} 里没有可回放的数据（需要 index,timestamp,temperature_c,humidity_percent,status,note 表头）")
+        print(safe_text(f"❌ {path} 里没有可回放的数据（需要 index,timestamp,temperature_c,humidity_percent,status,note 表头）"))
         return 2
     print(f"回放数据：{path}（{len(rows)} 个点）")
 
@@ -364,7 +365,7 @@ def run_replay(args: argparse.Namespace) -> int:
         plt.rcParams["font.sans-serif"] = CJK_FONTS
         plt.rcParams["axes.unicode_minus"] = False
     except ImportError:
-        print("❌ 回放需要 matplotlib（它本来就是演示画图用的）：sudo apt install -y python3-matplotlib python3-tk")
+        print(safe_text("❌ 回放需要 matplotlib（它本来就是演示画图用的）：sudo apt install -y python3-matplotlib python3-tk"))
         return 2
 
     window = CurveWindow(series, args.xaxis == "index", f"CSV 回放 {path.name}",
@@ -377,8 +378,8 @@ def run_replay(args: argparse.Namespace) -> int:
             time.sleep(delay)
     window.save()
     stats = series.stats()
-    print(f"回放完成：{stats['samples']} 个点，温度 {fmt(stats['temp_min'])}~{fmt(stats['temp_max'])} ℃，"
-          f"湿度 {fmt(stats['humidity_min'])}~{fmt(stats['humidity_max'])} %")
+    print(safe_text(f"回放完成：{stats['samples']} 个点，温度 {fmt(stats['temp_min'])}~{fmt(stats['temp_max'])} ℃，"
+                    f"湿度 {fmt(stats['humidity_min'])}~{fmt(stats['humidity_max'])} %"))
     if args.save:
         print(f"曲线已导出：{args.save}")
     if not args.headless:
@@ -418,7 +419,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if args.interval < MIN_INTERVAL_S and not args.mock:
-        print(f"⚠️ DHT11 两次读取必须间隔 ≥{MIN_INTERVAL_S:g} 秒（硬件限制），已自动提到 {MIN_INTERVAL_S:g} 秒")
+        print(safe_text(f"⚠️ DHT11 两次读取必须间隔 ≥{MIN_INTERVAL_S:g} 秒（硬件限制），已自动提到 {MIN_INTERVAL_S:g} 秒"))
         args.interval = MIN_INTERVAL_S
     return run_curve(args)
 

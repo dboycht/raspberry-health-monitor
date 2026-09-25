@@ -243,7 +243,7 @@ raspberry-health-monitor/
 | `python -m health_monitor selfcheck --real` | 真实硬件体检（树莓派上跑） |
 | `sudo python3 scripts/hardware_test.py` | **真机验收测试单**（逐项过关 + 失败时给排查命令） |
 | `python scripts/validate.py` | 提交前 **10 项**检查（体检 / 引脚冲突 / 单测 / 演示 / **基础版**） |
-| `python basic/tools/selfcheck.py` | **基础版** 8 项自检（课程作业 H；不依赖硬件） |
+| `python basic/tools/selfcheck.py` | **基础版** 10 项自检（课程作业 H；不依赖硬件） |
 | `python -m health_monitor serve --mock` | 模拟模式起服务（PC 上联调安卓端） |
 | `python -m health_monitor serve --real` | 正式运行 |
 | `python -m health_monitor demo` | 一键演完整个报警链路 |
@@ -256,18 +256,18 @@ raspberry-health-monitor/
 - 版本单一来源：`rpi/health_monitor/__init__.py` 的 `__version__`（HTTP `/api/v1/health` 会返回它）
 - 当前版本：**1.0.1**
 
-## 9. 验证基线（2026-09-24 实测）
+## 9. 验证基线（2026-09-25 实测）
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
-| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **10 项全 PASS** |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **566 passed, 1 skipped, 296 subtests** |
+| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **10 项全 PASS**（开发机默认环境，无需设任何环境变量） |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **578 passed, 1 skipped, 296 subtests** |
 | 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
 | 驱动注册表 | `python -m health_monitor drivers` | 12 个驱动全部可构造 |
 | 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
 | 文档一致性 | `python scripts/check_docs.py` | 27 份文档链接可解析；报警码三方一致 |
-| **基础版（课程作业 H）** | `python basic/tools/selfcheck.py` + `python -m pytest basic/tests -q` | **自检 8 项全 PASS；单测 73 passed** |
+| **基础版（课程作业 H）** | `python basic/tools/selfcheck.py` + `python -m pytest basic/tests -q` | **自检 10 项全 PASS；单测 119 passed** |
 | OneNET token 算法自检 | `python scripts/onenet_token.py --selftest` | md5/sha1/sha256 手算对照通过 |
 | 同步 + 入库验收 | `python scripts/check_sync.py --hash` | 两侧文件一致；无误忽略源码 |
 | 安卓端单元测试 | 见 `docs/手册/06-安卓开发指南.md` 的构建命令 | **78 passed** |

@@ -45,6 +45,7 @@ if str(BASIC_DIR.parent) not in sys.path:
 from basic.dht11read import Dht11Error, Dht11Reader  # noqa: E402
 from basic.pins import describe_pin  # noqa: E402
 from basic import wire_spec  # noqa: E402
+from basic.console import safe_text  # noqa: E402
 
 #: 每种电平配置读多少次（取"高电平次数"作为判据）
 DEFAULT_SAMPLES = 50
@@ -104,7 +105,7 @@ def diag_levels(pin: int, samples: int = DEFAULT_SAMPLES) -> Optional[Dict[str, 
     try:
         import lgpio
     except ImportError as exc:
-        print(f"  ❌ 缺少 lgpio：{exc}")
+        print(safe_text(f"  ❌ 缺少 lgpio：{exc}"))
         print("     树莓派上装：sudo apt install -y python3-lgpio")
         print("     在电脑上跑不了这个检查（电脑没有 GPIO）—— 这是预期行为，不是脚本坏了。")
         return None
@@ -127,7 +128,7 @@ def diag_levels(pin: int, samples: int = DEFAULT_SAMPLES) -> Optional[Dict[str, 
             try:
                 lgpio.gpio_claim_input(handle, pin, flags)
             except Exception as exc:  # noqa: BLE001 - 最常见：引脚被别的进程占着
-                print(f"  ❌ 无法申请引脚 GPIO{pin}：{type(exc).__name__}: {exc}")
+                print(safe_text(f"  ❌ 无法申请引脚 GPIO{pin}：{type(exc).__name__}: {exc}"))
                 print("     最常见原因：`run.py` 还在跑（同一个 GPIO 只能被一个进程用）——先按 Ctrl+C 停掉它。")
                 return None
             time.sleep(0.05)
@@ -146,7 +147,7 @@ def diag_levels(pin: int, samples: int = DEFAULT_SAMPLES) -> Optional[Dict[str, 
     level, conclusion = _interpret(readings["pull_up"], readings["pull_down"], readings["floating"], samples)
     result.update({"readings": readings, "level": level, "conclusion": conclusion.strip()})
     mark = {"ok": "✅", "warn": "⚠️", "bad": "❌", "unknown": "❓"}[level]
-    print(f"\n  {mark} 结论：{conclusion}")
+    print(safe_text(f"\n  {mark} 结论：{conclusion}"))
     return result
 
 
@@ -172,7 +173,7 @@ def diag_read(pin: int, times: int = 5, interval_s: float = None) -> List[Dict[s
             if index < times:
                 time.sleep(interval)
     except Dht11Error as exc:
-        print(f"  ❌ 打不开 DHT11：{exc}")
+        print(safe_text(f"  ❌ 打不开 DHT11：{exc}"))
         results.append({"index": 0, "ok": False, "note": str(exc)})
     finally:
         reader.close()
@@ -180,9 +181,9 @@ def diag_read(pin: int, times: int = 5, interval_s: float = None) -> List[Dict[s
     ok_count = sum(1 for item in results if item.get("ok"))
     print()
     if ok_count:
-        print(f"  ✅ {ok_count}/{len(results)} 次读到有效数据 —— 器件与接线是通的。")
+        print(safe_text(f"  ✅ {ok_count}/{len(results)} 次读到有效数据 —— 器件与接线是通的。"))
     else:
-        print("  ❌ 一次都没读到。按顺序排查（每步都有判据，别跳步）：")
+        print(safe_text("  ❌ 一次都没读到。按顺序排查（每步都有判据，别跳步）："))
         print("     ① 万用表量模块 VCC 对 GND 是否约 3.3V（不是 5V）")
         print(f"     ② 万用表蜂鸣档量模块 DATA ↔ 树莓派物理脚 {wire_spec.DATA_PHYSICAL} 是否导通")
         print("     ③ 万用表蜂鸣档量模块 GND ↔ 树莓派 GND 是否导通（共地）")
@@ -208,7 +209,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"数据脚：GPIO{args.pin} = {describe_pin(args.pin)}")
     print(f"期望接线：VCC → 3.3V（脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}）、"
           f"GND → 脚 {wire_spec.GND_RECOMMENDED}、DATA → 脚 {wire_spec.DATA_PHYSICAL}")
-    print("⚠️ 运行前请先停掉 run.py（同一个 GPIO 不能被两个进程同时用）")
+    print(safe_text("⚠️ 运行前请先停掉 run.py（同一个 GPIO 不能被两个进程同时用）"))
 
     payload: Dict[str, object] = {"pin": args.pin}
     levels = None if args.no_levels else diag_levels(args.pin, args.samples)

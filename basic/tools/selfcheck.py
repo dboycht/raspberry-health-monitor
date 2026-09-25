@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from basic import __version__, wire_spec                # noqa: E402
+from basic.console import safe_text                 # noqa: E402
 from basic.dht11read import (                        # noqa: E402
     Dht11Error,
     Dht11Reader,
@@ -286,7 +287,7 @@ def run_checks(make_demo: bool = False) -> int:
     if failures:
         print(f"结果：{len(failures)} 项未通过 → {'；'.join(failures)}")
         return 1
-    print(f"结果：全部 {len(checks)} 项通过 ✅")
+    print(safe_text(f"结果：全部 {len(checks)} 项通过 ✅"))
     print()
     print("下一步（树莓派上）：")
     print("  python3 run.py            # 真实读取 DHT11 并看动态曲线")

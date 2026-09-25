@@ -43,6 +43,7 @@ if str(BASIC_DIR.parent) not in sys.path:
     sys.path.insert(0, str(BASIC_DIR.parent))
 
 from basic import __version__, pins, wire_spec  # noqa: E402
+from basic.console import safe_text  # noqa: E402
 from basic.model import CSV_HEADER  # noqa: E402
 from basic.store import default_csv_path  # noqa: E402
 # ⚠️ 全部事实**通过 `wire_spec.X` 访问**（下面这些名字只为 IDE/静态检查可发现，运行时不用）：
@@ -1129,7 +1130,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.print_one:
         builder = DOCUMENTS.get(args.print_one)
         if builder is None:
-            print(f"❌ 没有这份文档：{args.print_one}（可选：{'、'.join(DOCUMENTS)}）")
+            print(safe_text(f"❌ 没有这份文档：{args.print_one}（可选：{'、'.join(DOCUMENTS)}）"))
             return 2
         print(builder())
         return 0
@@ -1143,7 +1144,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         for problem in facts:
             print(f"  {problem}")
         return 1
-    print("接线事实自查：✅ 通过（引脚 / 电源 / 地 / 上拉 / 间隔 全部自洽）")
+    print(safe_text("接线事实自查：✅ 通过（引脚 / 电源 / 地 / 上拉 / 间隔 全部自洽）"))
 
     if args.generate:
         written = generate_all()
@@ -1153,31 +1154,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 生成完立刻**自查一遍**：证明刚写出去的东西确实能通过检查（而不是"写完就算完"）
         problems = check_all()
         if problems:
-            print(f"⚠️ 生成后自查发现 {len(problems)} 项问题：")
+            print(safe_text(f"⚠️ 生成后自查发现 {len(problems)} 项问题："))
             for problem in problems:
                 print(f"  - {problem}")
             return 1
-        print("生成后自查：✅ 文档与代码一致，关键事实齐全")
+        print(safe_text("生成后自查：✅ 文档与代码一致，关键事实齐全"))
         return 0
 
     # 校验前先跑**注入自测**：证明"检查器真的能抓到问题"，否则后面那句"通过"毫无意义
     guard_problems = self_test()
     if guard_problems:
-        print("❌ 检查器自测失败（守卫可能已失效，先修它）：")
+        print(safe_text("❌ 检查器自测失败（守卫可能已失效，先修它）："))
         for problem in guard_problems:
             print(f"  - {problem}")
         return 1
-    print("检查器注入自测：✅ 能抓到注入的错误（上拉写错 / 引用不存在的文件 / 周期小于硬件下限）")
+    print(safe_text("检查器注入自测：✅ 能抓到注入的错误（上拉写错 / 引用不存在的文件 / 周期小于硬件下限）"))
 
     problems = check_all()
     if problems:
-        print(f"❌ 校验未通过（{len(problems)} 项）：")
+        print(safe_text(f"❌ 校验未通过（{len(problems)} 项）："))
         for problem in problems:
             print(f"  - {problem}")
         print("\n修复：先改 `basic/wire_spec.py` / `basic/pins.py` 等来源，再跑")
         print("      python3 basic/tools/wire_docs.py --generate")
         return 1
-    print(f"✅ 校验通过：{len(DOCUMENTS)} 份文档与代码逐字符一致，关键事实齐全，引用的脚本都存在")
+    print(safe_text(f"✅ 校验通过：{len(DOCUMENTS)} 份文档与代码逐字符一致，关键事实齐全，引用的脚本都存在"))
     return 0
 
 

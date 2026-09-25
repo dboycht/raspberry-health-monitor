@@ -35,7 +35,7 @@
 cd ~/raspberry-health-monitor/basic
 
 sudo apt install -y python3-matplotlib python3-tk python3-lgpio fonts-noto-cjk   # 只需一次
-python3 tools/selfcheck.py        # ① 先自检（8 项，不接硬件也能跑）
+python3 tools/selfcheck.py        # ① 先自检（10 项，不接硬件也能跑）
 python3 run.py                    # ② 真实读取 DHT11（GPIO4 = 物理脚 7）→ 动态曲线窗口
 python3 run.py --no-plot          # ③ 只想采数据不弹窗：只采集 + 存 CSV
 ```

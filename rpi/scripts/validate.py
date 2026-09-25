@@ -10,6 +10,12 @@
     python scripts/validate.py --real       # 额外提示哪些检查需要真机
 
 退出码：0 = 全部通过；1 = 有检查失败（打印失败项）。
+
+⚠️ **本文件里的子进程一律走 `run_python()`**（强制子进程 UTF-8 + 容错解码）：
+中文 Windows 上 Python 默认按 GBK 打印，父进程若直接用 `encoding="utf-8"` 抓输出
+会抛 `UnicodeDecodeError` 并把**三项真实通过的检查假报成失败**（2026-09-25 实测，见 ERROR.md E32）。
+新增任何子进程调用时请沿用 `run_python()` —— `tests/scripts/test_validate_encoding.py`
+会扫描本文件的 AST，发现"绕过它直接 `subprocess.run`"就报错。
 """
 
 from __future__ import annotations
@@ -24,6 +30,122 @@ from typing import Callable, List, Tuple
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
+
+
+# ---------------------------------------------------------------------------
+# 子进程统一入口：**本文件所有子进程都必须走它**
+# ---------------------------------------------------------------------------
+# 为什么需要（2026-09-25 在中文 Windows 上实测踩到，详见 ERROR.md E32）：
+# 本脚本用 `encoding="utf-8"` 抓子进程输出，但**子进程按什么编码打印，是由它自己决定的**：
+# Python 在中文 Windows 上的 `sys.stdout.encoding` 是 **GBK/cp936**（本机实测，
+# 即使控制台 `chcp` 是 65001 也一样），于是子进程吐出 GBK 字节、父进程按 UTF-8 解，
+# `subprocess.run` 内部解码抛 `UnicodeDecodeError`，`stdout` 变成 **None** ⇒
+# 文档一致性 / 演示 / 基础版**三项被假报为"失败"**，而它们单独跑全是 PASS。
+# 树莓派（Debian，UTF-8 locale）从来不会暴露这个问题 —— 典型的"只在这台机器上假红"。
+# 修法：给每个子进程强制 `PYTHONIOENCODING=utf-8`（只影响本次子进程，不污染本会话），
+# 然后用容错解码兜底，保证**任何编码下都不会再抛 UnicodeDecodeError**。
+
+#: 强制子进程用 UTF-8 打印（Python 3.7+ 认这个变量；被 `-X utf8` 之外的一切 locale 因素覆盖）
+CHILD_IO_ENV = {
+    "PYTHONIOENCODING": "utf-8",
+    "PYTHONUTF8": "1",
+}
+
+#: 兜底解码顺序：先按声明的 UTF-8 严格解；失败说明子进程没听环境变量（例如非 Python 程序）
+_FALLBACK_ENCODINGS = ("utf-8", "gbk", "cp1252")
+
+
+def child_env() -> dict:
+    """返回"给子进程用的环境变量"：在**当前环境**的副本上强制 UTF-8 IO。"""
+    import os
+
+    env = dict(os.environ)
+    env.update(CHILD_IO_ENV)
+    return env
+
+
+def _decode(raw) -> str:
+    """把子进程的原始输出解成 str：先严格 UTF-8，失败再按常见本地编码兜底。
+
+    最后一档 `errors="replace"` 是**刻意的安全网**：即使拿到的是混合编码，
+    也只会出现几个替换字符，而不是让整项检查崩成"失败"。
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    for enc in _FALLBACK_ENCODINGS:
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def run_python(args: List[str], cwd: Path | str, env_extra: dict | None = None):
+    """跑一个子进程（通常是"另一个 Python 脚本"），**强制 UTF-8 且保证解码不炸**。
+
+    返回值刻意与 `subprocess.CompletedProcess` 同形（有 `returncode` / `stdout` / `stderr`），
+    `stdout` / `stderr` 是**已经解好的 str**，调用方可以直接 `.splitlines()`。
+    """
+    env = child_env()
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.run(
+        [sys.executable, *args],
+        cwd=str(cwd),
+        capture_output=True,
+        env=env,
+    )
+    return subprocess.CompletedProcess(
+        args=proc.args,
+        returncode=proc.returncode,
+        stdout=_decode(proc.stdout),
+        stderr=_decode(proc.stderr),
+    )
+
+
+#: "一项检查失败了，但连一句判据都没读到"时的提示 —— 用来把"假失败"当场指出来
+_NO_OUTPUT_HINT = (
+    "（未读到任何输出：可能是子进程输出编码与解码不一致 —— 见 ERROR.md E32；"
+    "请手工重跑上面那条命令确认）"
+)
+
+#: 常用符号的 ASCII 替身（打印前过 `safe_text`，见下）
+_ASCII_LABELS = {
+    "\u2705": "[OK]",      # ✅
+    "\u274c": "[X]",       # ❌
+    "\u26a0": "[!]",       # ⚠
+    "\ufe0f": "",          # 变体选择符（⚠️ 的第二个码位）
+}
+
+
+def safe_text(text: str) -> str:
+    """把 `text` 转成"父进程自己的 stdout 一定打得出来"的形式。
+
+    **为什么父进程也要管**（同一根因 E32 的另一半，修第一半时才暴露）：
+    子进程输出修成 UTF-8 之后，父进程拿到了带 `✅` 的字符串，可父进程自己的
+    `sys.stdout.encoding` 仍是 **GBK** ⇒ `print(f"...{detail}")` 抛
+    `UnicodeEncodeError`，整个验证脚本崩在**打印报告**这一步，比原来更糟。
+
+    判据：输出编码是 UTF-8（树莓派 / CI / 管道）时**原样返回**；窄编码时把打不出的
+    字符换成 ASCII 替身。**只影响终端显示，不影响任何判据**（判据看的是 returncode 与文本内容）。
+    """
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(enc)
+        return text
+    except (UnicodeEncodeError, LookupError):
+        pass
+
+    out = []
+    for ch in text:
+        try:
+            ch.encode(enc)
+            out.append(ch)
+        except (UnicodeEncodeError, LookupError):
+            out.append(_ASCII_LABELS.get(ch, "?"))
+    return "".join(out)
 
 
 class Check:
@@ -114,23 +236,17 @@ def check_docs() -> Tuple[bool, str]:
     （正则只允许 ASCII，而本项目文档名全是中文 ⇒ 一个都匹配不到，却一直报通过）。
     自测会造一条假悬空引用、断言它真的被抓到，失败时归因清晰。
     """
-    selftest = subprocess.run(
-        [sys.executable, str(RPI_DIR / "scripts" / "check_docs.py"), "--self-test"],
-        cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8",
-    )
+    selftest = run_python([str(RPI_DIR / "scripts" / "check_docs.py"), "--self-test"], cwd=RPI_DIR)
     if selftest.returncode != 0:
         detail = [ln for ln in (selftest.stdout or "").splitlines() if ln.strip().startswith("❌")]
         return False, "文档检查器自测失败（守卫可能已失效）：\n      " + "\n      ".join(detail[:5])
 
-    proc = subprocess.run(
-        [sys.executable, str(RPI_DIR / "scripts" / "check_docs.py")],
-        cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8",
-    )
+    proc = run_python([str(RPI_DIR / "scripts" / "check_docs.py")], cwd=RPI_DIR)
     if proc.returncode == 0:
         lines = [ln for ln in (proc.stdout or "").splitlines() if ln.startswith("✅")]
         return True, (lines[0] if lines else "文档自检通过") + "（含检查器注入自测）"
     detail = [ln for ln in (proc.stdout or "").splitlines() if ln.strip().startswith("-")]
-    return False, "文档自检失败：\n      " + "\n      ".join(detail[:10])
+    return False, "文档自检失败：\n      " + ("\n      ".join(detail[:10]) or _NO_OUTPUT_HINT)
 
 
 def check_selfcheck() -> Tuple[bool, str]:
@@ -157,14 +273,12 @@ def check_tests() -> Tuple[bool, str]:
     取"最后一行"就变成打印了 "[语音] 播报：监护系统已启动"——看起来像没跑测试。
     判据应当来自**报告本身**（`Ran N tests` / `OK` / `FAILED`），而不是最后一行。
     """
-    has_pytest = subprocess.run(
-        [sys.executable, "-c", "import pytest"], capture_output=True
-    ).returncode == 0
+    has_pytest = run_python(["-c", "import pytest"], cwd=RPI_DIR).returncode == 0
     if has_pytest:
-        cmd = [sys.executable, "-m", "pytest", "tests", "-q"]
+        cmd = ["-m", "pytest", "tests", "-q"]
     else:
-        cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]
-    proc = subprocess.run(cmd, cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8")
+        cmd = ["-m", "unittest", "discover", "-s", "tests", "-v"]
+    proc = run_python(cmd, cwd=RPI_DIR)
 
     combined = "\n".join(part or "" for part in (proc.stdout, proc.stderr))
     lines = combined.splitlines()
@@ -183,6 +297,9 @@ def check_tests() -> Tuple[bool, str]:
     if proc.returncode == 0:
         detail = "；".join(part for part in (summary, verdict) if part) or "全部通过"
         return True, f"测试通过：{detail}"
+    if not summary and not verdict:
+        # 连"Ran N tests"都没读到 ⇒ 很可能不是测试真的失败，而是**输出根本没读到**
+        return False, f"测试失败：{_NO_OUTPUT_HINT}\n      " + "\n      ".join(lines[-12:])
     tail = "\n      ".join(lines[-12:])
     return False, f"测试失败（{summary or '无统计'}）：\n      {tail}"
 
@@ -190,14 +307,12 @@ def check_tests() -> Tuple[bool, str]:
 def check_demo() -> Tuple[bool, str]:
     """跑一遍演示剧本（验证整机链路：采集 → 判定 → 下发）。"""
     # 演示里会 print 大量内容，这里只关心退出码
-    proc = subprocess.run(
-        [sys.executable, "-m", "health_monitor", "demo"],
-        cwd=str(RPI_DIR), capture_output=True, text=True, encoding="utf-8",
-    )
+    proc = run_python(["-m", "health_monitor", "demo"], cwd=RPI_DIR)
     if proc.returncode == 0:
         lines = [ln for ln in (proc.stdout or "").splitlines() if ln.startswith("演示结束")]
         return True, lines[0] if lines else "演示脚本运行成功"
-    return False, f"演示失败（退出码 {proc.returncode}）：\n      " + "\n      ".join((proc.stderr or "").strip().splitlines()[-8:])
+    tail = "\n      ".join((proc.stderr or "").strip().splitlines()[-8:])
+    return False, f"演示失败（退出码 {proc.returncode}）：\n      " + (tail or _NO_OUTPUT_HINT)
 
 
 def check_basic_version() -> Tuple[bool, str]:
@@ -209,25 +324,19 @@ def check_basic_version() -> Tuple[bool, str]:
     这里跑两个**不依赖硬件**的命令：`basic/tools/selfcheck.py` 与 `basic/tests`。
     """
     root = RPI_DIR.parent
-    selfcheck = subprocess.run(
-        [sys.executable, str(root / "basic" / "tools" / "selfcheck.py")],
-        cwd=str(root), capture_output=True, text=True, encoding="utf-8",
-    )
+    selfcheck = run_python([str(root / "basic" / "tools" / "selfcheck.py")], cwd=root)
     if selfcheck.returncode != 0:
         tail = "\n      ".join((selfcheck.stdout or "").strip().splitlines()[-6:])
-        return False, f"基础版自检未通过：\n      {tail}"
+        return False, f"基础版自检未通过：\n      " + (tail or _NO_OUTPUT_HINT)
     summary = ""
     for line in (selfcheck.stdout or "").splitlines():
         if line.startswith("结果："):
             summary = line.strip()
     # 单测（用 pytest 的路径规则不需要额外配置：basic/tests/conftest.py 自己加了 sys.path）
-    tests = subprocess.run(
-        [sys.executable, "-m", "pytest", "basic/tests", "-q"],
-        cwd=str(root), capture_output=True, text=True, encoding="utf-8",
-    )
+    tests = run_python(["-m", "pytest", "basic/tests", "-q"], cwd=root)
     if tests.returncode != 0:
         tail = "\n      ".join((tests.stdout or "").strip().splitlines()[-8:])
-        return False, f"基础版单测失败：\n      {tail}"
+        return False, f"基础版单测失败：\n      " + (tail or _NO_OUTPUT_HINT)
     passed = ""
     for line in reversed((tests.stdout or "").splitlines()):
         if "passed" in line or "failed" in line:
@@ -268,12 +377,14 @@ def main() -> int:
         mark = "PASS" if ok else "FAIL"
         if not ok:
             failures += 1
-        print(f"[{mark}] {check.name}：{detail}")
+        # ⚠️ 必须过 safe_text：中文 Windows 上 sys.stdout.encoding 是 GBK，
+        #    检查详情里可能带 ✅/❌，直接 print 会把**整个验证脚本**崩在报告这一步（E32）。
+        print(safe_text(f"[{mark}] {check.name}：{detail}"))
     print("-" * 78)
     if failures:
         print(f"结果：{failures} 项失败（共 {len(checks)} 项）—— 请先修掉再提交")
     else:
-        print(f"结果：全部 {len(checks)} 项通过 ✅")
+        print(safe_text(f"结果：全部 {len(checks)} 项通过 ✅"))
     print()
     print("需要真机执行的检查（本脚本无法代劳）：")
     print("  python -m health_monitor selfcheck --real     # 真实硬件体检（需要树莓派 + 接线）")
