@@ -19,3 +19,6 @@ python3 run.py --replay data/dht11_日期_时刻.csv --window 200 --save evidenc
 > `basic/fonts/NotoSansCJK-Regular.ttc`（程序会自动加载；SIL OFL 1.1 许可），
 > 所以把整个 `basic/` 文件夹拷到任意树莓派上都能出一样的中文图，
 > 不必先 `sudo apt install fonts-noto-cjk`。
+>
+> **单文件版**（`basic/hw/run.py`，老师要求"一个运行入口文件"时用）自带自己的字体
+> `basic/hw/fonts/NotoSansCJK-Regular.ttc`，同理由程序自动加载。
