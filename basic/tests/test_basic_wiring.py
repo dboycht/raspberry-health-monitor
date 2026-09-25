@@ -122,22 +122,30 @@ class TestWiringTableDocument(unittest.TestCase):
     def test_恰好两张接线表(self):
         """**这份文档的卖点就是"只有两张接线表"**：多了说明又长回了细节文档。
 
-        ⚠️ 只数"接线"那两张：第 4 节是**参数速查表**（采样周期/量程/CSV 表头），
-        它不是接线表，但也不能把"只数前两张"写成脆弱断言 —— 这里按章节标题切片。
+        ⚠️ 判据要**与章节编号无关**：文档里还有 2.2 的"症状 → 原因"表（排查用）
+        与第 4 节的参数速查表 —— 它们不是接线表。
+        本用例只认"表头以 `| 物理脚` / `| 元件针脚` 开头"的接线表（接线表头的判据），
+        并断言**正好两张**（顺带证明没有第三张接线表混进来）。
         """
-        text = self._text()
-        wiring_part = text.split("## 4.", 1)[0] if "## 4." in text else text
-        self.assertEqual(len(self._tables(wiring_part)), 2,
-                         "接线部分应当只有两张表（树莓派接线 / 元件接线）")
+        tables = self._tables(self._text())
+        wiring = [t for t in tables if t[0].startswith(("| 物理脚", "| 元件针脚"))]
+        self.assertEqual(len(wiring), 2,
+                         f"接线表应当正好两张，实际 {len(wiring)} 张；文档里所有表：{[t[0][:30] for t in tables]}")
 
     def test_两张表的表头就是那两件事(self):
         text = self._text()
-        wiring_part = text.split("## 4.", 1)[0] if "## 4." in text else text
-        tables = self._tables(wiring_part)
         self.assertIn("树莓派接线", text)
         self.assertIn("元件接线", text)
-        self.assertTrue(tables[0][0].startswith("| 物理脚"), tables[0][0])
-        self.assertTrue(tables[1][0].startswith("| 元件针脚"), tables[1][0])
+        headers = [t[0] for t in self._tables(text)]
+        self.assertTrue(any(h.startswith("| 物理脚") for h in headers), headers)
+        self.assertTrue(any(h.startswith("| 元件针脚") for h in headers), headers)
+
+    def test_树莓派接线表的行就是那三根线(self):
+        """表 1 必须**逐行**是本基础版真正要接的脚（顺序：电源、地、数据）。"""
+        table = [t for t in self._tables(self._text()) if t[0].startswith("| 物理脚")][0]
+        body = "\n".join(table[2:])
+        for wire in wire_spec.wires():
+            self.assertIn(f"| **{wire.physical}** |", body, f"树莓派接线表少了物理脚 {wire.physical}")
 
     def test_表里的引脚与事实源一致(self):
         text = self._text()
@@ -149,7 +157,7 @@ class TestWiringTableDocument(unittest.TestCase):
 
     def test_三个脚之外不许出现在树莓派接线表里(self):
         """表 1 只该有本基础版真正要接的 3 个脚 —— 多出来的脚会让"照着插"变含糊。"""
-        table = self._tables(self._text())[0]
+        table = [t for t in self._tables(self._text()) if t[0].startswith("| 物理脚")][0]
         body = "\n".join(table[2:])
         used = {w.physical for w in wire_spec.wires()}
         for physical in range(1, 41):

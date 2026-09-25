@@ -1,8 +1,8 @@
 {
   "note": "由 wire_docs.py --generate 写出；记录接线表 PDF 与其源 md 的哈希（发现'忘了重新导出 PDF'与'产物被改'）",
   "source": "接线表.md",
-  "source_sha256": "14da719e282eaf083df18a10c885c0847c7ae29d126c8b561ed15743885939a7",
+  "source_sha256": "a6d9223df5de2b7d532c9ce5a9996ca331cb73f1ed578c02059f3e9d255563af",
   "outputs": {
-    "接线表.pdf": "1b070318ebf4594e870706f280d75378c179ae42c8cd3e0ad1791dad24ce96fc"
+    "接线表.pdf": "fe5cda12209863fc6cf98c8095c7d2fd42bc9b4a56ba58d77c9a64279d95e884"
   }
 }

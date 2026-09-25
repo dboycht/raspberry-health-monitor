@@ -41,12 +41,24 @@ def _setup_logging(verbose: bool = False) -> None:
 
 
 def cmd_selfcheck(args: argparse.Namespace) -> int:
-    """体检：逐个驱动 装配 → open → 自检，输出表格化的报告。"""
+    """体检：逐个**已启用的设备** 装配 → open → 自检，输出表格化的报告。
+
+    ⚠️ 必须按**配置里的设备名**（`vitals` / `ambient` / `display`…）遍历，
+    不能按 `MANIFEST` 里的**驱动名**（`max30102` / `dht11` / `lcd1602`…）——
+    两者在本项目里**名字不同**（配置用"器官名"、MANIFEST 用"型号名"），
+    按驱动名查 `device_report()` 永远查不到 ⇒ 全部显示 `skip 未在配置中启用`，
+    真机体检等于什么都没测，却打印"装配失败/自检失败：0 项"
+    （2026-09-25 真机实测踩到：DHT11 明明接着，体检报告却把它标成 skip）。
+    """
     mock = not args.real
-    config = load_config(args.config)
     runtime = build_runtime(args.config, mock=mock, store_path="", dispatcher_enabled=False)
     errors = runtime.open()
     report = runtime.device_report()
+
+    #: 配置里每个设备的驱动名（用于诊断"这类驱动根本没配置"的情况）
+    configured_drivers = {cfg.name: cfg.driver for cfg in runtime.config.enabled_devices()}
+    #: 已经用掉的驱动名（剩下的说明"实现了但没启用/没接线"）
+    used_drivers = set(configured_drivers.values())
 
     width = max([len(name) for name in report] + [12])
     print("=" * 78)
@@ -55,26 +67,31 @@ def cmd_selfcheck(args: argparse.Namespace) -> int:
     print(f"{'设备名':<{width}}  {'驱动':<12}  {'装配':<6}  {'自检':<6}  说明")
     print("-" * 78)
     failures = 0
-    for name in sorted(MANIFEST):
-        spec = get_spec(name)
+
+    # ① 先列**配置里启用的设备**（这才是真正要验的东西）
+    for name in sorted(configured_drivers):
+        driver = configured_drivers[name]
         if name in report:
             entry = report[name]
             check = entry.get("self_check", {})
             ok = "OK" if check.get("ok") else "FAIL"
             if not check.get("ok"):
                 failures += 1
+            assemble = "OK" if name not in errors else "FAIL"
             if name in errors:
                 failures += 1
-            assemble = "OK" if name not in errors else "FAIL"
-            detail = str(check.get("detail") or "")[:34]
+            detail = str(errors.get(name) or check.get("detail") or "")[:34]
         else:
-            # 未在配置中启用，或装配失败
-            assemble = "skip"
-            ok = "-"
-            detail = runtime.assembly_errors.get(name, "未在配置中启用")
-            if name in runtime.assembly_errors:
-                failures += 1
-        print(f"{name:<{width}}  {spec.kind.value:<12}  {assemble:<6}  {ok:<6}  {detail}")
+            # 装配就失败了（构造期异常）：如实算失败，不吞
+            assemble, ok = "FAIL", "-"
+            detail = str(runtime.assembly_errors.get(name, "未装配（原因未记录）"))[:34]
+            failures += 1
+        print(f"{name:<{width}}  {driver:<12}  {assemble:<6}  {ok:<6}  {detail}")
+
+    # ② 再列**实现了但这次没配置/没启用**的驱动（信息行，不算失败）
+    for driver in sorted(set(MANIFEST) - used_drivers):
+        spec = get_spec(driver)
+        print(f"{driver:<{width}}  {spec.kind.value:<12}  {'skip':<6}  {'-':<6}  未在配置中启用")
 
     print("-" * 78)
     print(f"装配失败/自检失败：{failures} 项")

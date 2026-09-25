@@ -70,9 +70,14 @@ def build_frame(temperature: int, humidity: int, checksum: int | None = None) ->
         add(0, T_BIT_LOW_US)                             # 下降沿（进入低电平）
         add(1, T_HIGH_BIT_US if bit else T_LOW_BIT_US)   # 上升沿（高电平宽度 = 该 bit）
     # ⚠️ **收尾低电平**：真实 DHT11 传完第 40 位会把总线拉回低电平，
-    #    少了这个下降沿，最后一个 bit 就**没有下降沿来结束它** → 只解出 39 位。
-    #    （这个"造帧错误"曾让我误以为是解码器的 off-by-one，白折腾了几轮。）
+    #    少了这个下降沿，最后一个 bit 就**没有下降沿来结束它** → 也会少一位。
     add(0, T_BIT_LOW_US)
+    # ⚠️⚠️ **帧尾"上拉回空闲"的上升沿**（2026-09-25 真机实测补上，见 ERROR.md E37）：
+    #    最后一位结束后，从机上拉把总线重新拉高（实测时间戳：…低 3749.1 → 高 3802.9 µs）。
+    #    它**不是数据位**，但会让整帧变成 **83 个边沿 / 42 个上升沿 + 41 个下降沿**；
+    #    解码器若"从下标 1 开始逐对扫"，应答的配对就会错位一格 ⇒ 只解出 39/40 位。
+    #    修法是"取最后 41 对"，这一行合成边沿就是那条断言的靶子（去掉它必须仍然能解）。
+    add(1, T_BIT_LOW_US)
     return edges
 
 
@@ -210,15 +215,43 @@ class TestDecodeFailures(unittest.TestCase):
         self.assertIn("未应答", msg)
         self.assertIn("20 个边沿", msg, "要说清抓到多少边沿，便于判断是没接还是时序问题")
 
-    def test_边沿够但位不全时报数据位不足(self) -> None:
-        """★ 两条失败线要分得清：
-        边沿太少（< 79）→ "疑似未应答"；边沿数够了但解出的位 < 40 → "数据位不足"。
+    def test_帧尾那个空闲上升沿不会让解码错位(self) -> None:
+        """★★★ 2026-09-25 真机回归（ERROR.md E37）：帧尾多一个"上拉回空闲"的上升沿。
 
-        这里给完整帧的前 80 个边沿（已过"未应答"判据），但只够 39 个 bit，
-        应当落到"数据位不足"这条线上。
+        真实抓包：一帧 **83 个边沿 / 42 个上升沿 / 41 个下降沿**，
+        最后那个上升沿（…低 3749.1 → 高 3802.9 µs）不是数据位。
+        老写法"从下标 1 开始逐对扫、丢掉第一个高电平段"会因此错位一格：
+        只配出 40 对、丢掉一对后只剩 **39 位** ⇒ 永远解不出（真机上就是这个症状）。
+
+        判据（两条都要）：
+        1. `build_frame()`（**已包含帧尾空闲上升沿**）能解出正确温湿度；
+        2. 把那个上升沿去掉（合成帧回到 82 边沿）**也一样能解** —— 解码不许依赖它。
         """
+        sensor = make_sensor(build_frame(25, 58))
+        self.assertEqual(sensor._read_lgpio_raw(), (25.0, 58.0))
+
+        frame_without_idle_rise = build_frame(25, 58)[:-1]      # 去掉帧尾上升沿
+        sensor2 = make_sensor(frame_without_idle_rise)
+        self.assertEqual(sensor2._read_lgpio_raw(), (25.0, 58.0),
+                         "解码不许依赖帧尾那个空闲上升沿（两种帧都要能解）")
+
+    def test_边沿不够时仍报未应答(self) -> None:
+        """边沿数不到一帧的 95%（< 79）⇒ "疑似未应答"，且必须报出数量。"""
         frame = build_frame(25, 58)
-        sensor = make_sensor(frame[:80])
+        sensor = make_sensor(frame[:60])
+        with self.assertRaises(DeviceIOError) as ctx:
+            sensor._read_lgpio_raw()
+        message = str(ctx.exception)
+        self.assertIn("60 个边沿", message)
+        self.assertIn("上拉", message)
+
+    def test_宽度超限的位会被丢弃并如实报不足(self) -> None:
+        """某一位宽度 >200µs（噪声/中断延迟）必须被丢弃，且如实报"位不足"。"""
+        frame = list(build_frame(25, 58))
+        # 把某个"上升沿"的时间戳往前挪 1ms ⇒ 它的高电平宽度变成约 1000µs（超限）
+        level, ts = frame[31]
+        frame[31] = (level, ts - 1_000_000)
+        sensor = make_sensor(frame)
         with self.assertRaises(DeviceIOError) as ctx:
             sensor._read_lgpio_raw()
         self.assertIn("bit", str(ctx.exception))
