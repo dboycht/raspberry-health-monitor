@@ -521,6 +521,73 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _explain_no_window(exc: Optional[BaseException] = None, backend: str = "") -> None:
+    """窗口显示不出来时**说清为什么**、以及怎么才能看到窗口。
+
+    为什么专门写这段（2026-09-26 真机实测）：原来"窗口出不来"是**静默**的 ——
+    matplotlib 在没有 `DISPLAY` 时会悄悄退到 `agg` 后端（只出图片、不弹窗），
+    **连异常都不抛**，用户看到的现象就是"为什么没有窗口弹出"而毫无线索。
+
+    实测这台树莓派本身有桌面（labwc/Wayland + Xwayland 在 `:0`），但有**两个**拦路点：
+    1. **通过 SSH 连进来时没有 `DISPLAY`** ⇒ 后端只能是 `agg`；
+    2. **没装 `python3-pil.imagetk`** ⇒ 即使给了 DISPLAY，Tk 后端也会
+       `ImportError: cannot import name 'ImageTk' from 'PIL'`（装了 python3-tk 与
+       python3-pil，但缺 Tk 那半）。
+    """
+    import os
+
+    print("⚠️ 现在**不会弹出窗口**，本次改为『只采集 + 存档』。")
+    if backend:
+        print(f"   matplotlib 当前后端 = {backend}（`agg` = 只能出图片文件，不能开窗）")
+    if exc is not None:
+        print(f"   直接原因：{type(exc).__name__}: {str(exc)[:110]}")
+    print("   要看窗口，按下面挑一个：")
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        print("   ① SSH 会话里没有 DISPLAY（最常见）——三选一：")
+        print("      · **推荐**：在树莓派自己的桌面里开终端再跑：")
+        print("        cd ~/raspberry-health-monitor/basic/hw && python3 run.py")
+        print("      · 或者：DISPLAY=:0 python3 run.py   # 窗口出现在树莓派的屏幕上（需已登录桌面）")
+        print("      · 或者：ssh -Y pi@<树莓派IP> 连（你的电脑要装 X server，如 VcXsrv/Xming）")
+    print("   ② 缺 PIL 的 Tk 组件（本机实测就卡在这，按 ① 做完还要装它）：")
+    print("      sudo apt install -y python3-pil.imagetk")
+    print("   ③ 没装 matplotlib：sudo apt install -y python3-matplotlib python3-tk")
+    print("   不想开窗也能交作业（报告插图够用）：")
+    print("      python3 run.py --no-plot --duration 300                 # 只采集，存 CSV")
+    print("      python3 run.py --headless --duration 60 --save c.png    # 采集并导出曲线图")
+
+
+def _try_open_window(args, interval: float) -> Optional["CurveWindow"]:
+    """尝试创建曲线窗口：**先检查后端能不能开窗**，开不了就把原因讲清楚。"""
+    try:
+        import matplotlib
+
+        # ⚠️ 关键：没有 DISPLAY 时 matplotlib 会**静默**选 agg（不抛异常），
+        #    所以这里主动读后端名来判断"到底能不能弹窗"。
+        backend = matplotlib.get_backend().lower()
+    except ImportError:
+        _explain_no_window(None, "（没装 matplotlib）")
+        return None
+
+    gui_backends = ("tkagg", "qtagg", "qt5agg", "gtk3agg", "gtk4agg", "macosx", "wxagg")
+    if backend not in gui_backends:
+        _explain_no_window(None, backend)
+        return None
+
+    font_name = configure_cjk_font()
+    if font_name is None:
+        print("⚠️ 没找到中文字体：图里的中文会变成方框（sudo apt install -y fonts-noto-cjk）")
+    else:
+        print(f"中文字体：{font_name}")
+    try:
+        window = CurveWindow(args.xaxis == "index", interval, args.window,
+                             f"DHT11 ({describe_pin(args.pin)})")
+    except Exception as exc:  # noqa: BLE001 - 后端能选但建窗仍失败（缺 Tk/ImageTk 等）
+        _explain_no_window(exc, backend)
+        return None
+    print("已打开曲线窗口（窗口标题里就是「最新一次读数」）")
+    return window
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
 
@@ -545,19 +612,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # ③ 曲线（可选）
     window: Optional[CurveWindow] = None
     if not args.no_plot:
-        try:
-            font_name = None
-            window = CurveWindow(args.xaxis == "index", interval, args.window,
-                                 f"DHT11 ({describe_pin(args.pin)})")
-            font_name = configure_cjk_font()
-            if font_name is None:
-                print("⚠️ 没找到中文字体：图里的中文会变成方框。装一个即可：")
-                print("   sudo apt install -y fonts-noto-cjk")
-            else:
-                print(f"中文字体：{font_name}")
-        except ImportError:
-            print("⚠️ 没装 matplotlib，改用『只采集不画图』模式。装上即可看曲线：")
-            print("   sudo apt install -y python3-matplotlib python3-tk")
+        window = _try_open_window(args, interval)
 
     duration = args.duration or args.minutes * 60.0
     started_at = time.time()
