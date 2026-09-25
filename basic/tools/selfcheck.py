@@ -164,7 +164,7 @@ def check_wiring_facts() -> Tuple[bool, str]:
 
 
 def check_wiring_docs() -> Tuple[bool, str]:
-    """接线文档校验：文档必须与代码**逐字符一致**，且关键事实齐全、引用的脚本存在。
+    """接线表校验：文档必须与代码**逐字符一致**，且关键事实齐全、引用的脚本存在。
 
     ⚠️ 先跑生成器自己的**注入自测**：一个"看起来在跑、其实一直没匹配"的检查器
     比没有检查器更危险（本项目在文档检查器上真的踩过这个坑）。
@@ -173,13 +173,13 @@ def check_wiring_docs() -> Tuple[bool, str]:
 
     guard = wire_docs.self_test()
     if guard:
-        return False, "文档检查器自检失败（守卫可能已失效）：" + "；".join(guard)
+        return False, "接线表检查器自检失败（守卫可能已失效）：" + "；".join(guard)
     problems = wire_docs.check_all()
     if problems:
         head = "；".join(problems[:3])
         more = f"（共 {len(problems)} 项）" if len(problems) > 3 else ""
-        return False, f"接线文档与代码不一致{more}：{head}（修完跑 `python3 basic/tools/wire_docs.py --generate`）"
-    return True, f"{len(wire_docs.DOCUMENTS)} 份接线文档与代码逐字符一致，关键事实齐全，引用脚本均存在"
+        return False, f"接线表与代码不一致{more}：{head}（修完跑 `python3 basic/tools/wire_docs.py --generate`）"
+    return True, f"接线表（{wire_docs.DOC_NAME}）与代码逐字符一致，关键事实齐全，引用脚本均存在"
 
 
 def check_matplotlib() -> Tuple[bool, str]:

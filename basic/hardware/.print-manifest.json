@@ -1,26 +1,8 @@
 {
-  "note": "由 wire_docs.py --generate 写出；记录打印产物及其源 md 的哈希（发现'忘了重新导出 PDF'与'产物被改'）",
-  "sources": {
-    "04-线色与自查卡.md": {
-      "sha256": "b227cb1e27aeefcdefa4ebf597f3b0556ee2bba41e01497d04d57df089e54500",
-      "outputs": {
-        "04-线色与自查卡.pdf": "c4b225c00e43cb92a6e840dd6b5655ba36a1b11cfff0213f7a0502304d3bdd9f",
-        "04-线色与自查卡.html": "efb1d256eb1b6b2b71248c4da5ae12b1f4a3dd721cb28d2cd2c36b5a669fe1da"
-      }
-    },
-    "06-接口接线表.md": {
-      "sha256": "fd59a13fc773cd1e12c1a6920b85040d9b4bf41eb5344602bd2536cb9663ddf4",
-      "outputs": {
-        "06-接口接线表.pdf": "d76c13be5f3c04db2011af7e3b35110bd1e8920aba91d85ec8862704a6b57132",
-        "06-接口接线表.html": "81e36da4052bc38b363c04a2597b84ffc56c2f9f989d85ba7ad7bdc101875aab"
-      }
-    },
-    "05-接线文档合集.md": {
-      "sha256": "acf8dc4cd5b800c17594d4a2eee7ddb0703e79617900cf884c5e61dcfc679212",
-      "outputs": {
-        "05-接线文档合集.pdf": "9d31d68c4eaf349b9c442edb9c33708c25d53e3f88ab8f7256080ac6daff353c",
-        "05-接线文档合集.html": "950a2ab41f9842a86a210ed46df8afaa1b1c415dd5b07f3426823e95964ea284"
-      }
-    }
+  "note": "由 wire_docs.py --generate 写出；记录接线表 PDF 与其源 md 的哈希（发现'忘了重新导出 PDF'与'产物被改'）",
+  "source": "接线表.md",
+  "source_sha256": "f5f2f41a4fa1e9025e19a5c4e7b2d8d1a81e4ed315d878d680a9b6ba8bef5d54",
+  "outputs": {
+    "接线表.pdf": "f3196ea9d04f421e894334650224ab612b6626bd1aa1cf2fbd0a095b81df2965"
   }
 }

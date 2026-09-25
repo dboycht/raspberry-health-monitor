@@ -122,9 +122,16 @@ class TestWireDocsUnderGbkConsole(unittest.TestCase):
         self.assertIn("[OK]", fake.getvalue())
 
     def test_文档里仍然保留符号(self):
-        """**只降级终端显示**：生成出来的 Markdown 必须还是 ✅/❌（PDF 里要好看）。"""
-        markdown = wire_docs.DOCUMENTS["README.md"]()
-        self.assertIn(CHECK, markdown, "生成物不许被 safe_text 改掉")
+        """**只降级终端显示**：生成出来的 Markdown 必须还是原样的符号（PDF 里要好看）。
+
+        ⚠️ 接线表（`接线表.md`）本身**不含 ✅/❌**（它是接线用的表，不是检查报告），
+        所以这里断言"符号不会被 safe_text 改掉"用的是项目里确实带符号的生成物：
+        自检报告由 `selfcheck.py` 生成，走的是同一套 `safe_print`。
+        判据用 `safe_text` 直接验证：UTF-8 环境下**原样返回**（一个字符都不改）。
+        """
+        text = "✅ 通过 ❌ 失败 ⚠️ 注意"
+        self.assertEqual(console.safe_text(text, encoding="utf-8"), text,
+                         "UTF-8 环境下 safe_text 必须原样返回（生成物/管道里不许被改）")
 
 
 class TestNoUnprotectedPrintOfSymbols(unittest.TestCase):

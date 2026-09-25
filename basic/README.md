@@ -68,11 +68,12 @@ python tools/selfcheck.py         # 10 项自检
 引脚号只信一张表（`basic/pins.py`）：GPIO4 = 物理脚 7、GPIO27 = 物理脚 13。
 **BCM 编号与物理脚号不是偏移关系**，所以代码里不许写 `pin + 1` 这种换算。
 
-📐 **详细接线文档（图 + 逐线表 + 万用表验证 + 自查卡）在
-[`hardware/README.md`](hardware/README.md)** —— 那几份文档里的每个数字都是
-**从代码生成的**，并由 `python3 tools/wire_docs.py --check` 机器校验（改了代码没重新生成会报错）。
+🧾 **接线就看这一份**：[`hardware/接线表.md`](hardware/接线表.md) / [`hardware/接线表.pdf`](hardware/接线表.pdf)
+—— **只有两张表**：① 树莓派接线（哪几个物理脚）② 元件接线（每个针脚插到哪）。
+（每个数字都由代码生成，`python3 tools/wire_docs.py --check` 机器校验。）
 
-🧾 **上机只想看两张表**：`hardware/06-接口接线表.md` / `.pdf`（**树莓派接线** + **元件接线**，一页看完）。
+📚 更细的历史资料（40-pin 全表 / 接线图与万用表逐项验证 / 供电安全 / 线色自查卡 / 合集 PDF）
+在 [`hardware/_旧文档存档/`](hardware/_旧文档存档/)，**需要时再看**，上机不用带。
 
 接线出问题时的定位命令：
 
@@ -99,24 +100,19 @@ basic/
 │   ├── sample_demo.csv    演示数据（合成，入库；没硬件的同学靠它跑通画图）
 │   └── dht11_*.csv        运行时产生的数据（**不入库**，见 data/.gitignore）
 ├── evidence/curve_demo.png 曲线样张（截图证据，入库）
-├── hardware/              ★接线文档（由代码生成，勿手改）
-│   ├── README.md          接线总览（三根线 + 判据）
-│   ├── 01-引脚分配表.md     40-pin 逐脚分配（本基础版只用 3 个脚）
-│   ├── 02-接线图.md        ASCII 接线图 + 逐线表 + 万用表验证 + 现象对照
-│   ├── 03-供电与安全.md     3.3V/5V 不能接错、电流预算、断电插拔
-│   ├── 04-线色与自查卡.md/.pdf  一页纸自查卡（可打印）
-│   ├── 06-接口接线表.md/.pdf  ★两张表：树莓派接线 + 元件接线（上机只看这份）
-│   └── 05-接线文档合集.md/.pdf  上面全部合成一份（可打印）
+├── hardware/              ★**接线表**（由代码生成，勿手改）
+│   ├── 接线表.md/.pdf       ★**两张表**：树莓派接线 + 元件接线（上机只看这**一份**）
+│   └── _旧文档存档/         历史细节（40-pin 全表 / 接线图 / 供电安全 / 线色卡 / 合集），需要时再看
 ├── tools/
 │   ├── selfcheck.py       10 项自检（不依赖硬件）
-│   ├── wire_docs.py       接线文档**生成 + 校验**（--generate / --check）
+│   ├── wire_docs.py       接线表**生成 + 校验**（--generate / --check）
 │   └── diag_dht_line.py   数据线诊断（三态电平 → 结论）
-└── tests/                 124 项单测（不需要硬件）
+└── tests/                 117 项单测（不需要硬件）
 ```
 
-> 🤖 `hardware/` 下的文档由 `python3 tools/wire_docs.py --generate` 生成。
+> 🤖 `hardware/接线表.md` 由 `python3 tools/wire_docs.py --generate` 生成。
 > **要改内容请改 `basic/wire_spec.py` 或生成器里的文案，再重新生成** —— 直接手改会被下次生成覆盖，
-> 而且 `--check` 会报"文档与代码不一致"。
+> 而且 `--check` 会报"接线表与代码不一致"。**硬件目录里只允许这一份 md**（多了会被 `--check` 抓到）。
 
 ---
 
@@ -159,7 +155,7 @@ index,timestamp,temperature_c,humidity_percent,status,note
 | 现象 | 原因与处理 |
 | --- | --- |
 | `❌ 打不开 DHT11：没有可用的 DHT11 读取后端` | 在电脑上跑（没有 GPIO）→ 加 `--mock`；树莓派上装 `sudo apt install -y python3-lgpio` |
-| 一开始就读不到（`只捕获到 0 个边沿`） | 先跑 `python3 tools/diag_dht_line.py`（它会给出"是哪类故障"）；再按 [`hardware/02-接线图.md`](hardware/02-接线图.md) 第 6 节逐项查 |
+| 一开始就读不到（`只捕获到 0 个边沿`） | 先跑 `python3 tools/diag_dht_line.py`（它会给出"是哪类故障"：拉死到地 / 拉死到 3.3V / 没有器件驱动）；再按 [`hardware/接线表.md`](hardware/接线表.md) 核对脚位（**最易犯**：脚 7 的邻居脚 6 是 GND，插错一格就成"拉死到地"） |
 | 偶尔一次 `校验和不符` | DHT11 正常现象（重试 3 次会自动兜住）；杜邦线过长/接触不良会变频繁 |
 | 每行都是 `fail` 且连续 5 次后程序停下 | 这是刻意的"不刷屏"设计；按上一条排查接线，再重新运行 |
 | 窗口中文变成方框 | 装中文字体：`sudo apt install -y fonts-noto-cjk` |
@@ -167,8 +163,9 @@ index,timestamp,temperature_c,humidity_percent,status,note
 | 树莓派没有显示器（SSH 里跑） | 用无窗口模式：`python3 run.py --duration 60 --save curve.png`（跑 60 秒后导出图片） |
 | 想让曲线横轴显示采样序号 | `python3 run.py --xaxis index` |
 
-> 更完整的"现象 → 原因 → 下一步"（含接线类故障）见
-> [`hardware/02-接线图.md`](hardware/02-接线图.md) 第 6 节与 [`hardware/03-供电与安全.md`](hardware/03-供电与安全.md)。
+> 更完整的"现象 → 原因 → 下一步"（含接线类故障与万用表逐项验证）见
+> [`hardware/_旧文档存档/02-接线图.md`](hardware/_旧文档存档/02-接线图.md) 第 6 节与
+> [`hardware/_旧文档存档/03-供电与安全.md`](hardware/_旧文档存档/03-供电与安全.md)。
 
 ---
 
@@ -179,7 +176,7 @@ index,timestamp,temperature_c,humidity_percent,status,note
 | 目的 | **交课程作业 H**（温湿度 + 动态曲线） | 整套"居家老人监护系统"（课程设计团队作品） |
 | 依赖 | 标准库 + matplotlib（可选） | HAL 契约层 + 12 个驱动 + HTTP API + 上云 + 安卓端 |
 | 数据 | CSV | SQLite + HTTP 接口 + OneNET 云 |
-| 代码量 | 8 个模块、124 项单测 | 40+ 个文件、584 项单测 |
+| 代码量 | 8 个模块、117 项单测 | 40+ 个文件、597 项单测 |
 | 谁能用 | 任何同学，拷贝即用 | 团队分工协作 |
 
 两者是**同一套工程纪律的两个尺度**：基础版同样坚持"读不到就是 `None`、不补 0"、
@@ -193,15 +190,15 @@ index,timestamp,temperature_c,humidity_percent,status,note
 ```bash
 cd raspberry-health-monitor        # 仓库根
 
-python basic/tools/selfcheck.py              # 10 项自检（含接线事实与接线文档）
-python basic/tools/wire_docs.py --check      # 接线文档与代码是否一致（含检查器注入自测）
-python basic/tools/wire_docs.py --generate   # 改了引脚/接线事实后重新生成文档
-python -m pytest basic/tests -q              # 124 项单测（开发机实测）
+python basic/tools/selfcheck.py              # 10 项自检（含接线事实与接线表）
+python basic/tools/wire_docs.py --check      # 接线表与代码是否一致（含检查器注入自测）
+python basic/tools/wire_docs.py --generate   # 改了引脚/接线事实后重新生成接线表
+python -m pytest basic/tests -q              # 117 项单测（开发机实测）
 python -m unittest discover -s basic/tests   # 不装 pytest 也能跑
 ```
 
 提交前建议连主项目一起验（会把基础版自检 + 单测一起跑）：
 
 ```bash
-cd rpi && python scripts/validate.py         # 10 项（含"基础版"这一项）
+cd rpi && python scripts/validate.py         # 11 项（含"基础版"这一项）
 ```

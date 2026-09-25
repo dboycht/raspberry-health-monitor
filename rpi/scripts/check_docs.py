@@ -129,11 +129,21 @@ def _strip_code_blocks(text: str) -> str:
     return FENCED_CODE.sub(lambda m: " " * len(m.group(0)), text)
 
 
+#: 这些文件**不参与悬空引用检查**（只存在于开发副本、属于排坑/轮次流水性质）
+#:
+#: ⚠️ 为什么（2026-09-25 第八轮实测）：`DEVELOPMENT.md` 是**历史流水**，必然出现
+#: "当时有、现在已归档/删除"的文件名（本轮就把 `basic/hardware/01…06` 收成了一张接线表）。
+#: 把它们算作悬空引用，会让"记录历史"与"维护活文档"互相打架 ——
+#: 判据：**只检查"给人照着做的活文档"**（根 README / docs / hardware / contrib / android），
+#: 开发流水（DEVELOPMENT.md / ERROR.md）由写它的人自己负责前后一致。
+DEV_ONLY_DOCS = {"DEVELOPMENT.md", "ERROR.md"}
+
+
 def iter_docs() -> List[Path]:
     docs: List[Path] = []
     for pattern in ("*.md", "docs/*.md", "hardware/*.md", "contrib/*.md", "android/*.md"):
         docs.extend(sorted(ROOT.glob(pattern)))
-    return [d for d in docs if d.is_file()]
+    return [d for d in docs if d.is_file() and d.name not in DEV_ONLY_DOCS]
 
 
 def build_suffix_index() -> Dict[str, List[Path]]:
@@ -385,6 +395,18 @@ def self_test() -> List[str]:
             problems.append(
                 f"自测失败：带 `../` 的悬空引用（{rel_missing}）没被抓到 → 归一化把真问题也放过了"
             )
+
+        # ★ 第八轮新增：开发流水（DEVELOPMENT.md / ERROR.md）**不参与悬空引用检查**。
+        #   判据两条：① 它们确实不在扫描清单里；② 万一哪天被写回清单，这条会立刻失败。
+        scanned = {p.name for p in iter_docs()}
+        still_there = sorted(DEV_ONLY_DOCS & scanned)
+        if still_there:
+            problems.append(
+                f"自测失败：开发流水文件（{still_there}）又进了悬空引用检查 —— "
+                "它们是历史记录，会出现'当时有、现在已归档'的文件名（判据见 DEV_ONLY_DOCS 注释）"
+            )
+        if not any(name in scanned for name in ("README.md",)):
+            problems.append("自测失败：根 README 没进扫描清单 —— 排除条件写过头了（把活文档也排除了）")
     finally:
         try:
             probe_file.unlink()
