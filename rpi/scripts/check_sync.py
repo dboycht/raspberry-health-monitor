@@ -28,6 +28,22 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 #: 开发副本根目录（本文件在 <dev>/rpi/scripts/ 下）
 DEV_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TARGET = Path(r"D:\code\github_repository\raspberry-health-monitor")
@@ -156,7 +172,7 @@ def main() -> int:
     print("=" * 78)
 
     if not target.exists():
-        print(f"❌ canonical 路径不存在：{target}")
+        safe_print(f"❌ canonical 路径不存在：{target}")
         print("   用 --target 指定正确路径，或先把仓库 clone 下来。")
         return 1
 
@@ -167,17 +183,17 @@ def main() -> int:
     problems = 0
     if only_dev:
         problems += len(only_dev)
-        print(f"\n❌ 只在开发副本里（canonical **缺失**，必须同步过去）：{len(only_dev)} 个")
+        safe_print(f"\n❌ 只在开发副本里（canonical **缺失**，必须同步过去）：{len(only_dev)} 个")
         for rel in only_dev:
             print(f"   - {rel}")
     if only_dst:
         problems += len(only_dst)
-        print(f"\n⚠️ 只在 canonical 里（开发副本没有；若是发布用的 LICENSE/.gitattributes 之类属正常）：{len(only_dst)} 个")
+        safe_print(f"\n⚠️ 只在 canonical 里（开发副本没有；若是发布用的 LICENSE/.gitattributes 之类属正常）：{len(only_dst)} 个")
         for rel in only_dst:
             print(f"   - {rel}")
     if args.hash and differing:
         problems += len(differing)
-        print(f"\n❌ 内容不同：{len(differing)} 个")
+        safe_print(f"\n❌ 内容不同：{len(differing)} 个")
         for rel in differing:
             print(f"   - {rel}")
 
@@ -186,18 +202,18 @@ def main() -> int:
         ignored = check_git_ignored(target)
         if ignored:
             problems += len(ignored)
-            print(f"\n❌ 存在但**被 .gitignore 忽略**（本地有、干净 checkout 没有 ⇒ CI 会红）：{len(ignored)} 个")
+            safe_print(f"\n❌ 存在但**被 .gitignore 忽略**（本地有、干净 checkout 没有 ⇒ CI 会红）：{len(ignored)} 个")
             for item in ignored:
                 print(f"   - {item}")
         else:
-            print("\n✅ 忽略项检查通过：没有被误忽略的源码/文档")
+            safe_print("\n✅ 忽略项检查通过：没有被误忽略的源码/文档")
 
     print("-" * 78)
     if problems == 0:
-        print(f"✅ 两侧一致（{'含内容哈希' if args.hash else '仅按文件清单'}比对）")
+        safe_print(f"✅ 两侧一致（{'含内容哈希' if args.hash else '仅按文件清单'}比对）")
         print("   提醒：canonical 里 `git status --porcelain` 应当为空；有变更就 commit + push。")
         return 0
-    print(f"⚠️ 共 {problems} 处差异（其中「只在开发副本里」与「被误忽略」这两类是必须修的）")
+    safe_print(f"⚠️ 共 {problems} 处差异（其中「只在开发副本里」与「被误忽略」这两类是必须修的）")
     return 1
 
 

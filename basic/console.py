@@ -76,4 +76,15 @@ def safe_text(text: str, encoding: Optional[str] = None) -> str:
     return "".join(out)
 
 
-__all__ = ["safe_text", "output_encoding"]
+def safe_print(*args, **kwargs) -> None:
+    """`print` 的安全版：所有参数先过 :func:`safe_text`（窄编码控制台上不崩）。
+
+    为什么要有它：`rpi/scripts/` 下有 20 多个诊断/验收工具，原来是**直接**
+    `print("✅ …")`；在中文 Windows（GBK 控制台）上会抛 `UnicodeEncodeError` 把
+    整个脚本崩掉（2026-09-25 真机实测：`check_docs.py` 因此被误报成"文档自检失败"，
+    见 `ERROR.md` E32/E35）。有了它，这些工具只需把 `print(` 换成 `safe_print(`。
+    """
+    print(*(safe_text(str(arg)) for arg in args), **kwargs)
+
+
+__all__ = ["safe_text", "safe_print", "output_encoding"]

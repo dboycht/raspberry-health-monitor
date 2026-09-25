@@ -505,12 +505,16 @@ class Dht11Reader:
         return ReadResult(False, note=f"{last_error}（已重试 {self.retries} 次）")
 
     def describe(self) -> str:
-        """一行人类可读说明（写进日志/小结，便于答辩时说明"数据从哪来"）。"""
+        """一行人类可读说明（写进日志/小结，便于答辩时说明"数据从哪来"）。
+
+        ⚠️ `describe_pin()` 的返回值**已经含 `GPIO{n}（…）` 整段**，别再套一层括号：
+        2026-09-25 真机实测曾打印成 `GPIO4（GPIO4（物理脚 7，…））`（见 ERROR.md E35）。
+        """
         from .pins import describe_pin
 
         if self.mock or self._explicit_mock is not None:
             return "模拟数据源（--mock：不接硬件也能跑，数据为合成值）"
-        return f"DHT11 · GPIO{self.pin}（{describe_pin(self.pin)}）· 后端 {self.backend_name}"
+        return f"DHT11 · {describe_pin(self.pin)} · 后端 {self.backend_name}"
 
 
 __all__ = [

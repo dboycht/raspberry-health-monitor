@@ -43,6 +43,22 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -93,11 +109,11 @@ class Reporter:
         counts = {s: sum(1 for r in self.results if r.status == s) for s in (PASS, WARN, FAIL, SKIP)}
         print(f"结果：PASS {counts[PASS]} · WARN {counts[WARN]} · FAIL {counts[FAIL]} · SKIP {counts[SKIP]}")
         if self.warnings:
-            print("\n⚠️ 可疑项（能跑但读数不确定，建议人工复核）：")
+            safe_print("\n⚠️ 可疑项（能跑但读数不确定，建议人工复核）：")
             for r in self.warnings:
                 print(f"   - {r.name}：{r.detail.splitlines()[0]}")
         if self.failures:
-            print("\n❌ 失败项与排查动作：")
+            safe_print("\n❌ 失败项与排查动作：")
             for r in self.failures:
                 print(f"   - {r.name}：{r.detail.splitlines()[0]}")
                 if r.next_step:
@@ -105,7 +121,7 @@ class Reporter:
                         print(f"       {line}")
             print("\n修完再跑一次本脚本；PC 端的 mock 测试与驱动代码无关，不受影响。")
         else:
-            print("\n✅ 树莓派端硬件验收全部通过。接下来：")
+            safe_print("\n✅ 树莓派端硬件验收全部通过。接下来：")
             print("   1) 启动完整服务：python3 -m health_monitor serve --real")
             print("   2) 手机 App 填 http://<树莓派IP>:8080 联调")
             print("   3) 把 docs/03-器件任务书.md §7 进度表里对应器件标为「真机通过」")

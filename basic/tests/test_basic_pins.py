@@ -56,5 +56,34 @@ class TestPinMapping(unittest.TestCase):
         self.assertIn("GPIO4", conflicts[0])
 
 
+class TestDescribeNotDoubleWrapped(unittest.TestCase):
+    """`describe_pin()` 已经含 `GPIO{n}（…）`，调用方**不许再套一层括号**。
+
+    为什么单独钉这条（2026-09-25 真机实测，ERROR.md E35）：`Dht11Reader.describe()`
+    打印成了 `GPIO4（GPIO4（物理脚 7，…））` —— 出现在**用户真机上最常看的那行诊断输出**里，
+    而所有测试都是绿的（没人断言"这行文本长什么样"）。判据 = 输出里不许出现
+    `GPIO4（GPIO4` 这种**自嵌套**。
+    """
+
+    def test_驱动描述不自嵌套(self):
+        from basic.dht11read import Dht11Reader
+
+        # ⚠️ 用 mock=False 直接调用 describe()：mock=True 时它返回的是
+        #    "模拟数据源（…）"那一行，**根本不含引脚描述** ⇒ 断言会失去意义（本轮踩到）。
+        text = Dht11Reader(pin=4, mock=False).describe()
+        self.assertIn("GPIO4", text, f"真机路径的描述应当含引脚号：{text}")
+        self.assertNotIn("GPIO4（GPIO", text, f"引脚描述重复套括号：{text}")
+        self.assertNotIn("GPIO4 = GPIO", text, f"引脚描述重复写了两遍：{text}")
+        self.assertEqual(text.count("物理脚"), 1, f"物理脚号出现了不止一次：{text}")
+
+    def test_诊断脚本的表头不自嵌套(self):
+        from basic.tools import diag_dht_line
+
+        source = (diag_dht_line.__file__,)
+        text = open(source[0], encoding="utf-8").read()
+        self.assertNotIn("GPIO{pin} = {describe_pin", text, "又在 describe_pin 外面套了 GPIO 前缀")
+        self.assertNotIn("GPIO{args.pin} = {describe_pin", text, "又在 describe_pin 外面套了 GPIO 前缀")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Deque, List, Optional, Tuple
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -190,7 +206,7 @@ def run_plot(args: argparse.Namespace) -> int:
     try:
         import matplotlib
     except ImportError:
-        print("❌ 未安装 matplotlib。安装：")
+        safe_print("❌ 未安装 matplotlib。安装：")
         print("   sudo apt install -y python3-matplotlib python3-tk")
         print("   （只想验证代码逻辑的话，跑单测即可：python3 -m pytest tests -q）")
         return 2
@@ -201,7 +217,7 @@ def run_plot(args: argparse.Namespace) -> int:
         import matplotlib.pyplot as plt
         from matplotlib.animation import FuncAnimation
     except ImportError as exc:
-        print(f"❌ matplotlib 导入失败：{exc}")
+        safe_print(f"❌ matplotlib 导入失败：{exc}")
         return 2
 
     # 中文显示：树莓派上装中文字体（否则中文会变方框）
@@ -225,7 +241,7 @@ def run_plot(args: argparse.Namespace) -> int:
             series.load_history(history)
             print(f"已从服务取回 {len(history)} 个历史点用于预填充")
         except Exception as exc:  # noqa: BLE001 - 服务没起也能继续（只是从空开始）
-            print(f"⚠️ 取历史失败（将从空曲线开始）：{type(exc).__name__}: {exc}")
+            safe_print(f"⚠️ 取历史失败（将从空曲线开始）：{type(exc).__name__}: {exc}")
 
     use_index = args.xaxis == "index"
     fig, ax_temp = plt.subplots(figsize=(9, 5))
@@ -352,7 +368,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.interval < 2.0 and args.source == "device" and not args.mock:
-        print("⚠️ DHT11 两次读取必须间隔 ≥2 秒（硬件限制）；已自动提到 2.0 秒")
+        safe_print("⚠️ DHT11 两次读取必须间隔 ≥2 秒（硬件限制）；已自动提到 2.0 秒")
         args.interval = 2.0
     if args.headless or args.no_window:
         args.duration = args.duration or 10.0

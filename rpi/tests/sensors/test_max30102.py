@@ -401,15 +401,20 @@ class TestMax30102Driver(unittest.TestCase):
         """反过来：若这台机器**真的有** MAX30102，打开就必须成功且自检通过。
 
         这样一台机器上两种结果都有意义：
-        没硬件 → 上一條测失败路径；有硬件 → 本条测成功路径。**不再依赖环境碰巧**。
+        没硬件 → 上一条测失败路径；有硬件 → 本条测成功路径。**不再依赖环境碰巧**。
+
+        ⚠️ `OSError` 也要当成"没有器件"（2026-09-25 真机实测，`ERROR.md` E34）：
+        器件不在总线上时 smbus2 抛的是裸 `OSError(121, 'Remote I/O error')`。
+        `RealBus` 现在会把它翻译成 `DeviceIOError`，但这一层**必须同时容忍裸 OSError** ——
+        否则"传感器刚拔掉"就会让整批真机验收测试变红，而问题只是没插好。
         """
         from health_monitor.hal.exceptions import DeviceError
 
         dev = Max30102(mock=False)
         try:
             dev.open()
-        except (DeviceInitError, DeviceError) as exc:
-            self.skipTest(f"本机没有可用的 MAX30102（正常）：{type(exc).__name__}")
+        except (DeviceInitError, DeviceError, OSError) as exc:
+            self.skipTest(f"本机没有可用的 MAX30102（正常）：{type(exc).__name__}: {exc}")
         try:
             result = dev.self_check()
             self.assertTrue(result["ok"], result.get("detail"))

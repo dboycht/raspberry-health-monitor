@@ -34,6 +34,9 @@ const FOLDER = __dirname;
 const SCRIPT = path.join(FOLDER, 'check_ci.cjs');
 const VERBOSE = process.argv.includes('--verbose');
 const ONLINE = process.argv.includes('--online') || process.env.CI_SELFTEST_ONLINE === '1';
+//: `--use-system-ca` 要 Node >= 22.15 / 23 才有。老 Node（例如 Debian 13 apt 装的 20.x）上
+//: "带旗标重试"这条分支**永远走不到**，测试必须跟着分支走 —— 否则会在板子上假红（E35）。
+const CAN_USE_SYSTEM_CA = netLib.supportsSystemCa();
 
 /**
  * Files that MUST be pure ASCII, with the reason.
@@ -196,6 +199,10 @@ async function main() {
   });
 
   await checkAsync('cert error re-execs the script with --use-system-ca', async () => {
+    if (!CAN_USE_SYSTEM_CA) {
+      console.log(`  skip re-exec test (node ${process.version} has no --use-system-ca; the gate is covered above)`);
+      return true;
+    }
     const certErr = Object.assign(new Error('unable to verify the first certificate'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' });
     let spawnArgs = null;
     const stub = (file, args) => {
@@ -213,6 +220,10 @@ async function main() {
   });
 
   await checkAsync('a refused flag (child error) degrades to the manual hint', async () => {
+    if (!CAN_USE_SYSTEM_CA) {
+      console.log(`  skip refused-flag test (node ${process.version} lacks the flag, so it is never spawned)`);
+      return true;
+    }
     const certErr = Object.assign(new Error('unable to verify the first certificate'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' });
     const notices = [];
     const stub = () => ({ error: new Error('bad option: --use-system-ca'), status: null });
@@ -307,6 +318,13 @@ async function main() {
   const checkCi = require('./check_ci.cjs');
 
   await checkAsync('cert error end to end: re-exec happens and the exit code sticks', async () => {
+    if (!CAN_USE_SYSTEM_CA) {
+      // On an old Node the wrapper exits 3 with the manual hint instead of re-exec'ing;
+      // that behaviour is already asserted in section [3]. Do not assert the other
+      // branch here, or this suite goes red on every Debian-13 board (E35).
+      console.log(`  skip run() re-exec test (node ${process.version} has no --use-system-ca)`);
+      return true;
+    }
     const certErr = Object.assign(new Error('unable to verify the first certificate'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' });
     const savedExitCode = process.exitCode;
     const savedMain = checkCi.main;

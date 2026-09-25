@@ -405,17 +405,32 @@ def check_basic_version() -> Tuple[bool, str]:
     for line in (selfcheck.stdout or "").splitlines():
         if line.startswith("结果："):
             summary = line.strip()
-    # 单测（用 pytest 的路径规则不需要额外配置：basic/tests/conftest.py 自己加了 sys.path）
-    tests = run_python(["-m", "pytest", "basic/tests", "-q"], cwd=root)
+    # 单测。（pytest 的路径规则不需要额外配置：basic/tests/conftest.py 自己加了 sys.path）
+    #
+    # ⚠️ **没有 pytest 也必须能跑**（2026-09-25 真机实测，ERROR.md E35）：树莓派上没装 pytest
+    # （README 明说"核心零第三方依赖"，板子上不该被强制装它），原来这里写死 `-m pytest`
+    # ⇒ 真机上第 10 项恒红，而那 124 项单测用标准库 unittest 跑是**全绿**的。
+    # 这与 check_tests() 的策略保持一致：先试 pytest，没有就退回 unittest。
+    if run_python(["-c", "import pytest"], cwd=root).returncode == 0:
+        tests = run_python(["-m", "pytest", "basic/tests", "-q"], cwd=root)
+        runner = "pytest"
+    else:
+        # `basic/tests/__init__.py` 必须存在，unittest 才把该目录当可导入包
+        # （缺那个空文件时 discover 会报 "Start directory is not importable"）
+        tests = run_python(["-m", "unittest", "discover", "-s", "basic/tests"], cwd=root)
+        runner = "unittest"
+    combined = (tests.stdout or "") + "\n" + (tests.stderr or "")
     if tests.returncode != 0:
-        tail = "\n      ".join((tests.stdout or "").strip().splitlines()[-8:])
-        return False, f"基础版单测失败：\n      " + (tail or _NO_OUTPUT_HINT)
+        tail = "\n      ".join(combined.strip().splitlines()[-8:])
+        return False, f"基础版单测失败（{runner}）：\n      " + (tail or _NO_OUTPUT_HINT)
     passed = ""
-    for line in reversed((tests.stdout or "").splitlines()):
-        if "passed" in line or "failed" in line:
+    # ⚠️ unittest 把摘要写在 **stderr**（"Ran N tests… / OK"），只读 stdout 会得到空串，
+    #    于是报告里显示成一句没有信息量的"单测 OK"（2026-09-25 真机实测，E35）。
+    for line in reversed(combined.splitlines()):
+        if "passed" in line or "failed" in line or line.startswith("Ran ") or line.startswith("OK"):
             passed = line.strip()
             break
-    return True, f"{summary or '基础版自检通过'}；单测 {passed or 'OK'}"
+    return True, f"{summary or '基础版自检通过'}；单测 {passed or 'OK'}（{runner}）"
 
 
 def check_node_scripts() -> Tuple[bool, str]:
@@ -450,7 +465,11 @@ def check_node_scripts() -> Tuple[bool, str]:
         ln for ln in (stdout + "\n" + stderr).splitlines()
         if ln.strip().startswith("-") or "FAIL" in ln
     ]
-    return False, "Node 脚本自检失败：\n      " + ("\n      ".join(detail[:10]) or _NO_OUTPUT_HINT)
+    if not detail:
+        # 没抓到"FAIL"行也要给东西：把尾部原样带出来（否则只看到一句"失败"，无从下手）
+        tail = "\n      ".join((stdout + "\n" + stderr).strip().splitlines()[-12:])
+        return False, "Node 脚本自检失败：\n      " + (tail or _NO_OUTPUT_HINT)
+    return False, "Node 脚本自检失败：\n      " + "\n      ".join(detail[:12])
 
 
 def main() -> int:

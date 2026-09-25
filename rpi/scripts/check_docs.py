@@ -26,8 +26,33 @@ import time
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 # 仓库根目录（本文件在 <root>/rpi/scripts/ 下）
 ROOT = Path(__file__).resolve().parents[2]
+
+# 让 `basic` 包可导入：下面的打印要用 `basic.console.safe_text`
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows 的控制台是 GBK，
+# `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个检查器**崩掉 —— 真机上表现为
+# "文档自检失败"，而其实一个悬空引用都没有（假失败比假通过更坏：它让人不再信任检查）。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from basic.console import safe_text  # noqa: E402  必须在 sys.path 处理之后导入
 
 #: 允许在文档里"提到但不要求存在于本仓库"的路径（示例/将来的文件名/外部工具/工作区文档）
 ALLOW_MISSING = {
@@ -385,9 +410,9 @@ def main() -> int:
         problems = self_test()
         if problems:
             for p in problems:
-                print(f"❌ {p}")
+                safe_print(safe_text(f"❌ {p}"))
             return 1
-        print("✅ 自测通过：悬空引用能被抓到；代码块里的模式不被误报；真实文件不被误报")
+        safe_print(safe_text("✅ 自测通过：悬空引用能被抓到；代码块里的模式不被误报；真实文件不被误报"))
         return 0
 
     print("=" * 78)
@@ -407,14 +432,14 @@ def main() -> int:
     problems.extend(check_report_rules_consistency())
 
     if not problems:
-        print(f"✅ 全部通过：{len(docs)} 份文档的链接都可解析；docs 索引与实体一一对应；报警码三方一致")
+        safe_print(safe_text(f"✅ 全部通过：{len(docs)} 份文档的链接都可解析；docs 索引与实体一一对应；报警码三方一致"))
         if AMBIGUOUS:
-            print(f"ℹ️ 引用含糊（多个文件同名，建议写全路径，不算错）：{len(AMBIGUOUS)} 处")
+            safe_print(f"ℹ️ 引用含糊（多个文件同名，建议写全路径，不算错）：{len(AMBIGUOUS)} 处")
             for name in sorted(AMBIGUOUS)[:8]:
                 print(f"   - {name}")
         return 0
 
-    print(f"❌ 发现 {len(problems)} 处问题：")
+    safe_print(safe_text(f"❌ 发现 {len(problems)} 处问题："))
     for p in problems:
         print(f"   - {p}")
     if args.fix_hint:

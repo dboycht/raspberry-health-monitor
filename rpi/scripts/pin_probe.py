@@ -33,6 +33,22 @@ import sys
 import time
 from pathlib import Path
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -58,8 +74,8 @@ def pulse(bcm: int, seconds: float, period: float = 1.0) -> None:
     physical = bcm_to_physical(bcm)
     print(f"  正在让 GPIO{bcm}（物理脚 {physical}）以 {1/period:.1f}Hz 翻转 {seconds:g} 秒…")
     print("  用万用表（直流电压档）红表笔量器件的对应脚、黑表笔接 GND：")
-    print("    · 电压在 0V ↔ 3.3V 之间跳变 → 这根线通了 ✅")
-    print("    · 一直不动 → 线没通/插错脚 ❌")
+    safe_print("    · 电压在 0V ↔ 3.3V 之间跳变 → 这根线通了 ✅")
+    safe_print("    · 一直不动 → 线没通/插错脚 ❌")
     try:
         lgpio.gpio_claim_output(h, bcm, 0)
         deadline = time.monotonic() + seconds
@@ -127,7 +143,7 @@ def wiring_walkthrough(seconds_each: float) -> None:
         try:
             pulse(bcm, seconds_each, period=1.0)
         except Exception as exc:  # noqa: BLE001
-            print(f"  ❌ 失败：{type(exc).__name__}: {exc}")
+            safe_print(f"  ❌ 失败：{type(exc).__name__}: {exc}")
         try:
             answer = input("  这一根通吗？[回车=通 / n=不通 / q=退出] ").strip().lower()
         except EOFError:
@@ -135,7 +151,7 @@ def wiring_walkthrough(seconds_each: float) -> None:
         if answer == "q":
             break
         if answer == "n":
-            print(f"  ⚠️ 记录：物理脚 {physical} 未通 → 检查杜邦线、面包板同一列、器件端插到底")
+            safe_print(f"  ⚠️ 记录：物理脚 {physical} 未通 → 检查杜邦线、面包板同一列、器件端插到底")
 
 
 def main() -> int:
@@ -164,7 +180,9 @@ def main() -> int:
     print("\n物理脚 ↔ BCM 对照（本项目用到的）：")
     for physical in KEY_PHYSICAL:
         bcm = physical_to_bcm(physical)
-        print(f"  物理脚 {physical:>2}  BCM{bcm:<3} {describe_pin(bcm)}")
+        # describe_pin() 自己会写 `GPIO{n}（…）`，这里只需要括号里的说明（E35）
+        role = describe_pin(bcm).split("（", 1)[-1].rstrip("）")
+        print(f"  物理脚 {physical:>2}  BCM{bcm:<3} {role}")
     return 1
 
 

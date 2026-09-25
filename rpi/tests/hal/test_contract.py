@@ -136,6 +136,84 @@ class TestMockBus(unittest.TestCase):
         self.assertEqual(bus.i2c_scan(), [0x3F])
 
 
+class _FakeSmbus:
+    """一个"每次操作都报 Errno 121"的假 smbus2（模拟器件不在总线上）。
+
+    为什么要有这类测试（2026-09-25 真机实测，见 ERROR.md E34）：
+    驱动**只按契约捕获 `DeviceIOError` / `DeviceTimeout`**，而 `RealBus` 原来把
+    smbus2 的裸 `OSError` 直接漏了出去 —— 器件没插时用户看到的是
+    `OSError: [Errno 121] Remote I/O error`，没有任何排查线索，
+    还会让真机验收测试整批变红（而器件只是没接）。
+    """
+
+    @staticmethod
+    def _boom(*_args, **_kwargs):
+        raise OSError(121, "Remote I/O error")
+
+    read_i2c_block_data = _boom
+    write_i2c_block_data = _boom
+    read_byte = _boom
+
+
+class TestRealBusI2CErrors(unittest.TestCase):
+    """`RealBus` 的 I2C 失败必须翻译成契约里的 `DeviceIOError`（带排查线索）。"""
+
+    def _bus(self):
+        from health_monitor.hal.mock_bus import RealBus
+
+        bus = RealBus(i2c_bus=1)
+        bus._smbus = _FakeSmbus()          # 注入假句柄，不碰真实硬件
+        return bus
+
+    def test_读失败翻译成DeviceIOError(self) -> None:
+        with self.assertRaises(DeviceIOError) as ctx:
+            self._bus().i2c_read(1, 0x57, 1)
+        text = str(ctx.exception)
+        self.assertIn("0x57", text, "要指出是哪个地址")
+        self.assertIn("121", text, "要保留内核 errno（排错第一线索）")
+        self.assertIn("i2cdetect", text, "要给下一条可执行命令")
+
+    def test_写失败翻译成DeviceIOError(self) -> None:
+        with self.assertRaises(DeviceIOError):
+            self._bus().i2c_write(1, 0x27, b"\x01\x02")
+
+    def test_读写组合失败翻译成DeviceIOError(self) -> None:
+        with self.assertRaises(DeviceIOError):
+            self._bus().i2c_write_read(1, 0x57, b"\x21", 1)
+
+    def test_保留原始异常作为cause(self) -> None:
+        """`raise ... from exc` 不能省：栈里要能看到底层 errno。"""
+        with self.assertRaises(DeviceIOError) as ctx:
+            self._bus().i2c_read(1, 0x57, 1)
+        self.assertIsInstance(ctx.exception.__cause__, OSError)
+
+    def test_没装smbus2时不冒充IO错误(self) -> None:
+        """`UnsupportedError`（没装 smbus2）不是"器件没应答"，不许被翻译成 `DeviceIOError`。
+
+        判据 = 让 `import smbus2` 失败，断言抛的是 `UnsupportedError` 而不是 `DeviceIOError`：
+        两者的处置完全不同（一个去装包，一个去查接线）。
+        """
+        import builtins
+        from unittest import mock
+
+        from health_monitor.hal.exceptions import UnsupportedError
+
+        bus = self._bus()
+        bus._smbus = None
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "smbus2":
+                raise ImportError("simulated: smbus2 not installed")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", side_effect=fake_import):
+            with self.assertRaises(UnsupportedError) as ctx:
+                bus.i2c_read(1, 0x57, 1)
+        self.assertIn("smbus2", str(ctx.exception))
+        self.assertNotIn("Errno", str(ctx.exception), "装包问题不该被说成总线错误")
+
+
 class TestRegistry(unittest.TestCase):
     def test_清单里每个驱动都必须继承Device且参数可构造(self) -> None:
         """装配期就能发现"类名写错/没继承 Device/参数不匹配"三类错误。"""

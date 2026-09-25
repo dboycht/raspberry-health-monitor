@@ -204,20 +204,50 @@ class RealBus:
 
     def i2c_read(self, bus: int, address: int, length: int) -> bytes:
         smb = self._ensure_smbus()
-        data = smb.read_i2c_block_data(address, 0x00, length)
+        try:
+            data = smb.read_i2c_block_data(address, 0x00, length)
+        except OSError as exc:
+            raise DeviceIOError(self._io_error_text("读取", address, exc)) from exc
         return bytes(data)
 
     def i2c_write(self, bus: int, address: int, data: bytes) -> None:
         smb = self._ensure_smbus()
         if not data:
             raise ValueError("i2c_write 需要至少 1 字节（寄存器地址）")
-        smb.write_i2c_block_data(address, data[0], list(data[1:]))
+        try:
+            smb.write_i2c_block_data(address, data[0], list(data[1:]))
+        except OSError as exc:
+            raise DeviceIOError(self._io_error_text("写入", address, exc)) from exc
 
     def i2c_write_read(self, bus: int, address: int, write: bytes, read: int) -> bytes:
         smb = self._ensure_smbus()
         if not write:
             raise ValueError("i2c_write_read 需要寄存器地址")
-        return bytes(smb.read_i2c_block_data(address, write[0], read))
+        try:
+            return bytes(smb.read_i2c_block_data(address, write[0], read))
+        except OSError as exc:
+            raise DeviceIOError(self._io_error_text("读写", address, exc)) from exc
+
+    @staticmethod
+    def _io_error_text(action: str, address: int, exc: OSError) -> str:
+        """把内核的 errno 翻译成"人话 + 下一条命令"。
+
+        ⚠️ **为什么必须有这一层**（2026-09-25 真机实测，见 `ERROR.md` E34）：
+        驱动只捕获 ``DeviceIOError`` / ``DeviceTimeout``（契约如此），
+        而 smbus2 抛的是**裸 ``OSError``**。器件不在总线上时结果是
+        ``OSError: [Errno 121] Remote I/O error`` 一路穿到用户面前 ——
+        既没有排查线索，也会让"真机验收测试"整批变红（而器件只是没插）。
+        """
+        hint = ""
+        if getattr(exc, "errno", None) == 121:
+            hint = "（Errno 121 = 器件没应答，最常见是没插好 / 接错 SDA·SCL / 没共地）"
+        elif getattr(exc, "errno", None) == 6:
+            hint = "（Errno 6 = 地址上无器件或 I2C 设备节点不可用）"
+        return (
+            f"I2C {action}失败：地址 0x{address:02X}，{type(exc).__name__}: {exc}{hint}。"
+            "排查：`i2cdetect -y 1` 看该地址是否出现；确认 3.3V 供电与共地；"
+            "确认 I2C 已在 raspi-config 里启用"
+        )
 
     def i2c_scan(self) -> List[int]:
         smb = self._ensure_smbus()

@@ -38,6 +38,22 @@ import sys
 import time
 from pathlib import Path
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -93,9 +109,9 @@ def preflight(device: int) -> int:
     print("  BLK/BL/LED   →  脚 1 或 33（背光常亮）")
     print()
     if problems:
-        print(f"⚠️ 有 {problems} 项前置条件不满足 —— 先解决它们，否则试控制器没有意义。")
+        safe_print(f"⚠️ 有 {problems} 项前置条件不满足 —— 先解决它们，否则试控制器没有意义。")
     else:
-        print("✅ 前置条件齐备，开始试控制器。\n")
+        safe_print("✅ 前置条件齐备，开始试控制器。\n")
     return problems
 
 
@@ -120,14 +136,14 @@ def try_one(name: str, args: argparse.Namespace, wait: bool) -> bool:
     try:
         tft.open()
     except DeviceInitError as exc:
-        print(f"❌ 初始化失败：{exc}\n")
+        safe_print(f"❌ 初始化失败：{exc}\n")
         return False
     except Exception as exc:  # noqa: BLE001
-        print(f"❌ 初始化异常：{type(exc).__name__}: {exc}\n")
+        safe_print(f"❌ 初始化异常：{type(exc).__name__}: {exc}\n")
         return False
 
     spec = CONTROLLERS[name]
-    print(f"✅ 初始化完成：{spec.name}　{screen_text(tft)}　后端 {tft._backend}")
+    safe_print(f"✅ 初始化完成：{spec.name}　{screen_text(tft)}　后端 {tft._backend}")
     print(f"   已写入 SPI {tft.writes} 次")
     print()
     print("👉 请看屏幕，确认：")
@@ -186,7 +202,7 @@ def main() -> int:
     name_list = list(AUTO_ORDER) if args.controller == "auto" else [args.controller]
     for name in name_list:
         if name not in CONTROLLERS:
-            print(f"❌ 未知控制器 {name!r}；可用：{', '.join(sorted(CONTROLLERS))}")
+            safe_print(f"❌ 未知控制器 {name!r}；可用：{', '.join(sorted(CONTROLLERS))}")
             return 2
 
     if not args.skip_preflight:
@@ -207,7 +223,7 @@ def main() -> int:
             return 0
 
     print("=" * 78)
-    print("❌ 所有候选控制器都没有被确认。下一步：")
+    safe_print("❌ 所有候选控制器都没有被确认。下一步：")
     print("   1) 先查接线：DC/RST/CS 三根线最常见接错（CS 别与 MCP3002 抢同一个片选）")
     print("   2) VCC 换到 5V 试（若你的模块自带稳压）")
     print("   3) SPI 时钟调小：--baudrate 8000000")

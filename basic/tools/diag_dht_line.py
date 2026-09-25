@@ -101,7 +101,8 @@ def _interpret(pull_up_high: int, pull_down_high: int, floating_high: int, sampl
 
 def diag_levels(pin: int, samples: int = DEFAULT_SAMPLES) -> Optional[Dict[str, object]]:
     """三态电平测量；返回结果字典（``None`` = 缺少 lgpio，无法测量）。"""
-    _section(f"① 数据线三态电平（GPIO{pin} = {describe_pin(pin)}）")
+    # ⚠️ describe_pin() 已含 `GPIO{n}（…）` 整段，别再套一层（E35：曾打印成 GPIO4（GPIO4（…）））
+    _section(f"① 数据线三态电平（{describe_pin(pin)}）")
     try:
         import lgpio
     except ImportError as exc:
@@ -206,7 +207,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print("=" * 72)
     print("DHT11 数据线诊断（基础版）")
     print("=" * 72)
-    print(f"数据脚：GPIO{args.pin} = {describe_pin(args.pin)}")
+    print(f"数据脚：{describe_pin(args.pin)}")
     print(f"期望接线：VCC → 3.3V（脚 {'/'.join(map(str, wire_spec.V33_PHYSICAL))}）、"
           f"GND → 脚 {wire_spec.GND_RECOMMENDED}、DATA → 脚 {wire_spec.DATA_PHYSICAL}")
     print(safe_text("⚠️ 运行前请先停掉 run.py（同一个 GPIO 不能被两个进程同时用）"))

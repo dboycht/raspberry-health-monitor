@@ -15,6 +15,22 @@ import sys
 import time
 from pathlib import Path
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -31,7 +47,7 @@ def diag_max30102() -> None:
     try:
         from smbus2 import SMBus
     except ImportError:
-        print("  ❌ 未安装 smbus2")
+        safe_print("  ❌ 未安装 smbus2")
         return
 
     bus = SMBus(1)
@@ -53,9 +69,9 @@ def diag_max30102() -> None:
     try:
         # PCF8574 无"寄存器"概念，用 SMBus 的 quick 命令探测是否 ACK
         bus.write_quick(0x27)
-        print("    0x27：✅ 应答（说明 I2C 总线与上拉是好的）")
+        safe_print("    0x27：✅ 应答（说明 I2C 总线与上拉是好的）")
     except OSError as exc:
-        print(f"    0x27：❌ 也不应答（{exc}）→ 问题可能在总线本身")
+        safe_print(f"    0x27：❌ 也不应答（{exc}）→ 问题可能在总线本身")
 
     print("\n  再试读几个已知寄存器（看是不是「只有 Part ID 读不到」）：")
     for reg, name in ((0x00, "INTR_STATUS_1"), (0x04, "FIFO_WR_PTR"), (0x07, "FIFO_DATA")):
@@ -77,7 +93,7 @@ def diag_tmp36_mcp3002() -> None:
     try:
         import spidev
     except ImportError:
-        print("  ❌ 未安装 spidev")
+        safe_print("  ❌ 未安装 spidev")
         return
 
     spi = spidev.SpiDev()
@@ -86,7 +102,7 @@ def diag_tmp36_mcp3002() -> None:
         spi.max_speed_hz = 1_000_000
         spi.mode = 0
     except Exception as exc:  # noqa: BLE001
-        print(f"  ❌ 打开 SPI0.0 失败：{exc}")
+        safe_print(f"  ❌ 打开 SPI0.0 失败：{exc}")
         return
 
     print("  读 CH0 与 CH1 各 5 次（MCP3002 单端模式；raw 0~1023）：")
@@ -102,13 +118,13 @@ def diag_tmp36_mcp3002() -> None:
         volts = [r / 1023.0 * 3.3 for r in raws]
         print(f"    CH{channel}: raw={raws}　电压≈{[round(v, 3) for v in volts]} V")
         if all(r == 0 for r in raws):
-            print("      ⚠️ 全是 0：MCP3002 没回应（CS/CLK/DIN/DOUT 接线或供电）")
+            safe_print("      ⚠️ 全是 0：MCP3002 没回应（CS/CLK/DIN/DOUT 接线或供电）")
         elif all(r == 1023 for r in raws):
-            print("      ⚠️ 全是 1023：输入饱和（CH 接到 3.3V 了？或 TMP36 供电接了 5V）")
+            safe_print("      ⚠️ 全是 1023：输入饱和（CH 接到 3.3V 了？或 TMP36 供电接了 5V）")
         elif channel == 0:
             temp = [(r / 1023.0 * 3.3 - 0.5) * 100 for r in raws]
-            print(f"      → 按 TMP36 公式换算温度：{[round(t, 1) for t in temp]} ℃")
-            print("      （室温应 20~30 ℃；若约 50 ℃ 说明公式没用 0.5V 偏移）")
+            safe_print(f"      → 按 TMP36 公式换算温度：{[round(t, 1) for t in temp]} ℃")
+            safe_print("      （室温应 20~30 ℃；若约 50 ℃ 说明公式没用 0.5V 偏移）")
     spi.close()
     print("\n  结论提示：")
     print("    · CH0 与 CH1 都恒定相同值 → 很可能 MCP3002 没工作（先查 CS=物理脚24 与供电）")
@@ -127,13 +143,13 @@ def diag_dht11() -> None:
         for attempt in range(1, 4):
             try:
                 temp, humid = dev._read_lgpio_raw()
-                print(f"  第{attempt}次读取：温度={temp}℃ 湿度={humid}%　✅ 成功")
+                safe_print(f"  第{attempt}次读取：温度={temp}℃ 湿度={humid}%　✅ 成功")
             except Exception as exc:  # noqa: BLE001
                 print(f"  第{attempt}次读取失败：{type(exc).__name__}: {str(exc)[:160]}")
             if attempt < 3:
                 time.sleep(2.2)
     except Exception as exc:  # noqa: BLE001
-        print(f"  ❌ open 失败：{type(exc).__name__}: {exc}")
+        safe_print(f"  ❌ open 失败：{type(exc).__name__}: {exc}")
     finally:
         dev.close()
     print("\n  结论提示：")

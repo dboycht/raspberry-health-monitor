@@ -223,6 +223,169 @@ class TestNodeCertFallback(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("ASCII", detail)
 
+    def test_没抓到FAIL行时也要给出尾部输出(self) -> None:
+        """只显示一句"失败"、什么都没有，等于没告诉我们任何信息。"""
+        bad = self._completed(1, "some unrelated node output\n", "and an error on stderr\n")
+        with mock.patch.object(validate.shutil, "which", return_value="C:/node/node.exe"), \
+                mock.patch.object(validate, "run_node", return_value=bad):
+            passed, detail = validate.check_node_scripts()
+        self.assertFalse(passed)
+        self.assertIn("unrelated node output", detail)
+
+
+class TestBasicVersionRunnerFallback(unittest.TestCase):
+    """`check_basic_version()` 在没有 pytest 的机器上也必须能跑（E35，真机实测）。
+
+    树莓派上没装 pytest（README 明说核心零第三方依赖），原来写死 `-m pytest`
+    ⇒ 真机第 10 项恒红，而那 124 项单测用标准库 `unittest` 跑是**全绿**的。
+    `unittest` 还把 "Ran N tests / OK" 摘要写在 **stderr**，所以判据要连 stderr 一起读。
+    """
+
+    @staticmethod
+    def _proc(returncode: int, stdout: str = "", stderr: str = ""):
+        return validate.subprocess.CompletedProcess(
+            args=["python"],
+            returncode=returncode,
+            stdout=validate._decode(stdout.encode()),
+            stderr=validate._decode(stderr.encode()),
+        )
+
+    def _run_with(self, has_pytest: bool, tests_result):
+        """喂给 `run_python` 确定的假结果；返回 (ok, detail) 与实际调用列表。"""
+        calls: list = []
+
+        def fake(argv, cwd=None, env_extra=None):
+            calls.append(list(argv))
+            if list(argv[:2]) == ["-c", "import pytest"]:
+                return self._proc(0 if has_pytest else 1)
+            if argv and "selfcheck.py" in str(argv[0]):
+                return self._proc(0, "结果：全部 10 项通过\n")
+            return tests_result
+
+        with mock.patch.object(validate, "run_python", side_effect=fake):
+            return validate.check_basic_version(), calls
+
+    def test_有pytest时走pytest(self) -> None:
+        result, calls = self._run_with(True, self._proc(0, "124 passed, 4 subtests passed in 1.5s\n"))
+        passed, detail = result
+        self.assertTrue(passed, detail)
+        self.assertIn("pytest", detail)
+        self.assertIn(["-m", "pytest", "basic/tests", "-q"], calls)
+
+    def test_没pytest时退回unittest(self) -> None:
+        """★ 真机路径：树莓派上就是这个分支。"""
+        # unittest 的摘要写在 stderr —— 这正是真机上"只显示单测 OK"的那个坑
+        result, calls = self._run_with(
+            False, self._proc(0, "", "Ran 124 tests in 0.9s\n\nOK\n"),
+        )
+        passed, detail = result
+        self.assertTrue(passed, detail)
+        self.assertIn("unittest", detail, "失败时也要能看出是哪个 runner 跑的")
+        self.assertIn(["-m", "unittest", "discover", "-s", "basic/tests"], calls)
+        self.assertFalse(any(list(c[:2]) == ["-m", "pytest"] for c in calls), "没有 pytest 就不该调它")
+
+    def test_读得到写在stderr里的测试摘要(self) -> None:
+        """判据与顺序无关：**只看 stderr 里的摘要有没有被带进报告**。
+
+        ⚠️ 别断言"取到的是 `Ran N tests` 而不是 `OK`"：`run_python` 把 stdout/stderr 拼成
+        `"…\\nRan N tests…\\n\\nOK\\n"`，循环从后往前取，先命中的就是 `OK`。
+        本轮就因为这个**依赖实现细节的脆弱断言**白排查了一轮 —— 判据只该锁"读没读到"。
+
+        做法：让假结果的 **stderr 非空、stdout 为空**，断言 stderr 里的摘要出现在报告里 ——
+        只看 stdout 的实现必然取不到它（已反向验证：去掉 `+ tests.stderr` 这条就红）。
+        """
+        result, _ = self._run_with(False, self._proc(0, "", "Ran 9 tests in 0.1s\n"))
+        passed, detail = result
+        self.assertTrue(passed, detail)
+        self.assertIn("Ran 9 tests", detail, "unittest 的摘要在 stderr 里，必须连 stderr 一起读")
+
+    def test_基础版单测失败时给出runner与输出(self) -> None:
+        result, _ = self._run_with(False, self._proc(1, "", "FAILED (failures=1)\n"))
+        passed, detail = result
+        self.assertFalse(passed)
+        self.assertIn("unittest", detail, "失败时要写清是哪个 runner 跑的")
+        self.assertIn("failures=1", detail, "要把失败原因带出来")
+
+    def test_basic测试目录必须是可导入的包(self) -> None:
+        """没有 `basic/tests/__init__.py` 时 `unittest discover` 会报
+        `Start directory is not importable` —— 这正是真机上踩到的第二个坑。"""
+        init = validate.REPO_ROOT / "basic" / "tests" / "__init__.py"
+        self.assertTrue(init.exists(), "缺少 basic/tests/__init__.py（unittest 发现会失败）")
+
+
+class TestScriptsPrintSymbolsSafely(unittest.TestCase):
+    """**AST 守卫**：`rpi/scripts/*.py` 里打印 ✅/❌/⚠ 的地方必须过 `safe_text`。
+
+    为什么（2026-09-25 真机实测，E32/E35）：`check_docs.py` 当时漏了这道加固，
+    在中文 Windows（GBK 控制台）上打印"✅ 全部通过"直接抛 `UnicodeEncodeError` ——
+    整个检查器崩掉，`validate.py` 把它报成"文档自检失败"，而**一个悬空引用都没有**。
+    假失败会让人不再信任提交前检查，所以这里用机器把它钉住。
+    """
+
+    SYMBOLS = ("\u2705", "\u274c", "\u26a0", "\u2103", "\u2b50")
+
+    @staticmethod
+    def _printed_symbols(tree) -> list:
+        """返回行号列表——**裸** `print(...)` 里带符号、且不在 `safe_print(...)` 里面的调用。
+
+        注意别把 `safe_print(safe_text("✅ …"))` 那种**已经加固过**的当违规：
+        `ast.walk` 会把嵌套的 `print`/`safe_text` 一起走一遍，所以这里要记父节点。
+        多行拼接的 print 也跳过（本轮的重构脚本刻意不碰它们，避免改错）。
+        """
+        found = []
+
+        def walk(node, parent_chain):
+            if isinstance(node, ast.Call):
+                is_print = isinstance(node.func, ast.Name) and node.func.id == "print"
+                if is_print:
+                    inside_safe = any(
+                        isinstance(anc, ast.Call)
+                        and isinstance(anc.func, ast.Name)
+                        and anc.func.id == "safe_print"
+                        for anc in parent_chain
+                    )
+                    # `print(safe_text("✅ …"))` 也算加固过（safe_text 逐个参数降级）
+                    wraps_safe_text = any(
+                        isinstance(sub, ast.Call)
+                        and isinstance(sub.func, ast.Name)
+                        and sub.func.id == "safe_text"
+                        for sub in ast.walk(node)
+                    )
+                    single_line = node.lineno == (node.end_lineno or node.lineno)
+                    literals = [
+                        sub.value for sub in ast.walk(node)
+                        if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                    ]
+                    has_symbol = any(
+                        sym in text for text in literals
+                        for sym in TestScriptsPrintSymbolsSafely.SYMBOLS
+                    )
+                    if has_symbol and not inside_safe and not wraps_safe_text and single_line:
+                        found.append(node.lineno)
+            for child in ast.iter_child_nodes(node):
+                walk(child, parent_chain + [node])
+
+        walk(tree, [])
+        return found
+
+    def test_rpi脚本打印符号时都过了safe_text(self) -> None:
+        scripts_dir = validate.REPO_ROOT / "rpi" / "scripts"
+        offenders = []
+        scanned = 0
+        for path in sorted(scripts_dir.glob("*.py")):
+            scanned += 1
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for line in self._printed_symbols(tree):
+                offenders.append(f"{path.name}:{line}")
+        self.assertGreater(scanned, 5, "没扫到脚本，守卫可能失效了")
+        self.assertEqual(
+            offenders, [],
+            msg=(
+                "这些 print 直接打印了 ✅/❌/⚠ 却没走 safe_text —— "
+                f"中文 Windows（GBK）上会把整个脚本崩掉（E32）：{offenders}"
+            ),
+        )
+
 
 class TestNoBareSubprocessCalls(unittest.TestCase):
     """**结构守卫**：新增子进程调用时不许绕过 `run_python()` / `run_node()`。

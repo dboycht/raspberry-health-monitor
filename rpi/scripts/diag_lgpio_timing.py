@@ -10,8 +10,25 @@ DHT11 的协议要点：主机拉低 ≥18ms → 释放 → 传感器应答 → 
 """
 
 from __future__ import annotations
+import sys
 
 import inspect
+
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 
 def section(t: str) -> None:
@@ -25,7 +42,7 @@ def main() -> int:
     try:
         import lgpio
     except ImportError as exc:
-        print(f"❌ lgpio 不可用：{exc}")
+        safe_print(f"❌ lgpio 不可用：{exc}")
         return 2
     print(f"  文件：{lgpio.__file__}")
     for attr in ("__version__", "VERSION", "version"):
@@ -40,7 +57,7 @@ def main() -> int:
         "gpio_set_debounce_micros",
     ]
     for name in wanted:
-        print(f"  {'✅' if hasattr(lgpio, name) else '❌'} {name}")
+        safe_print(f"  {'✅' if hasattr(lgpio, name) else '❌'} {name}")
 
     section("③ 签名（看能不能拿到带时间戳的边沿）")
     for name in ("callback", "wait_for_level", "gpio_claim_alert", "gpio_read"):
@@ -75,16 +92,16 @@ def main() -> int:
             time.sleep(0.2)
             # 手动制造一次电平变化：切成输出、拉低、再切回输入
             cb.cancel()
-            print("  ✅ callback(BOTH_EDGES) 可用（能注册、能取消）")
+            safe_print("  ✅ callback(BOTH_EDGES) 可用（能注册、能取消）")
         except Exception as exc:  # noqa: BLE001
-            print(f"  ⚠️ callback 注册失败：{type(exc).__name__}: {exc}")
+            safe_print(f"  ⚠️ callback 注册失败：{type(exc).__name__}: {exc}")
         # 看事件回调签名里 timestamp 是什么单位（lgpio 文档：纳秒）
-        print("  ℹ️ 回调签名 (chip_handle, gpio, level, timestamp)：lgpio 的 timestamp 为**纳秒**，")
+        safe_print("  ℹ️ 回调签名 (chip_handle, gpio, level, timestamp)：lgpio 的 timestamp 为**纳秒**，")
         print("     用它算高低电平宽度即可解出 0/1（不需要 Python 轮询）。")
         lgpio.gpio_free(h, PIN)
         lgpio.gpiochip_close(h)
     except Exception as exc:  # noqa: BLE001
-        print(f"  ❌ 探测失败：{type(exc).__name__}: {exc}")
+        safe_print(f"  ❌ 探测失败：{type(exc).__name__}: {exc}")
 
     section("结论")
     print("  · 若 callback + gpio_claim_alert 可用：可以用'边沿时间戳'实现 DHT11，")

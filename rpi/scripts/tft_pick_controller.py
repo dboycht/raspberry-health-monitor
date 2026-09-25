@@ -28,6 +28,22 @@ import time
 from pathlib import Path
 from typing import List, Tuple
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -78,15 +94,15 @@ def try_one(name: str, note: str, args: argparse.Namespace) -> bool:
     try:
         dev.open()
     except DeviceInitError as exc:
-        print(f"  ❌ 初始化失败：{str(exc)[:120]}")
+        safe_print(f"  ❌ 初始化失败：{str(exc)[:120]}")
         return False
     except Exception as exc:  # noqa: BLE001
-        print(f"  ❌ 异常：{type(exc).__name__}: {exc}")
+        safe_print(f"  ❌ 异常：{type(exc).__name__}: {exc}")
         return False
 
     try:
         show(dev, name)
-        print(f"  ✅ 已显示，请观察 {args.hold:g} 秒……")
+        safe_print(f"  ✅ 已显示，请观察 {args.hold:g} 秒……")
         # 前 2 秒是三色条（open 时画的），后几秒是文字
         for remaining in range(int(args.hold), 0, -1):
             print(f"     {remaining}…", end="\r", flush=True)
@@ -122,7 +138,7 @@ def main() -> int:
 
     if args.only:
         if args.only not in CONTROLLERS:
-            print(f"❌ 未知控制器 {args.only!r}；可用：{', '.join(sorted(CONTROLLERS))}")
+            safe_print(f"❌ 未知控制器 {args.only!r}；可用：{', '.join(sorted(CONTROLLERS))}")
             return 2
         candidates = ((args.only, "（你指定的）"),)
     else:

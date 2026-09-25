@@ -26,6 +26,22 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 KEY_NAME = "id_ed25519_pi_health"
 
 
@@ -78,11 +94,11 @@ def check_login(user: str, ip: str) -> bool:
     out = (proc.stdout or "") + (proc.stderr or "")
     if "PI_KEY_OK" in out:
         lines = [ln for ln in out.strip().splitlines() if ln.strip()]
-        print("  ✅ 免密登录成功：")
+        safe_print("  ✅ 免密登录成功：")
         for line in lines[1:4]:
             print(f"     {line}")
         return True
-    print("  ❌ 免密登录仍未成功：")
+    safe_print("  ❌ 免密登录仍未成功：")
     for line in out.strip().splitlines()[-3:]:
         print(f"     {line}")
     return False
@@ -103,7 +119,7 @@ def main() -> int:
     print("=" * 78)
 
     if not pub.exists():
-        print(f"❌ 找不到公钥 {pub}")
+        safe_print(f"❌ 找不到公钥 {pub}")
         print("   → 先生成：ssh-keygen -t ed25519 -f \"$env:USERPROFILE\\.ssh\\{KEY_NAME}\" -N '\"\"' -C dsh-agent")
         return 2
     print(f"本机公钥：{pub}")
@@ -118,7 +134,7 @@ def main() -> int:
         return 0
 
     print("\n【第二步】把公钥追加到树莓派")
-    print("⚠️ 接下来会提示输入**树莓派的登录密码**（输入时不显示，是正常的）。")
+    safe_print("⚠️ 接下来会提示输入**树莓派的登录密码**（输入时不显示，是正常的）。")
     print("   密码只在你和树莓派之间传输，本脚本不记录它。\n")
     input("按回车开始（或 Ctrl+C 取消）…")
 
@@ -142,10 +158,10 @@ def main() -> int:
     try:
         proc = subprocess.run(cmd, timeout=300)
     except Exception as exc:  # noqa: BLE001
-        print(f"❌ 执行失败：{type(exc).__name__}: {exc}")
+        safe_print(f"❌ 执行失败：{type(exc).__name__}: {exc}")
         return 1
     if proc.returncode != 0:
-        print(f"⚠️ 命令退出码 {proc.returncode}（下面用**实际验证**判定，退出码不作数）")
+        safe_print(f"⚠️ 命令退出码 {proc.returncode}（下面用**实际验证**判定，退出码不作数）")
 
     print("\n【第三步】验证免密登录（这一步才算数）")
     ok = check_login(args.user, args.ip)
@@ -158,7 +174,7 @@ def main() -> int:
         print("   3) 把项目代码传上去（或 git clone）并跑 hardware_test.py。")
         print("=" * 78)
         return 0
-    print("❌ 还是不行。排错顺序：")
+    safe_print("❌ 还是不行。排错顺序：")
     print("   1) 密码是否正确（树莓派桌面登录用的那个）；")
     print("   2) 用户名是否正确（不是 pi 就加 --user 你的名字）；")
     print("   3) 树莓派上 ~/.ssh 权限：chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys；")

@@ -20,6 +20,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import check_docs  # noqa: E402
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 
 def main() -> int:
     print("=" * 78)
@@ -36,16 +52,16 @@ def main() -> int:
 
     print("\n--- 第 1 步：只跑自测 ---")
     problems = check_docs.self_test()
-    print("自测结果：", problems or "✅ 通过")
+    safe_print("自测结果：", problems or "✅ 通过")
     print("自测后残留：", sorted(p.name for p in docs_dir.glob("_selftest_probe_*")) or "（无）")
 
     print("\n--- 第 2 步：只跑索引检查 ---")
     index_problems = check_docs.check_docs_index()
-    print("索引检查：", index_problems or "✅ 通过")
+    safe_print("索引检查：", index_problems or "✅ 通过")
 
     print("\n--- 第 3 步：只跑三方一致检查 ---")
     rules_problems = check_docs.check_report_rules_consistency()
-    print("三方一致：", rules_problems or "✅ 通过")
+    safe_print("三方一致：", rules_problems or "✅ 通过")
 
     print("\n--- 第 4 步：全量文档链接检查（前 10 条）---")
     check_docs.SUFFIX_INDEX = check_docs.build_suffix_index()

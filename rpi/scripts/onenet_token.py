@@ -37,6 +37,22 @@ import sys
 import time
 from pathlib import Path
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
@@ -104,11 +120,11 @@ def selftest() -> int:
             problems.append(f"边界检查失败：{label} 竟然没有报错")
 
     if problems:
-        print("❌ 自检失败：")
+        safe_print("❌ 自检失败：")
         for p in problems:
             print("   - " + p)
         return 1
-    print("✅ 自检通过：md5 / sha1 / sha256 三种签名的手算结果与实现一致；非法入参会明确报错")
+    safe_print("✅ 自检通过：md5 / sha1 / sha256 三种签名的手算结果与实现一致；非法入参会明确报错")
     return 0
 
 
@@ -134,7 +150,7 @@ def main() -> int:
         return selftest()
 
     if args.platform == PLATFORM_STUDIO:
-        print("⚠️ 你选了 studio（OneNET Studio，物模型 OneJSON）。")
+        safe_print("⚠️ 你选了 studio（OneNET Studio，物模型 OneJSON）。")
         print("   本项目的适配器只支持旧版「MQTT物联网套件」（数据流-数据点），")
         print("   两者**鉴权算法相同、上报 topic 与 payload 不同**：")
         print("     - legacy：$sys/{pid}/{device}/dp/post/json，报文 {id, dp:{流:[{v,t}]}}")
@@ -145,20 +161,20 @@ def main() -> int:
 
     key = args.key or os.environ.get(args.key_env, "")
     if not key:
-        print("❌ 没拿到密钥：请用 --key 或设置环境变量 " + args.key_env, file=sys.stderr)
+        safe_print("❌ 没拿到密钥：请用 --key 或设置环境变量 " + args.key_env, file=sys.stderr)
         return 2
     if not args.pid:
-        print("❌ 缺少 --pid（产品 ID）", file=sys.stderr)
+        safe_print("❌ 缺少 --pid（产品 ID）", file=sys.stderr)
         return 2
     if not args.product_level and not args.device:
-        print("❌ 缺少 --device（设备名称）；若确实要产品级 token 请加 --product-level", file=sys.stderr)
+        safe_print("❌ 缺少 --device（设备名称）；若确实要产品级 token 请加 --product-level", file=sys.stderr)
         return 2
 
     res = product_resource(args.pid) if args.product_level else device_resource(args.pid, args.device)
     try:
         token = sign_token(key, res, method=args.method, ttl_s=args.ttl)
     except OneNetError as exc:
-        print(f"❌ 生成失败：{exc}", file=sys.stderr)
+        safe_print(f"❌ 生成失败：{exc}", file=sys.stderr)
         return 1
 
     now = int(time.time())

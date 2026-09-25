@@ -26,6 +26,22 @@ import os
 import subprocess
 import sys
 
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
+
 
 def section(title: str) -> None:
     print("\n" + "=" * 74)
@@ -53,7 +69,7 @@ def main() -> int:
         print(f"  是否有 DHT22：{hasattr(gpiozero, 'DHT22')}")
         print(f"  导出类（{len(names)} 个）：{', '.join(names)}")
     except ImportError as exc:
-        print(f"  ❌ gpiozero 不可用：{exc}")
+        safe_print(f"  ❌ gpiozero 不可用：{exc}")
 
     section("② gpiozero 包里与 DHT 相关的文件 / 子模块")
     try:
@@ -76,19 +92,19 @@ def main() -> int:
     for mod in ("Adafruit_DHT", "dht11", "adafruit_dht", "pigpio"):
         try:
             __import__(mod)
-            print(f"  ✅ {mod} 可用")
+            safe_print(f"  ✅ {mod} 可用")
         except ImportError as exc:
-            print(f"  ❌ {mod} 不可用（{exc}）")
+            safe_print(f"  ❌ {mod} 不可用（{exc}）")
 
     section("④ lgpio / 内核接口（自实现单总线时序的前提）")
     try:
         import lgpio
-        print("  ✅ lgpio 可用（可用它按微秒级时序直接读 DHT11）")
+        safe_print("  ✅ lgpio 可用（可用它按微秒级时序直接读 DHT11）")
         print(f"     版本：{getattr(lgpio, '__version__', '未知')}")
     except ImportError as exc:
-        print(f"  ❌ lgpio 不可用：{exc}")
+        safe_print(f"  ❌ lgpio 不可用：{exc}")
     for dev in ("/dev/gpiomem", "/dev/gpiochip0", "/dev/gpiochip4"):
-        print(f"  {'✅' if os.path.exists(dev) else '❌'} {dev}")
+        safe_print(f"  {'✅' if os.path.exists(dev) else '❌'} {dev}")
 
     section("⑤ apt 包信息（看是不是被拆包 / 有没有 python3-dht 之类）")
     print(run(["dpkg", "-l"]) .split("\n")[0] if False else "")
