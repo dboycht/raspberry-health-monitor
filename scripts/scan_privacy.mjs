@@ -1,21 +1,30 @@
 /**
- * Pre-push hygiene scanner (ASCII only, can be deleted after use).
- *   node _scratch/scan_privacy.mjs
+ * Pre-push hygiene scanner.
+ *   node scripts/scan_privacy.mjs [repo-root]
  * Checks:
  *   1) BOM in source files
  *   2) mojibake signatures
  *   3) non-ASCII bytes inside .ps1/.sh/.bat (must be pure ASCII)
  *   4) obvious secrets (gho_, ghp_, sk-, AKIA, api_key=, token=...)
  *   5) files that should never be committed (data/, *.db, logs, __pycache__)
+ *
+ * ASCII only: the mojibake needles are written as \u escapes (the point of this
+ * file is to find corrupted text, so it must not carry suspicious bytes itself).
+ * The repo root defaults to this file's repository, so the canonical checkout
+ * works too; a dev-machine absolute path would silently scan nothing there.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, extname } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative, extname, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = 'D:/code/DeepSeekHarness/raspberry-health-monitor';
+const ROOT = process.argv[2]
+  ? resolve(process.argv[2])
+  : resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SKIP_DIRS = new Set(['.git', 'node_modules', '__pycache__', '.gradle', 'build', 'dist', '.venv']);
 const SRC_EXT = new Set(['.py', '.md', '.json', '.kts', '.kt', '.xml', '.yml', '.yaml', '.txt', '.properties', '.cfg', '.toml']);
 const ASCII_ONLY_EXT = new Set(['.ps1', '.sh', '.bat', '.cmd']);
-const MOJIBAKE = ['\uFFFD', '闂', '鎼', '閸'];
+// U+FFFD replacement char plus the classic GBK-read-as-UTF8 mojibake leads.
+const MOJIBAKE = ['\uFFFD', '\u95c2', '\u938c', '\u95b8'];
 const SECRET_PATTERNS = [
   [/gh[oprsu]_[A-Za-z0-9]{20,}/, 'GitHub token'],
   [/sk-[A-Za-z0-9]{20,}/, 'OpenAI-style key'],
@@ -86,8 +95,11 @@ for (const file of files) {
 console.log(`scanned files: ${files.length}`);
 if (findings.length === 0) {
   console.log('RESULT: clean (no findings)');
-  process.exit(0);
+  process.exitCode = 0;
+} else {
+  console.log(`RESULT: ${findings.length} finding(s)`);
+  for (const f of findings) console.log('  ' + f);
+  // Exit code instead of process.exit(): a forced exit can truncate piped stdout
+  // on Windows, which would hide the very findings this script exists to report.
+  process.exitCode = 1;
 }
-console.log(`RESULT: ${findings.length} finding(s)`);
-for (const f of findings) console.log('  ' + f);
-process.exit(1);

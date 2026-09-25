@@ -31,8 +31,10 @@ async function main() {
     const text = await logRes.text();
     const lines = text.split('\n');
     // print the FAIL section: last 120 lines is usually where the assertion is
+    // NOTE: the regex below matches the Chinese word for "result" (U+7ED3 U+679C)
+    // written as \u escapes, so this file stays pure ASCII (project rule).
     const interesting = lines.filter((l) =>
-      /FAIL|Error|error|Traceback|assert|raise|not found|Exception|====|PASS|结果/.test(l)
+      /FAIL|Error|error|Traceback|assert|raise|not found|Exception|====|PASS|\u7ed3\u679c/.test(l)
     );
     console.log('  --- filtered log lines (last 60) ---');
     for (const line of interesting.slice(-60)) console.log('  ' + line.trimEnd());

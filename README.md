@@ -168,7 +168,7 @@ raspberry-health-monitor/
 ├── hardware/                             ← 硬件文档：引脚分配、接线图、供电与安全
 ├── docs/                                 ← 接口规格、报警规则、开发规范、通信协议
 ├── contrib/                              ← 团队分工与提交规范
-├── .github/workflows/checks.yml          ← CI：每次推送自动跑单测 + 10 项检查（无需硬件）
+├── .github/workflows/checks.yml          ← CI：每次推送自动跑单测 + 11 项检查（无需硬件）
 └── CONTRIBUTING.md                       ← 贡献指南（提交前必过的三条）
 ```
 
@@ -242,7 +242,7 @@ raspberry-health-monitor/
 | `python -m health_monitor selfcheck --mock` | 不接硬件的代码链路体检 |
 | `python -m health_monitor selfcheck --real` | 真实硬件体检（树莓派上跑） |
 | `sudo python3 scripts/hardware_test.py` | **真机验收测试单**（逐项过关 + 失败时给排查命令） |
-| `python scripts/validate.py` | 提交前 **10 项**检查（体检 / 引脚冲突 / 单测 / 演示 / **基础版**） |
+| `python scripts/validate.py` | 提交前 **11 项**检查（体检 / 引脚冲突 / 单测 / 演示 / **Node 工具** / **基础版**） |
 | `python basic/tools/selfcheck.py` | **基础版** 10 项自检（课程作业 H；不依赖硬件） |
 | `python -m health_monitor serve --mock` | 模拟模式起服务（PC 上联调安卓端） |
 | `python -m health_monitor serve --real` | 正式运行 |
@@ -260,8 +260,8 @@ raspberry-health-monitor/
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
-| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **10 项全 PASS**（开发机默认环境，无需设任何环境变量） |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **578 passed, 1 skipped, 296 subtests** |
+| 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **11 项全 PASS**（开发机默认环境，无需设任何环境变量） |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **584 passed, 1 skipped, 296 subtests** |
 | 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
 | 驱动注册表 | `python -m health_monitor drivers` | 12 个驱动全部可构造 |

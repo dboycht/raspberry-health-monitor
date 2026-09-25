@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""项目验证脚本：把"体检 + 单测 + 演示 + 配置一致性 + 基础版"一次跑完。
+"""项目验证脚本：把"体检 + 单测 + 演示 + 配置一致性 + 基础版 + Node 工具"一次跑完。
 
 用途：**每次提交前跑一遍**，或每周合练时确认大家的改动没有互相破坏。
 
 用法（在 ``rpi/`` 目录下）::
 
-    python scripts/validate.py              # 全部 10 项检查
+    python scripts/validate.py              # 全部 11 项检查
     python scripts/validate.py --quick      # 跳过单测/演示/基础版（只做静态检查）
     python scripts/validate.py --real       # 额外提示哪些检查需要真机
 
 退出码：0 = 全部通过；1 = 有检查失败（打印失败项）。
 
-⚠️ **本文件里的子进程一律走 `run_python()`**（强制子进程 UTF-8 + 容错解码）：
+⚠️ **本文件里的子进程一律走 `run_python()` / `run_node()`**（强制子进程 UTF-8 + 容错解码，
+Node 还额外处理本机 TLS 解密代理的证书链问题）：
 中文 Windows 上 Python 默认按 GBK 打印，父进程若直接用 `encoding="utf-8"` 抓输出
 会抛 `UnicodeDecodeError` 并把**三项真实通过的检查假报成失败**（2026-09-25 实测，见 ERROR.md E32）。
-新增任何子进程调用时请沿用 `run_python()` —— `tests/scripts/test_validate_encoding.py`
+新增任何子进程调用时请沿用这两个入口 —— `tests/scripts/test_validate_encoding.py`
 会扫描本文件的 AST，发现"绕过它直接 `subprocess.run`"就报错。
 """
 
@@ -22,12 +23,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Callable, List, Tuple
 
 RPI_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = RPI_DIR.parent
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
 
@@ -80,6 +84,75 @@ def _decode(raw) -> str:
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+#: Node 报"证书链不受信任"时的错误码 —— 本机装了 TLS 解密代理（Steam++）就会出现，
+#: 且 Node 自带 CA 列表不认 Windows 证书存储里的自签根证书。见 ERROR.md E33。
+_NODE_CERT_ERROR_CODES = (
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "UNABLE_TO_GET_ISSUER_CERT",
+    "CERT_UNTRUSTED",
+)
+
+
+def _looks_like_node_cert_error(text: str) -> bool:
+    """子进程输出里有没有"证书链不受信任"的指纹（Node 的报错文案）。"""
+    lowered = text.lower()
+    return any(code.lower() in lowered for code in _NODE_CERT_ERROR_CODES) or (
+        "unable to verify the first certificate" in lowered
+    )
+
+
+def _node_supports_system_ca() -> bool:
+    """当前 Node 是否支持 `--use-system-ca`（v22.15 / v23 起；取不到就当不支持）。"""
+    try:
+        raw = subprocess.run([shutil.which("node") or "node", "--version"], capture_output=True)
+    except OSError:  # pragma: no cover - 没有 node 时由调用方给出更清楚的提示
+        return False
+    match = re.match(r"v(\d+)\.(\d+)\.", _decode(raw.stdout).strip())
+    if not match:
+        return False
+    major, minor = int(match.group(1)), int(match.group(2))
+    if major >= 23:
+        return True
+    return major == 22 and minor >= 15
+
+
+def run_node(args: List[str], cwd: Path | str):
+    """跑一个 Node 子进程，并**自动绕开本机的 TLS 解密代理**。
+
+    本机（以及任何装了 Steam++ / 抓包工具的机器）上，Node 自带 CA 列表不认
+    Windows 证书存储里的自签根证书 ⇒ `fetch()` 报 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`，
+    而文档里写的命令是 `node scripts/check_ci.cjs`（没有 `--use-system-ca`）——
+    也就是"照着文档敲必然失败"（ERROR.md E33）。
+    `scripts/check_ci.cjs` 自己会兜底重试，这里再做一层：**只在真的报证书错时才带
+    `--use-system-ca` 重跑一次**，所以没有代理的机器（树莓派、CI）走的是原样命令。
+
+    ⚠️ 绝不使用 `rejectUnauthorized=false`：那会关掉校验、把真问题一起藏起来。
+    """
+    exe = shutil.which("node")
+    if not exe:
+        return subprocess.CompletedProcess(args=args, returncode=127, stdout="", stderr="node not found")
+
+    def _run(extra: List[str]):
+        proc = subprocess.run([exe, *extra, *args], cwd=str(cwd), capture_output=True)
+        return subprocess.CompletedProcess(
+            args=proc.args,
+            returncode=proc.returncode,
+            stdout=_decode(proc.stdout),
+            stderr=_decode(proc.stderr),
+        )
+
+    first = _run([])
+    combined = (first.stdout or "") + "\n" + (first.stderr or "")
+    if first.returncode != 0 and _looks_like_node_cert_error(combined) and _node_supports_system_ca():
+        second = _run(["--use-system-ca"])
+        if second.returncode == 0:
+            return second
+        return second  # 仍然失败：把带 --use-system-ca 的那次输出交给调用方
+    return first
 
 
 def run_python(args: List[str], cwd: Path | str, env_extra: dict | None = None):
@@ -345,6 +418,41 @@ def check_basic_version() -> Tuple[bool, str]:
     return True, f"{summary or '基础版自检通过'}；单测 {passed or 'OK'}"
 
 
+def check_node_scripts() -> Tuple[bool, str]:
+    """主机侧 Node 脚本的自检（``scripts/selftest.cjs``，**离线、不联网**）。
+
+    为什么要在提交前跑它：``scripts/`` 下是"只在开发机上用、不参与运行"的工具
+    （查 CI 状态、打印发布材料、隐私扫描），它们坏掉**不会让任何单测变红**——
+    2026-09-25 就真出过一次：文档写着 `node scripts/check_ci.cjs`，
+    而这台机器上直接跑会因 TLS 证书链报错（见 `ERROR.md` E33）。
+
+    ⚠️ **不带 `--online`**：提交前检查不该依赖 github.com 是否可达，
+    否则"没网"会变成一次红构建 —— 正是本文件要消灭的那类假失败。
+    """
+    selftest = REPO_ROOT / "scripts" / "selftest.cjs"
+    if not selftest.exists():
+        return False, f"找不到 Node 自检脚本：{selftest}"
+    if not shutil.which("node"):
+        return False, "没找到 node（主机侧工具需要 Node；装了之后重跑）"
+
+    proc = run_node([str(selftest)], cwd=REPO_ROOT)
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    if proc.returncode == 0:
+        summary = ""
+        for line in reversed(stdout.splitlines()):
+            if line.startswith("selftest OK"):
+                summary = line.strip()
+                break
+        return True, summary or "Node 脚本自检通过"
+
+    detail = [
+        ln for ln in (stdout + "\n" + stderr).splitlines()
+        if ln.strip().startswith("-") or "FAIL" in ln
+    ]
+    return False, "Node 脚本自检失败：\n      " + ("\n      ".join(detail[:10]) or _NO_OUTPUT_HINT)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="树莓派健康监护项目验证脚本")
     parser.add_argument("--quick", action="store_true", help="跳过单测与演示（只做静态检查）")
@@ -359,6 +467,7 @@ def main() -> int:
         Check("引脚冲突", check_pin_conflicts),
         Check("设备自检（模拟）", check_selfcheck),
         Check("文档一致性", check_docs),
+        Check("Node 脚本自检", check_node_scripts),
     ]
     if not args.quick:
         checks.append(Check("单元测试", check_tests))
