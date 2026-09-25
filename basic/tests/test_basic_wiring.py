@@ -83,7 +83,7 @@ class TestWiringDocuments(unittest.TestCase):
         """★ 守卫必须**真的有效**：注入三类错误都得被抓到。"""
         self.assertEqual(wire_docs.self_test(), [])
 
-    def test_五份文档都在(self):
+    def test_全部文档都在(self):
         for name in wire_docs.DOCUMENTS:
             path = wire_docs.HW_DIR / name
             self.assertTrue(path.exists(), f"缺少文档 {path}")
@@ -198,6 +198,73 @@ class TestWiringDiagramLayout(unittest.TestCase):
             self.assertIn("脚 40", "\n".join(rows))
         finally:
             wire_spec.DATA_PHYSICAL = saved
+
+
+class TestInterfaceTables(unittest.TestCase):
+    """★ `06-接口接线表.md`：**只有两张表**（树莓派接线 + 元件接线），上机时照它插线。
+
+    用户 2026-09-25 要求"只要这两个接口"。这份文档容易退化回"又写成一大篇"，
+    所以用测试钉住：**恰好两张表**、表头就是那两件事、引脚数字与事实源同源。
+    """
+
+    @staticmethod
+    def _text() -> str:
+        return (wire_docs.HW_DIR / "06-接口接线表.md").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _tables(text: str) -> list:
+        """返回文档里的表格（每个 = 表头行 + 分隔行 + 数据行）。"""
+        lines = text.splitlines()
+        tables = []
+        index = 0
+        while index < len(lines) - 1:
+            if lines[index].startswith("|") and set(lines[index + 1].replace("|", "").replace(" ", "")) <= {":", "-"}:
+                block = [lines[index], lines[index + 1]]
+                cursor = index + 2
+                while cursor < len(lines) and lines[cursor].startswith("|"):
+                    block.append(lines[cursor])
+                    cursor += 1
+                tables.append(block)
+                index = cursor
+            else:
+                index += 1
+        return tables
+
+    def test_恰好两张表(self):
+        """**这份文档的卖点就是"只有两张表"**：多一张就说明有人又往里加旁支了。"""
+        text = self._text()
+        self.assertEqual(len(self._tables(text)), 2, "这份文档应当只有两张表（树莓派接线 / 元件接线）")
+
+    def test_两张表的表头就是那两件事(self):
+        tables = self._tables(self._text())
+        self.assertIn("树莓派接线", self._text())
+        self.assertIn("元件接线", self._text())
+        # 表 1：以"物理脚"开头；表 2：以"元件针脚"开头
+        self.assertTrue(tables[0][0].startswith("| 物理脚"), tables[0][0])
+        self.assertTrue(tables[1][0].startswith("| 元件针脚"), tables[1][0])
+
+    def test_表里的引脚与事实源一致(self):
+        text = self._text()
+        for wire in wire_spec.wires():
+            self.assertIn(f"| **{wire.physical}** |", text, f"树莓派接线表少了物理脚 {wire.physical}")
+        self.assertIn(f"GPIO{wire_spec.DATA_BCM}", text)
+        self.assertIn(wire_spec.pullup_text(), text)
+        self.assertIn("3.3V", text)
+
+    def test_三个脚之外不许出现在树莓派接线表里(self):
+        """表 1 只该有本基础版真正要接的 3 个脚 —— 多出来的脚会让"照着插"变得含糊。"""
+        table = self._tables(self._text())[0]
+        body = "\n".join(table[2:])
+        for physical in range(1, 41):
+            if physical in {w.physical for w in wire_spec.wires()}:
+                continue
+            self.assertNotIn(f"| **{physical}** |", body, f"表 1 里出现了未使用的物理脚 {physical}")
+
+    def test_文档里没有占位符或裸链接(self):
+        text = self._text()
+        self.assertNotIn("None", text)
+        self.assertNotIn("::", text, "RST 式 `::` 不是 markdown 标题，会出现排版怪相")
+        self.assertNotIn("](../", text)
 
 
 class TestCollection(unittest.TestCase):

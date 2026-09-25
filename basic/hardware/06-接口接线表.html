@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>基础版 · 接口接线表（树莓派接线 + 元件接线）</title><style>
+    @page { size: A4; margin: 14mm 12mm 16mm 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "微软雅黑", "Noto Sans CJK SC", "PingFang SC", sans-serif;
+      font-size: 10.5pt; line-height: 1.55; color: #1a1a1a; margin: 0;
+    }
+    h1 { font-size: 19pt; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 3px solid #1f77b4; color: #0b3d5c; }
+    h2 { font-size: 14.5pt; margin: 18px 0 8px; padding: 5px 8px; background: #eef5fb;
+         border-left: 5px solid #1f77b4; color: #0b3d5c; page-break-after: avoid; }
+    h3 { font-size: 12pt; margin: 14px 0 6px; color: #14507a; page-break-after: avoid; }
+    h4 { font-size: 11pt; margin: 12px 0 5px; color: #14507a; }
+    p { margin: 6px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+    th, td { border: 1px solid #b9c9d6; padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #dfeaf4; font-weight: 600; }
+    tr { page-break-inside: avoid; }
+    thead { display: table-header-group; }
+    code { font-family: Consolas, "Courier New", monospace; background: #f2f4f6;
+           padding: 1px 4px; border-radius: 3px; font-size: 9pt; }
+    pre { background: #f6f8fa; border: 1px solid #d6dde4; border-radius: 4px;
+          padding: 8px 10px; overflow-wrap: anywhere; white-space: pre-wrap; page-break-inside: avoid; }
+    pre code { background: none; padding: 0; }
+    blockquote { margin: 8px 0; padding: 6px 10px; background: #fff8e6;
+                 border-left: 4px solid #e8b84b; color: #5a4a1a; }
+    ul, ol { margin: 6px 0 6px 22px; padding: 0; }
+    li { margin: 2px 0; }
+    hr { border: none; border-top: 1px dashed #b9c9d6; margin: 14px 0; }
+    strong { color: #b3261e; }
+    @media print { h2 { break-after: avoid; } }
+  </style></head>
+<body><h1>06 · 接口接线表（树莓派接线 + 元件接线）</h1>
+<blockquote>🤖 <strong>本文件由代码生成，请勿手工编辑</strong> —— 下次生成会覆盖。<br>生成器：<code>python3 basic/tools/wire_docs.py --generate</code>（校验：<code>--check</code>）<br>事实来源：<code>basic/pins.py</code>（引脚映射）、<code>basic/dht11read.py</code>（驱动默认值与量程）、<code>basic/wire_spec.py</code>（接线事实）<br>基础版版本：1.0.0　｜　生成后由 <code>basic/tools/selfcheck.py</code> 与 <code>rpi/scripts/validate.py</code> 一起校验</blockquote>
+<blockquote>这一份<strong>只有两张表</strong>：先看树莓派这头要动哪几个脚，再看元件那头的每个针脚插到哪。<br>供电安全、万用表验证、现象对照见 [<code>02-接线图.md</code>](02-接线图.md) 与 [<code>03-供电与安全.md</code>](03-供电与安全.md)；<br>想接别的器件、看空闲脚见 [<code>01-引脚分配表.md</code>](01-引脚分配表.md)。</blockquote>
+<h2>1. 树莓派接线（本基础版要用到的脚）</h2>
+<p>本基础版只动 <strong>3 个脚</strong>（其余 37 个全空闲）：<strong>脚 1 = 3.3V、脚 6 = GND、脚 7 = DATA</strong>。</p>
+<table>
+<thead><tr><th>物理脚</th><th>BCM</th><th>信号</th><th>接到哪（元件丝印）</th><th>建议线色</th><th>关键提醒</th></tr></thead>
+<tbody>
+<tr><td><strong>1</strong></td><td>—</td><td>供电</td><td>VCC（元件丝印）</td><td>红</td><td><strong>必须 3.3V</strong>；不要接 5V（物理脚 2/4）——数据电平会被拉到 5V，伤 GPIO</td></tr>
+<tr><td><strong>6</strong></td><td>—</td><td>地</td><td>GND（元件丝印）</td><td>黑</td><td>任意一个 GND 脚都行（脚 6/9/14/20/25/30/34/39）；<strong>必须共地</strong></td></tr>
+<tr><td><strong>7</strong></td><td>GPIO4</td><td>数据</td><td>DATA（元件丝印）</td><td>黄</td><td>单总线数据线（双向）；裸四针传感器必须外接 4.7kΩ~10kΩ 上拉到 3.3V</td></tr>
+</tbody></table>
+<blockquote>⚠️ <strong>插线看物理脚号、写代码看 BCM 编号</strong> —— 两者不是偏移关系<br>（GPIO4 = 物理脚 7，但 GPIO27 = 物理脚 13）。</blockquote>
+<h2>2. 元件接线（DHT11 温湿度模块这头）</h2>
+<p>先认丝印：三针模块通常是 <code>VCC / DATA / GND</code>（或 <code>+ / OUT / -</code>）；<br><strong>裸四针</strong>传感器没有上拉电阻，第 2 行那个 4.7kΩ~10kΩ 电阻必须自己接。</p>
+<table>
+<thead><tr><th>元件针脚（丝印）</th><th>信号</th><th>接到树莓派（物理脚）</th><th>BCM</th><th>关键提醒</th></tr></thead>
+<tbody>
+<tr><td><code>VCC</code> / <code>+</code> / <code>VDD</code></td><td><strong>3.3V</strong></td><td>1/17</td><td>—</td><td><strong>绝不要接 5V</strong>（脚 2/4）：5V 会把数据电平一起拉高，伤 GPIO</td></tr>
+<tr><td><code>DATA</code> / <code>OUT</code> / <code>S</code></td><td><strong>DATA</strong></td><td>7</td><td>GPIO4</td><td>单总线（双向）；裸四针必须外接 4.7kΩ~10kΩ 上拉到 3.3V</td></tr>
+<tr><td><code>GND</code> / <code>-</code></td><td><strong>GND</strong></td><td>6/9/14/20/25/30/34/39</td><td>—</td><td>任意一个地脚都行（推荐脚 6）；<strong>必须共地</strong></td></tr>
+</tbody></table>
+<blockquote><strong>三根线之外不要多接</strong>：DHT11 没有其它针脚；接错电源（3.3V ↔ 5V）是最常见的烧件原因，<br>接线前请断电（带电插拔是烧 GPIO 的头号原因）。</blockquote>
+<h2>3. 这一页怎么用</h2>
+<ol>
+<li><strong>断电</strong>，按第 1 节挑好三个脚（脚 1 / 脚 6 / 脚 7）；</li>
+<li>按第 2 节把元件的三个针脚分别插到对应脚（红=3.3V、黑=GND、黄=DATA）；</li>
+<li>裸四针传感器：在 DATA 与 3.3V 之间接 4.7kΩ~10kΩ 电阻；</li>
+<li>上电后验收：<code>python3 tools/diag_dht_line.py</code>（三态电平）→ <code>python3 run.py</code>（真实读数 + 动态曲线）。</li>
+</ol>
+<h2>4. 导出 PDF（打印带上机用）</h2>
+<pre><code>node scripts/md2pdf.cjs --in basic/hardware/06-接口接线表.md --out basic/hardware/06-接口接线表.pdf --title "基础版 · 接口接线表（树莓派接线 + 元件接线）"
+python3 basic/tools/wire_docs.py --generate     # 让打印清单记住新 PDF 的哈希</code></pre></body></html>

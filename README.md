@@ -87,8 +87,10 @@ python tools\wire_docs.py --check   # 接线文档与代码是否一致（接线
 
 - 采集周期可配（默认 3 秒；DHT11 硬件要求 ≥2 秒），每次采样**立刻写进 CSV**（拔电源也不丢）；
 - 动态曲线：温度（红，左轴 ℃）+ 湿度（蓝，右轴 %），标题实时显示"最新一次读数"；
-- **接线文档 5 份**（图 / 逐线表 / 供电安全 / 线色自查卡 PDF）在
+- **接线文档**（图 / 逐线表 / 供电安全 / 线色自查卡 / **接口接线表**）在
   [`basic/hardware/`](basic/hardware/README.md)：每个数字都由代码生成，`--check` 机器校验；
+  **上机只看两张表** → [`basic/hardware/06-接口接线表.md`](basic/hardware/06-接口接线表.md)
+  （树莓派接线 + 元件接线，另有同版 PDF 可打印）；
 - 硬件、文档与"实测 / 未实测"声明见 [`basic/README.md`](basic/README.md) 与
   [`basic/验收说明.md`](basic/验收说明.md)。
 

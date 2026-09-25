@@ -69,8 +69,10 @@ python tools/selfcheck.py         # 10 项自检
 **BCM 编号与物理脚号不是偏移关系**，所以代码里不许写 `pin + 1` 这种换算。
 
 📐 **详细接线文档（图 + 逐线表 + 万用表验证 + 自查卡）在
-[`hardware/README.md`](hardware/README.md)** —— 那 5 份文档里的每个数字都是
+[`hardware/README.md`](hardware/README.md)** —— 那几份文档里的每个数字都是
 **从代码生成的**，并由 `python3 tools/wire_docs.py --check` 机器校验（改了代码没重新生成会报错）。
+
+🧾 **上机只想看两张表**：`hardware/06-接口接线表.md` / `.pdf`（**树莓派接线** + **元件接线**，一页看完）。
 
 接线出问题时的定位命令：
 
@@ -97,17 +99,19 @@ basic/
 │   ├── sample_demo.csv    演示数据（合成，入库；没硬件的同学靠它跑通画图）
 │   └── dht11_*.csv        运行时产生的数据（**不入库**，见 data/.gitignore）
 ├── evidence/curve_demo.png 曲线样张（截图证据，入库）
-├── hardware/              ★接线文档 5 份（由代码生成，勿手改）
+├── hardware/              ★接线文档（由代码生成，勿手改）
 │   ├── README.md          接线总览（三根线 + 判据）
 │   ├── 01-引脚分配表.md     40-pin 逐脚分配（本基础版只用 3 个脚）
 │   ├── 02-接线图.md        ASCII 接线图 + 逐线表 + 万用表验证 + 现象对照
 │   ├── 03-供电与安全.md     3.3V/5V 不能接错、电流预算、断电插拔
-│   └── 04-线色与自查卡.md/.pdf  一页纸自查卡（可打印）
+│   ├── 04-线色与自查卡.md/.pdf  一页纸自查卡（可打印）
+│   ├── 06-接口接线表.md/.pdf  ★两张表：树莓派接线 + 元件接线（上机只看这份）
+│   └── 05-接线文档合集.md/.pdf  上面全部合成一份（可打印）
 ├── tools/
 │   ├── selfcheck.py       10 项自检（不依赖硬件）
 │   ├── wire_docs.py       接线文档**生成 + 校验**（--generate / --check）
 │   └── diag_dht_line.py   数据线诊断（三态电平 → 结论）
-└── tests/                 94 项单测（不需要硬件）
+└── tests/                 124 项单测（不需要硬件）
 ```
 
 > 🤖 `hardware/` 下的文档由 `python3 tools/wire_docs.py --generate` 生成。
@@ -175,7 +179,7 @@ index,timestamp,temperature_c,humidity_percent,status,note
 | 目的 | **交课程作业 H**（温湿度 + 动态曲线） | 整套"居家老人监护系统"（课程设计团队作品） |
 | 依赖 | 标准库 + matplotlib（可选） | HAL 契约层 + 12 个驱动 + HTTP API + 上云 + 安卓端 |
 | 数据 | CSV | SQLite + HTTP 接口 + OneNET 云 |
-| 代码量 | 8 个模块、94 项单测 | 40+ 个文件、566 项单测 |
+| 代码量 | 8 个模块、124 项单测 | 40+ 个文件、584 项单测 |
 | 谁能用 | 任何同学，拷贝即用 | 团队分工协作 |
 
 两者是**同一套工程纪律的两个尺度**：基础版同样坚持"读不到就是 `None`、不补 0"、
@@ -192,7 +196,7 @@ cd raspberry-health-monitor        # 仓库根
 python basic/tools/selfcheck.py              # 10 项自检（含接线事实与接线文档）
 python basic/tools/wire_docs.py --check      # 接线文档与代码是否一致（含检查器注入自测）
 python basic/tools/wire_docs.py --generate   # 改了引脚/接线事实后重新生成文档
-python -m pytest basic/tests -q              # 94 项单测（开发机实测）
+python -m pytest basic/tests -q              # 124 项单测（开发机实测）
 python -m unittest discover -s basic/tests   # 不装 pytest 也能跑
 ```
 
