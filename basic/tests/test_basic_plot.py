@@ -55,12 +55,45 @@ class TestReaderInterval(unittest.TestCase):
         try:
             self.assertEqual(reader.wait_remaining(1000.0), 0.0)
             self.assertTrue(reader.read().ok)
+            # 1.0 秒时"还差"报的是 **扣掉容差之后**的等待时间，与门禁口径一致
             self.assertAlmostEqual(
-                reader.wait_remaining(reader.last_read_at + 1.0), MIN_INTERVAL_S - 1.0, places=6
+                reader.wait_remaining(reader.last_read_at + 1.0),
+                MIN_INTERVAL_S - 1.0 - reader.interval_tolerance(),
+                places=6,
             )
             self.assertEqual(reader.wait_remaining(reader.last_read_at + 5.0), 0.0)
         finally:
             reader.close()
+
+    def test_门槛是硬件下限而不是采样周期(self):
+        """★★ 2026-09-25 真机回归（ERROR.md E38）：门禁按**硬件下限**，节奏归主循环。
+
+        真机踩到的现象：`run.py` 默认 `--interval 3`，两次读取之间还夹着
+        "读传感器 + 存 CSV + 刷曲线"（实测 60ms）⇒ 真实间隔 **2.94 秒**；
+        而门禁被传成了采样周期 3.0 秒 ⇒ **隔一次被拒**（4 次采样成功 2 次失败 2 次）。
+
+        判据（三条都要成立）：
+        1. 默认 `Dht11Reader()` 的门槛就是硬件下限 2.0 秒（不再等于采样周期）；
+        2. 2.9 秒（真机上真实出现的间隔）与 2.0 秒 ⇒ 放行；只等 1 秒 ⇒ 仍然拒绝；
+        3. 容差按**间隔的 15%**；间隔比下限高出一个容差以上时容差为 0（不放宽门禁）。
+        """
+        from basic.dht11read import MIN_INTERVAL_S
+
+        reader = Dht11Reader(mock=True, explicit_mock=(25.0, 58.0), sleep=lambda _s: None)
+        self.assertEqual(reader.min_interval_s, MIN_INTERVAL_S, "默认门槛应当是硬件下限")
+        self.assertAlmostEqual(reader.interval_tolerance(), MIN_INTERVAL_S * 0.15, places=6)
+        # ⚠️ 用**固定基准时间**，不要用 last_read_at（它是真实时钟，边界断言会飘）
+        base = 1000.0
+        reader._last_read_at = base
+        self.assertEqual(reader.wait_remaining(base + 2.9), 0.0, "2.9 秒（真机实测的间隔）必须放行")
+        self.assertEqual(reader.wait_remaining(base + MIN_INTERVAL_S), 0.0, "刚好下限也该放行")
+        self.assertGreater(reader.wait_remaining(base + 1.0), 0.0, "只等 1 秒必须仍然拒绝")
+        reader.close()
+
+        strict = Dht11Reader(mock=True, explicit_mock=(25.0, 58.0), min_interval_s=3.0,
+                             sleep=lambda _s: None)
+        self.assertEqual(strict.interval_tolerance(), 0.0, "间隔离下限够远时不该再放宽")
+        strict.close()
 
 
 class TestReaderMock(unittest.TestCase):

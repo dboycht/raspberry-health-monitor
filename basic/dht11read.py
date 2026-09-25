@@ -73,6 +73,13 @@ HUMI_MIN_PCT, HUMI_MAX_PCT = 20.0, 90.0
 #: 间隔不够时会**返回上一次的陈旧数据**——基础版直接等够时间，不拿旧值糊弄。
 MIN_INTERVAL_S = 2.0
 
+#: 间隔门禁的容差比例：**只在"设定间隔贴着硬件下限"时才生效**（见 `interval_tolerance`）。
+#: ⚠️ 2026-09-25 真机实测的完整结论（ERROR.md E38）：`run.py` 曾经把**采样周期**当成
+#: 门禁下限传进来（`min_interval_s=max(args.interval, 2.0)`），于是"3 秒采样 + 读/存/画
+#: 花掉 60ms"⇒ 真实间隔 2.94 秒 < 3.0 秒 ⇒ **隔一次被拒**（4 次里失败 2 次）。
+#: 现在改成：**门禁 = 硬件下限 2 秒，节奏 = 主循环的采样周期 3 秒**，两者不再互相打架。
+INTERVAL_TOLERANCE_FRACTION = 0.15
+
 #: 一次读取内部重试之间的等待（秒）。DHT11 转换一次约 1 s，等太短会连续失败。
 RETRY_DELAY_S = 0.2
 
@@ -450,11 +457,36 @@ class Dht11Reader:
     def last_read_at(self, value: Optional[float]) -> None:
         self._last_read_at = value
 
+    def interval_tolerance(self) -> float:
+        """本实例允许的"还差多少秒也算到点"。
+
+        规则：**只有设定间隔贴着硬件下限时才给容差**（15%），否则严格按设定间隔判。
+
+        ⚠️ 但真正解决"隔次被拒"的不是容差，而是**别把采样周期当门禁下限**：
+        `run.py` 现在传的是硬件下限 2.0 秒，采样周期 3.0 秒只在主循环里控节奏
+        （见 `INTERVAL_TOLERANCE_FRACTION` 的注释与 ERROR.md E38）。
+        """
+        slack = self.min_interval_s - MIN_INTERVAL_S
+        tolerance = self.min_interval_s * INTERVAL_TOLERANCE_FRACTION
+        return tolerance if slack < tolerance else 0.0
+
     def wait_remaining(self, now: float) -> float:
-        """距"可以再次读取"还需要等多少秒（0 表示现在就能读）。"""
+        """距"可以再次读取"还需要等多少秒（0 表示现在就能读）。
+
+        ⚠️ **带容差**（2026-09-25 真机实测，ERROR.md E38）：
+        `run.py` 默认采样间隔 3.0 秒，两次读取之间还夹着"读传感器 + 存 CSV + 刷曲线"
+        的时间波动，真实经过时间常是 2.9 秒 ⇒ 原来判"还差 0.1s"把这一轮拒掉 ⇒ 真机上
+        **隔一次就失败一次**（实测 4 次采样成功 2 次失败 2 次）。
+        容差只对"贴着硬件下限的间隔"生效，见 :meth:`interval_tolerance`。
+        """
         if self._last_read_at is None:
             return 0.0
-        return max(0.0, self.min_interval_s - (now - self._last_read_at))
+        remaining = self.min_interval_s - (now - self._last_read_at)
+        tolerance = self.interval_tolerance()
+        if remaining <= tolerance:
+            return 0.0
+        # 报"还差多少"时扣掉容差，这样提示里的数字与门禁实际口径一致
+        return remaining - tolerance
 
     def read(self) -> ReadResult:
         """读一次；失败返回 ``ok=False`` 的结果（**不抛异常、不编造数值**）。

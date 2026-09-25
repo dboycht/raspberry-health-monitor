@@ -262,7 +262,11 @@ def run_curve(args: argparse.Namespace) -> int:
         return run_replay(args)
 
     try:
-        reader = Dht11Reader(pin=args.pin, mock=args.mock, min_interval_s=max(args.interval, MIN_INTERVAL_S))
+        # ⚠️ 门禁用**硬件下限**，不要用采样周期（2026-09-25 真机实测，ERROR.md E38）：
+        #    以前传 `max(args.interval, 2.0)`，于是"3 秒采样 + 读/存/画花掉 60ms"
+        #    ⇒ 真实间隔 2.94 秒 < 3.0 秒 ⇒ **隔一次被拒**（实测 4 次里失败 2 次）。
+        #    节奏由主循环的 `--interval` 控，门禁只负责"别读得比硬件允许的更快"。
+        reader = Dht11Reader(pin=args.pin, mock=args.mock, min_interval_s=MIN_INTERVAL_S)
         backend = reader.open()
     except Dht11Error as exc:
         print(safe_text(f"❌ 打不开 DHT11：{exc}"))
