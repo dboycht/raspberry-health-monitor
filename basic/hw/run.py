@@ -364,11 +364,13 @@ class CurveWindow:
     横轴可切「时间(秒)」或「采样序号」（题设要求"标出采样顺序或时间"，两种都支持）。
     """
 
-    def __init__(self, use_index: bool, interval_s: float, window: int, source_text: str) -> None:
+    def __init__(self, use_index: bool, interval_s: float, window: int, source_text: str,
+                 show_window: bool = True) -> None:
         import matplotlib.pyplot as plt
 
         font_name = configure_cjk_font()
         self._font_prop = cjk_font_prop() if font_name else None
+        self.show_window = bool(show_window)
         self.plt = plt
         self.use_index = use_index
         self.interval_s = interval_s
@@ -398,9 +400,11 @@ class CurveWindow:
         self.title = self.ax_temp.set_title("温湿度动态曲线（等待第一组数据…）")
         self.footer = self.fig.text(0.01, 0.01, "正在启动…", fontsize=9, color="#555555")
         self.ax_temp.legend([self.line_temp, self.line_humid], ["温度 (℃)", "湿度 (%)"], loc="upper left")
-        plt.ion()                      # 交互模式：不需要重开窗口就能刷新
+        if self.show_window:
+            plt.ion()                  # 交互模式：不需要重开窗口就能刷新
         self._apply_font()
-        self.fig.show()
+        if self.show_window:
+            self.fig.show()
 
     def _apply_font(self) -> None:
         """把中文字体属性直接挂到**每个文本对象**上（不依赖 rcParams 的回退链）。
@@ -471,7 +475,8 @@ class CurveWindow:
         )
         self.fig.canvas.draw_idle()
         self._apply_font()             # 每次刷新都重挂一次（set_text 会丢掉回退链）
-        self.fig.canvas.flush_events()
+        if self.show_window:           # headless 时没有事件循环，别去 flush
+            self.fig.canvas.flush_events()
 
     def wait_next(self, started_at: float) -> float:
         """睡到下一个采样时刻（把读取耗时扣掉，采样周期才稳）。"""
@@ -557,7 +562,11 @@ def _explain_no_window(exc: Optional[BaseException] = None, backend: str = "") -
 
 
 def _try_open_window(args, interval: float) -> Optional["CurveWindow"]:
-    """尝试创建曲线窗口：**先检查后端能不能开窗**，开不了就把原因讲清楚。"""
+    """建曲线对象：**弹窗**能不能成看后端，但"出图"不受影响（`--headless --save` 靠这条）。
+
+    返回 `CurveWindow`（可刷新/可导出）或 `None`（连带弹窗都做不了，且已说明原因）。
+    用 `window.show_window` 区分"是否真的弹了窗口"。
+    """
     try:
         import matplotlib
 
@@ -569,9 +578,14 @@ def _try_open_window(args, interval: float) -> Optional["CurveWindow"]:
         return None
 
     gui_backends = ("tkagg", "qtagg", "qt5agg", "gtk3agg", "gtk4agg", "macosx", "wxagg")
-    if backend not in gui_backends:
+    want_window = not args.headless
+    can_window = backend in gui_backends
+    if want_window and not can_window:
+        # 用户想要窗口但环境给不了 —— 说清原因；**但图还是要能出**：
+        # 如果同时给了 --save，就继续用 agg 出图（下面建对象时不 show）。
         _explain_no_window(None, backend)
-        return None
+        if not args.save:
+            return None
 
     font_name = configure_cjk_font()
     if font_name is None:
@@ -580,11 +594,13 @@ def _try_open_window(args, interval: float) -> Optional["CurveWindow"]:
         print(f"中文字体：{font_name}")
     try:
         window = CurveWindow(args.xaxis == "index", interval, args.window,
-                             f"DHT11 ({describe_pin(args.pin)})")
+                             f"DHT11 ({describe_pin(args.pin)})",
+                             show_window=want_window and can_window)
     except Exception as exc:  # noqa: BLE001 - 后端能选但建窗仍失败（缺 Tk/ImageTk 等）
         _explain_no_window(exc, backend)
         return None
-    print("已打开曲线窗口（窗口标题里就是「最新一次读数」）")
+    if want_window and can_window:
+        print("已打开曲线窗口（窗口标题里就是「最新一次读数」）")
     return window
 
 
@@ -610,8 +626,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"数据存档：{csv_path}")
 
     # ③ 曲线（可选）
+    #    ⚠️ `--headless` 是"不弹窗、直接画到文件"，所以**仍然要建窗口对象**
+    #    （只是后端是 agg）；否则 `--headless --save x.png` 会一张图都不出
+    #    （2026-09-26 在解压包上实测踩到：`--save` 被跳过了）。
     window: Optional[CurveWindow] = None
-    if not args.no_plot:
+    want_plot = (not args.no_plot) and (not args.headless or bool(args.save))
+    if want_plot:
         window = _try_open_window(args, interval)
 
     duration = args.duration or args.minutes * 60.0
@@ -659,8 +679,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ok = index
     print("-" * 72)
     print(f"采集结束：{index} 个样本，用时 {elapsed:.0f} 秒，数据在 {csv_path}")
-    if args.no_plot or window is None:
-        print("（本次没画图；要画图直接 `python3 run.py`，无显示器时加 `--headless --save 图片.png`）")
+    if window is None or not getattr(window, "show_window", False):
+        print("（本次没弹窗；要弹窗请按上面的提示做，或直接用 `--save 图片.png` 导出曲线图）")
     return 0
 
 
