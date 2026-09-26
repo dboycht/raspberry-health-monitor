@@ -144,9 +144,16 @@ class TestLedColorsToCheck(unittest.TestCase):
 
     2026-09-26 规划 T2 时发现：配置在 9-24 去掉了红灯（GPIO24 让给 TFT 的 DC），
     而脚本硬写"绿→黄→红" ⇒ 驱动按设计抛 `UnsupportedError` ⇒ 好灯被判 FAIL。
+
+    ⚠️⚠️ **同日真机第二次踩到**：本项目的 `Led.available_colors` 是 **`@property`**，
+    而第一版只处理了 `callable()` 形态 ⇒ 属性形态被静默跳过、回退成默认三色。
+    **教训：认"器件的自述接口"时，属性/方法两种形态都要认；单测也必须两种都覆盖
+    —— 只测方法形态的假对象，等于把错误假设钉死。**
     """
 
-    class _Led:
+    class _LedMethod:
+        """`available_colors()` 是方法（其它项目的常见写法）。"""
+
         def __init__(self, colors=None, boom=False) -> None:
             self._colors = colors
             self._boom = boom
@@ -156,14 +163,28 @@ class TestLedColorsToCheck(unittest.TestCase):
                 raise RuntimeError("器件自报失败")
             return list(self._colors)
 
-    def test_按器件自报的颜色(self) -> None:
-        led = self._Led(["green", "off", "yellow"])
+    class _LedProperty:
+        """`available_colors` 是属性 —— **本项目的真实形态**。"""
+
+        def __init__(self, colors=None) -> None:
+            self._colors = list(colors or [])
+
+        @property
+        def available_colors(self):
+            return list(self._colors)
+
+    def test_属性形态_按器件自报的颜色(self) -> None:
+        led = self._LedProperty(["green", "off", "yellow"])
         self.assertEqual(hardware_test.led_colors_to_check(led), ["green", "yellow"])
 
-    def test_没有红灯就只点绿黄(self) -> None:
-        """本项目现状：只有 green/yellow。"""
-        led = self._Led(["green", "yellow", "off"])
+    def test_属性形态_没有红灯就只点绿黄(self) -> None:
+        """本项目现状：`Led.available_colors` 是 property，只有 green/yellow。"""
+        led = self._LedProperty(["green", "yellow", "off"])
         self.assertNotIn("red", hardware_test.led_colors_to_check(led))
+
+    def test_方法形态_同样认(self) -> None:
+        led = self._LedMethod(["green", "off", "yellow"])
+        self.assertEqual(hardware_test.led_colors_to_check(led), ["green", "yellow"])
 
     def test_器件不提供颜色时退回默认三色(self) -> None:
         self.assertEqual(
@@ -171,17 +192,29 @@ class TestLedColorsToCheck(unittest.TestCase):
             list(hardware_test.DEFAULT_LED_COLORS),
         )
 
-    def test_自报失败也要退回默认(self) -> None:
-        led = self._Led(["green"], boom=True)
+    def test_方法自报失败也要退回默认(self) -> None:
+        led = self._LedMethod(["green"], boom=True)
         self.assertEqual(
             hardware_test.led_colors_to_check(led),
             list(hardware_test.DEFAULT_LED_COLORS),
         )
 
     def test_自报为空时退回默认(self) -> None:
-        led = self._Led(["off"])
         self.assertEqual(
-            hardware_test.led_colors_to_check(led),
+            hardware_test.led_colors_to_check(self._LedProperty(["off"])),
+            list(hardware_test.DEFAULT_LED_COLORS),
+        )
+        self.assertEqual(
+            hardware_test.led_colors_to_check(self._LedMethod([])),
+            list(hardware_test.DEFAULT_LED_COLORS),
+        )
+
+    def test_自报了个不可迭代的东西也不炸(self) -> None:
+        class Weird:
+            available_colors = 42
+
+        self.assertEqual(
+            hardware_test.led_colors_to_check(Weird()),
             list(hardware_test.DEFAULT_LED_COLORS),
         )
 

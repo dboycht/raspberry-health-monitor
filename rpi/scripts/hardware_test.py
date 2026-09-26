@@ -417,25 +417,42 @@ def tool_check_needed(name: str, needs: Set[str]) -> bool:
 DEFAULT_LED_COLORS: Tuple[str, ...] = ("green", "yellow", "red")
 
 
-def led_colors_to_check(led: Any) -> List[str]:
-    """本次该点哪些 LED 颜色 —— **以器件自己支持的为准**。
+def device_colors(device: Any) -> List[str]:
+    """问器件"你支持哪些颜色" —— **属性与方法两种形态都要认**。
 
-    ⚠️ 为什么（2026-09-26 规划 T2 时查出来的"假红"隐患）：默认配置在 2026-09-24
+    ⚠️ 2026-09-26 真机踩到（T2 验收）：本项目的 `Led.available_colors` 是 **`@property`**，
+    而这里最初只写了 `callable()` 一个分支 ⇒ 属性形态被**静默跳过**、回退成默认三色
+    （其中红灯早就不存在）⇒ 官方验收点到不存在的颜色，驱动按设计抛 `UnsupportedError`，
+    **好灯被判成 FAIL**。
+    教训：探"器件的自述接口"时，**属性/方法两种形态都要认**。
+    """
+    attr = getattr(device, "available_colors", None)
+    raw: Any = None
+    if callable(attr):
+        try:
+            raw = attr()
+        except Exception:  # noqa: BLE001 - 器件自报失败就退回默认
+            raw = None
+    elif attr is not None:
+        raw = attr
+    if raw is None:
+        return []
+    try:
+        return [str(c) for c in raw if str(c)]
+    except TypeError:  # pragma: no cover - 自报了个不可迭代的东西
+        return []
+
+
+def led_colors_to_check(led: Any) -> List[str]:
+    """本次该点哪些 LED 颜色 —— **以器件自己支持的为准**（`off` 不点）。
+
+    为什么（2026-09-26 规划 T2 时查出来的"假红"隐患）：默认配置在 2026-09-24
     去掉了红灯（GPIO24 让给了 TFT 的 DC 脚），而本脚本原来**硬写**"绿→黄→红"三色 ⇒
     点到红灯时驱动按设计抛 ``UnsupportedError``，检查被算成 FAIL：
     灯是好的、线也是对的，却报"没有全亮"。
-    判据 = 只点 ``led.available_colors()``（`off` 不点）。
     """
-    getter = getattr(led, "available_colors", None)
-    if callable(getter):
-        try:
-            colors = [str(c) for c in getter() if str(c)]
-        except Exception:  # noqa: BLE001 - 器件自报失败就退回默认三色
-            colors = []
-        colors = [c for c in colors if c != "off"]
-        if colors:
-            return colors
-    return list(DEFAULT_LED_COLORS)
+    colors = [c for c in device_colors(led) if c != "off"]
+    return colors or list(DEFAULT_LED_COLORS)
 
 
 # --------------------------------------------------------------------------

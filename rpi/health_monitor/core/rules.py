@@ -222,6 +222,11 @@ class RuleEngine:
         for device, count in snap.sensor_failures.items():
             if count >= self.th.sensor_fault_after:
                 key = f"{AlarmCode.SENSOR_FAULT.value}:{device}"
+                # ★ 登记"仍在报警" —— **必须在冷却过滤之前**（与第 5 步同理）：
+                #   2026-09-26 真机 T2 闭环实测：这一行原来**缺了** ⇒ `_recoveries()` 遍历
+                #   `self._active` 时看不到 sensor_fault ⇒ **ALL_CLEAR 永远不会发**，
+                #   传感器恢复后灯/屏仍停在报警态（`active_alarms` 也是空的，手机端看不到）。
+                self._active.setdefault(AlarmCode.SENSOR_FAULT, snap.ts)
                 if self._cooldown_ok_str(key, snap.ts):
                     events.append(
                         AlarmEvent(
@@ -323,6 +328,12 @@ class RuleEngine:
                 continue
             self._active.pop(code, None)
             self._last_emit.pop(code.value, None)
+            if code is AlarmCode.SENSOR_FAULT:
+                # 每个设备各有自己的冷却键（`sensor_fault:<device>`）：恢复时**一并清掉**，
+                # 否则"恢复后同一设备再次故障"会被 5 分钟冷却挡住、不再报警
+                # （表现为"传感器又坏了，灯却还是绿的"）。
+                for stale in [k for k in self._last_emit if str(k).startswith(f"{code.value}:")]:
+                    self._last_emit.pop(stale, None)
             recovered.append(
                 AlarmEvent(
                     ts=snap.ts, code=AlarmCode.ALL_CLEAR, severity=Severity.NORMAL,
@@ -333,9 +344,17 @@ class RuleEngine:
             )
         return recovered
 
-    @staticmethod
-    def _is_missing(snap: ReadingSnapshot, code: AlarmCode) -> bool:
-        """判断某个报警码依赖的数据这一轮是否缺失。"""
+    def _is_missing(self, snap: ReadingSnapshot, code: AlarmCode) -> bool:
+        """判断某个报警码依赖的数据这一轮是否缺失（缺失 ⇒ **不解除**报警）。
+
+        ⚠️ 2026-09-26 起这里还负责 `SENSOR_FAULT` 的"仍在故障中"判断：
+        否则传感器**还坏着**的时候也会被判成"已恢复"、发出 ALL_CLEAR（报警闪烁）。
+        """
+        if code is AlarmCode.SENSOR_FAULT:
+            # 还有设备连续失败次数达到阈值 ⇒ 故障仍在，不许解除
+            return any(
+                count >= self.th.sensor_fault_after for count in snap.sensor_failures.values()
+            )
         if code in (AlarmCode.HR_TOO_HIGH, AlarmCode.HR_TOO_LOW, AlarmCode.SPO2_TOO_LOW):
             v = snap.vitals
             return v is None or not v.ok or not v.finger_detected

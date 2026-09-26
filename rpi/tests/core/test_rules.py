@@ -255,6 +255,50 @@ class TestSensorFault(unittest.TestCase):
         self.assertEqual(len(faults), 2, "两个设备都应各自报警（用 device 字段区分）")
         self.assertEqual({e.source for e in faults}, {"max30102", "dht11"})
 
+    # ------------------------------------------------------------------
+    # ★ 回归（2026-09-26 真机 T2 闭环实测踩到）：故障**恢复**要发 ALL_CLEAR
+    # ------------------------------------------------------------------
+
+    def test_故障会登记为仍在报警(self) -> None:
+        """★ 回归：`SENSOR_FAULT` 原来**只上报、不登记** `_active` ⇒ 手机端/状态页看不到，
+        且恢复时 `_recoveries()` 根本不知道它需要被解除。"""
+        engine = RuleEngine(Thresholds(sensor_fault_after=3, repeat_cooldown_s=0))
+        engine.evaluate(ReadingSnapshot(ts=1000.0, sensor_failures={"ambient": 3}))
+        self.assertIn(
+            "sensor_fault", engine.active_alarms(),
+            "传感器故障必须出现在 active_alarms（否则手机端/状态页与恢复逻辑都看不到它）",
+        )
+
+    def test_故障恢复要发ALL_CLEAR(self) -> None:
+        """★ 真机现场：拔掉 DHT11 → 黄灯闪 + 蜂鸣；插回去 → 灯还一直黄（ALL_CLEAR 没发）。"""
+        engine = RuleEngine(Thresholds(sensor_fault_after=3, repeat_cooldown_s=0))
+        engine.evaluate(ReadingSnapshot(ts=1000.0, sensor_failures={"ambient": 3}))
+        events = engine.evaluate(ReadingSnapshot(ts=1010.0, sensor_failures={}))
+        clears = [e for e in events if e.code is AlarmCode.ALL_CLEAR]
+        self.assertTrue(clears, "传感器恢复后必须发 ALL_CLEAR（把灯/屏复位）")
+        self.assertEqual(clears[0].detail.get("recovered_code"), "sensor_fault")
+        self.assertNotIn("sensor_fault", engine.active_alarms())
+
+    def test_仍在故障中不许发ALL_CLEAR(self) -> None:
+        """传感器**还坏着**的时候不能判成"已恢复"（否则报警会闪烁）。"""
+        engine = RuleEngine(Thresholds(sensor_fault_after=3, repeat_cooldown_s=0))
+        engine.evaluate(ReadingSnapshot(ts=1000.0, sensor_failures={"ambient": 3}))
+        events = engine.evaluate(ReadingSnapshot(ts=1010.0, sensor_failures={"ambient": 9}))
+        self.assertNotIn(AlarmCode.ALL_CLEAR, [e.code for e in events])
+        self.assertIn("sensor_fault", engine.active_alarms())
+
+    def test_恢复后再次故障还会重新报警(self) -> None:
+        """★ 恢复时要清掉 `sensor_fault:<device>` 冷却键：否则"再坏"被 5 分钟冷却挡住，
+        表现为"传感器又坏了、灯却还是绿的"。"""
+        engine = RuleEngine(Thresholds(sensor_fault_after=3, repeat_cooldown_s=300))
+        engine.evaluate(ReadingSnapshot(ts=1000.0, sensor_failures={"ambient": 3}))
+        engine.evaluate(ReadingSnapshot(ts=1010.0, sensor_failures={}))     # 恢复
+        events = engine.evaluate(ReadingSnapshot(ts=1020.0, sensor_failures={"ambient": 3}))
+        self.assertIn(
+            AlarmCode.SENSOR_FAULT, [e.code for e in events],
+            "恢复之后同一设备再次故障，必须能重新报警（不能被上一轮的冷却键挡住）",
+        )
+
 
 class TestSnapshotSummary(unittest.TestCase):
     def test_摘要里缺失值必须是None而不是0(self) -> None:
