@@ -273,26 +273,53 @@ def check_drivers() -> Tuple[bool, str]:
     return True, f"{len(MANIFEST)} 个驱动全部可构造"
 
 
+#: 驱动的"独占型 GPIO"参数名（**不能共用**）。
+#: ⚠️ 2026-09-26 补：原来漏了 TFT 的 `dc_pin` / `reset_pin` ⇒
+#: `status_led.red=24` 与 `tft.dc_pin=24` **真撞脚却报"无冲突"**（项目默认配置里就埋着这个雷）。
+#: 往后新增"用 GPIO 的驱动"必须在这里登记（tests/scripts 里有回归钉）。
+EXCLUSIVE_PIN_KEYS: Dict[str, Tuple[str, ...]] = {
+    "dht11": ("pin",),
+    "hc_sr501": ("pin",),
+    "hc_sr04": ("trig_pin", "echo_pin"),
+    "buzzer": ("pin",),
+    "button": ("pin",),
+    "tft_spi": ("dc_pin", "reset_pin"),
+    "mcp3002": ("cs_pin",),
+}
+
+
+def exclusive_pin_claims(config: Dict[str, Any]) -> List[Tuple[str, int]]:
+    """从配置里抽出所有"独占型 GPIO"声明，形如 ``[(设备.参数, BCM), ...]``。
+
+    **纯函数**（好测）：只认 :data:`EXCLUSIVE_PIN_KEYS` 里登记的键 + LED 的 `pins`；
+    负数/缺省表示"该脚未使用"（例如 TFT 的 `backlight_pin: -1`）会被跳过。
+    """
+    claims: List[Tuple[str, int]] = []
+    for dev_name, item in (config.get("devices") or {}).items():
+        # ⚠️ **不过滤 enabled**：未启用的设备将来会被启用，它的引脚声明现在就该参与撞脚检查
+        #    （否则"红灯=24 与 TFT 的 DC=24"这种雷只有在两者都开的时候才爆，而那已经是现场了）。
+        params = item.get("params") or {}
+        driver = item.get("driver", "")
+        for key in EXCLUSIVE_PIN_KEYS.get(driver, ()):
+            value = params.get(key)
+            if isinstance(value, int) and value >= 0:
+                claims.append((f"{dev_name}.{key}", int(value)))
+        if driver == "led":
+            for color, pin in (params.get("pins") or {}).items():
+                claims.append((f"{dev_name}.led.{color}", int(pin)))
+        if driver == "tft_spi":
+            backlight = params.get("backlight_pin")
+            if isinstance(backlight, int) and backlight >= 0:
+                claims.append((f"{dev_name}.backlight_pin", int(backlight)))
+    return claims
+
+
 def check_pin_conflicts() -> Tuple[bool, str]:
     """★ 配置里的独占 GPIO 不能撞脚（真实发生过：PIR 与按钮抢 GPIO17）。"""
     from health_monitor.core.config import DEFAULT_CONFIG
     from health_monitor.hal import find_conflicts
 
-    exclusive = {
-        "dht11": ("pin",), "hc_sr501": ("pin",), "hc_sr04": ("trig_pin", "echo_pin"),
-        "buzzer": ("pin",), "button": ("pin",),
-    }
-    claims: List[Tuple[str, int]] = []
-    for dev_name, item in DEFAULT_CONFIG["devices"].items():
-        if not item.get("enabled", True):
-            continue
-        params = item.get("params", {})
-        for key in exclusive.get(item["driver"], ()):
-            if key in params:
-                claims.append((f"{dev_name}.{key}", int(params[key])))
-        if item["driver"] == "led":
-            for color, pin in (params.get("pins") or {}).items():
-                claims.append((f"{dev_name}.led.{color}", int(pin)))
+    claims = exclusive_pin_claims(DEFAULT_CONFIG)
     conflicts = find_conflicts(claims)
     if conflicts:
         return False, "存在 GPIO 撞脚：\n      " + "\n      ".join(conflicts)

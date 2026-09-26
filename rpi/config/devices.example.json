@@ -15,6 +15,7 @@
     "night_window_s": 3600,
     "sensor_fault_after": 3,
     "repeat_cooldown_s": 300,
+    "re_alert_interval_s": 15,
     "hysteresis": 3
   },
   "devices": {
@@ -107,7 +108,8 @@
       "params": {
         "pins": {
           "green": 22,
-          "yellow": 23
+          "yellow": 23,
+          "red": 12
         }
       }
     },

@@ -146,5 +146,33 @@ class TestLoadConfigWithLocalOverride(unittest.TestCase):
         self.assertIn("JSON", str(ctx.exception))
 
 
+class Test持续提醒阈值(unittest.TestCase):
+    """`thresholds.re_alert_interval_s`（2026-09-26 新增，配合"报警不能响两声就完"）。"""
+
+    def test_默认是15秒(self) -> None:
+        from health_monitor.core.config import Thresholds
+
+        self.assertEqual(Thresholds().re_alert_interval_s, 15.0)
+
+    def test_可以从配置里改(self) -> None:
+        from health_monitor.core.config import Thresholds
+
+        self.assertEqual(Thresholds.from_dict({"re_alert_interval_s": 5}).re_alert_interval_s, 5.0)
+
+    def test_0表示关闭_允许(self) -> None:
+        from health_monitor.core.config import Thresholds
+
+        th = Thresholds.from_dict({"re_alert_interval_s": 0})
+        th.validate()          # 0 = 关闭持续提醒，是合法值
+        self.assertEqual(th.re_alert_interval_s, 0.0)
+
+    def test_负数要报错(self) -> None:
+        from health_monitor.core.config import Thresholds
+        from health_monitor.hal.exceptions import ConfigError
+
+        with self.assertRaises(ConfigError):
+            Thresholds.from_dict({"re_alert_interval_s": -1}).validate()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

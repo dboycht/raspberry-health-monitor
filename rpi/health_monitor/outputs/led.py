@@ -21,7 +21,7 @@ LED 颜色              树莓派 40-pin              限流电阻
 ===================  ==========================  ======================================
 绿（green）           GPIO22（物理脚 15）         220Ω~1kΩ 串在信号线上
 黄（yellow）          GPIO23（物理脚 16）         220Ω~1kΩ
-红（red）             GPIO24（物理脚 18）         220Ω~1kΩ
+红（red）             GPIO12（物理脚 32）         220Ω~1kΩ
 共阴（−）             GND（物理脚 6/9/14）        共地
 ===================  ==========================  ======================================
 
@@ -30,10 +30,13 @@ LED 颜色              树莓派 40-pin              限流电阻
 1. **任何时刻只有一种状态灯亮**：:meth:`Led.send` 会**先熄灭其他所有颜色**再点亮
    目标色。否则红灯与绿灯同时亮，肉眼看过去就是**黄色** —— 会把"报警"读成"注意"，
    这是会耽误救援的显示缺陷。
-2. **闪烁不阻塞主流程**：``LightCommand(blink=True)`` 的闪烁由 :meth:`Led.blink`
-   驱动，节奏交给**可注入的 sleep**（默认 :func:`time.sleep`），测试注入假函数即
-   可瞬时验证；并且闪 ``blink_duration_s``（默认 3.0 秒）后**自动停止并保持目标色**
-   （不会一直闪到耗电/扰民，也不会卡死调用线程）。
+2. **报警期间"持续闪"，消音后转常亮**：``LightCommand(blink=True)`` 现在走
+   :meth:`Led.blink_forever`（gpiozero 的 ``blink(background=True)``：**后台线程、不阻塞**），
+   由运行时在报警持续期间保持；用户**消音**后运行时调 :meth:`Led.stop_blink` 转**常亮**
+   （"消音只停声音、灯仍亮"是本项目的明确设计）。
+   ⚠️ 2026-09-26 真机 T3 之前，``blink=True`` 是"驱动里**阻塞**闪 3 秒后常亮"——
+   实机反馈"黄灯指示亮也不是闪"，而且那 3 秒会**阻塞主循环**（不采样、不响应按键）。
+   :meth:`Led.blink`（限时闪，返回轮数）保留给"只想闪一下"的调用方。
 3. **颜色未知必须报错**：传 ``color="purple"`` 抛 :class:`UnsupportedError`
    并**列出可用颜色**，绝不静默当成绿色（静默降级会让"红色报警"变成"绿色正常"）。
 4. **mock 模式绝不碰 GPIO**：只维护"逻辑电平表"（:meth:`Led.level`），
@@ -59,7 +62,10 @@ from ..hal.models import DeviceKind, LightCommand, Sample
 _log = logging.getLogger(__name__)
 
 #: 默认引脚映射（BCM 编号）：绿=22（脚15）、黄=23（脚16）、红=24（脚18）
-DEFAULT_PINS: Dict[str, int] = {"green": 22, "yellow": 23, "red": 24}
+#: 默认引脚（与 `config/devices.json` 的 `status_led.params.pins` **必须一致**）。
+#: ⚠️ 红灯在 **GPIO12（物理脚 32）**：它原来是 GPIO24，而 TFT 的 DC/A0 也是 GPIO24
+#: ⇒ **撞脚**（2026-09-26 发现：当时的撞脚检查没统计 `tft.dc_pin`，所以一直没报出来）。
+DEFAULT_PINS: Dict[str, int] = {"green": 22, "yellow": 23, "red": 12}
 
 #: BCM → 物理脚号（只列常用几个）
 _BCM_TO_PHYSICAL: Dict[int, int] = {
@@ -108,6 +114,7 @@ class Led(OutputDevice):
         bus: Any = None,
         mock: bool = False,
         name: str = "",
+        led_factory: Optional[Callable[..., Any]] = None,
     ) -> None:
         super().__init__(bus=bus, mock=mock, name=name)
         raw_pins = dict(DEFAULT_PINS if pins is None else pins)
@@ -124,12 +131,17 @@ class Led(OutputDevice):
         self.blink_hz = float(blink_hz) if blink_hz and blink_hz > 0 else 1.0
         self.blink_duration_s = max(0.0, float(blink_duration_s))
         self.sleep: Callable[[float], None] = sleep if sleep is not None else time.sleep
+        #: 可注入的 GPIO 后端（默认 `gpiozero.LED`）。测试注入假后端即可**在没有 GPIO 的机器上**
+        #: 断言"确实调用了后台 blink / on / off"，而不必真起线程。
+        self._led_factory = led_factory
 
         self._devs: Dict[str, Any] = {}          # 真实模式下的 gpiozero 对象
         self._levels: Dict[str, int] = {c: 0 for c in self.pins}  # 逻辑电平（1=亮）
         self._current: str = LOGICAL_OFF         # 当前显示的颜色
         self._slept_s = 0.0                      # 累计 sleep 秒数（测试断言用）
         self._blink_count = 0                    # 累计闪烁轮次
+        #: 正在**持续闪**的颜色（`blink_forever()` 起、`stop_blink()`/换色止）
+        self._blinking: Optional[str] = None
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -146,20 +158,24 @@ class Led(OutputDevice):
         if self.mock:
             self._opened = True
             return
-        try:
-            from gpiozero import DigitalOutputDevice  # type: ignore import-not-found
-        except ImportError as exc:
-            raise DeviceInitError(
-                f"LED 初始化失败：未安装 gpiozero（{exc}）。"
-                "树莓派上执行 `sudo apt install -y python3-gpiozero`；"
-                "PC 上开发请用 mock=True。" + self._wiring_hint()
-            ) from exc
+        if self._led_factory is None:
+            try:
+                from gpiozero import LED as GpioLed  # type: ignore import-not-found
+            except ImportError as exc:
+                raise DeviceInitError(
+                    f"LED 初始化失败：未安装 gpiozero（{exc}）。"
+                    "树莓派上执行 `sudo apt install -y python3-gpiozero`；"
+                    "PC 上开发请用 mock=True。" + self._wiring_hint()
+                ) from exc
+            factory: Callable[..., Any] = GpioLed
+        else:
+            factory = self._led_factory
         created: Dict[str, Any] = {}
         try:
             for color, pin in self.pins.items():
-                created[color] = DigitalOutputDevice(
-                    pin, active_high=not self.active_low, initial_value=False
-                )
+                # 用 gpiozero 的 **LED** 类（而不是 DigitalOutputDevice）：它自带
+                # `blink(background=True)` —— 后台线程持续闪、不阻塞主循环（见 blink_forever）。
+                created[color] = factory(pin, active_high=not self.active_low, initial_value=False)
         except Exception as exc:  # noqa: BLE001 - gpiozero 会抛各种运行时错误
             for dev in created.values():  # 建了一半就失败：把已建的关掉，别留垃圾
                 try:
@@ -226,10 +242,73 @@ class Led(OutputDevice):
         return sorted(self.pins) + [LOGICAL_OFF]
 
     def all_off(self) -> None:
-        """熄灭所有颜色（幂等）。"""
+        """熄灭所有颜色（幂等）；**同时停掉持续闪**。"""
+        self.stop_blink(steady_on=False)
         for color in self.pins:
             self._set(color, False)
         self._current = LOGICAL_OFF
+
+    # ------------------------------------------------------------------
+    # 持续闪 / 停闪（2026-09-26 新增，配合"报警持续提醒"）
+    # ------------------------------------------------------------------
+
+    def blink_forever(self, color: str) -> None:
+        """让 ``color`` **持续闪**，直到 :meth:`stop_blink` 或换色（后台线程，不阻塞）。
+
+        为什么用 gpiozero 的 ``blink(background=True)``（2026-09-26 真机 T3 实测踩到）：
+        原来的 `blink()` 是"**阻塞**着闪 `blink_duration_s` 秒后停在亮态" ⇒
+        ① 用户看到的其实是"报警只闪 3 秒然后常亮"（与 `blink=True` 的语义不符，实机反馈
+        "黄灯指示亮也不是闪"）；② 那 3 秒**会阻塞主循环**（期间不采样、不响应按键）。
+        gpiozero 自带后台闪烁线程（`n=None` 即一直闪），且 **`on()`/`off()` 会先
+        `_stop_blink()`**（已在树莓派上读源码核实）⇒ 直接用这个轮子，别自己写线程。
+        """
+        self._require_open()
+        if color not in self.pins:
+            raise UnsupportedError(
+                f"未知 LED 颜色 {color!r}；可用颜色：" + "、".join(self.available_colors)
+            )
+        half = 0.5 / self.blink_hz
+        device = self._devs.get(color)
+        if device is not None and hasattr(device, "blink"):
+            device.blink(on_time=half, off_time=half, background=True)   # n 默认 None = 一直闪
+        self._set(color, True)          # mock 模式只更新逻辑电平；真机由 blink 线程接管
+        for other in self.pins:
+            if other != color:
+                self._set(other, False)
+        self._blinking = color
+        self._current = color
+        self._blink_count += 1
+
+    def stop_blink(self, steady_on: bool = True) -> None:
+        """停掉持续闪（幂等）。
+
+        Args:
+            steady_on: ``True`` = 停闪后保持当前色**常亮**（"消音但灯仍亮"就是它）；
+                ``False`` = 直接熄灭。
+        """
+        color = self._blinking
+        self._blinking = None
+        if color is None:
+            return
+        device = self._devs.get(color)
+        if device is None:
+            # mock 模式：只维护逻辑电平（测试据此断言"停闪后常亮/熄灭"）
+            self._set(color, 1 if steady_on else 0)
+            if not steady_on:
+                self._current = LOGICAL_OFF
+            return
+        try:
+            if steady_on:
+                device.on()             # gpiozero: on() 内部先 _stop_blink()
+            else:
+                device.off()
+        except Exception as exc:  # noqa: BLE001 - 停闪失败不该让报警链路崩
+            _log.debug("LED 停闪失败（已忽略）：%s", exc)
+
+    @property
+    def blinking_color(self) -> Optional[str]:
+        """正在持续闪的颜色（没在闪时为 ``None``）。"""
+        return self._blinking
 
     # ------------------------------------------------------------------
     # 指令入口
@@ -269,6 +348,9 @@ class Led(OutputDevice):
             if color == LOGICAL_OFF:
                 self.all_off()
             else:
+                # 换色时先停掉上一个颜色的持续闪，否则会在旧颜色上留下闪烁线程
+                if self._blinking and self._blinking != color:
+                    self.stop_blink(steady_on=False)
                 # ⚠️ 关键顺序：先熄灭其他颜色，再点亮目标色。
                 # 若先点后熄，会在两个 I2C/GPIO 操作之间出现"红+绿同亮"的瞬间，
                 # 肉眼看到的就是黄色（=注意），会把报警误读成提示。
@@ -278,7 +360,9 @@ class Led(OutputDevice):
                 self._set(color, True)
                 self._current = color
                 if command.blink:
-                    self.blink(color)
+                    # ⚠️ 2026-09-26 改：`blink=True` = **持续闪**（后台线程，不阻塞主循环）。
+                    #    原来是"阻塞着闪 blink_duration_s 秒后常亮"（真机反馈"灯不闪"）。
+                    self.blink_forever(color)
         except Exception as exc:  # noqa: BLE001 - 统一翻译成报警下发失败
             self._note_fault(exc)
             raise AlarmDispatchError(
@@ -350,7 +434,7 @@ class Led(OutputDevice):
         return Sample(device=self.name)
 
     def status(self) -> Dict[str, Any]:
-        """扩展基类状态：暴露当前颜色与各色逻辑电平。"""
+        """扩展基类状态：暴露当前颜色、各色逻辑电平、**是否正在持续闪**。"""
         info = super().status()
         info.update(
             {
@@ -359,6 +443,7 @@ class Led(OutputDevice):
                 "pins": dict(self.pins),
                 "active_low": self.active_low,
                 "blink_count": self._blink_count,
+                "blinking": self._blinking,          # 持续闪中的颜色（None=没在闪）
                 "slept_s": self._slept_s,
             }
         )

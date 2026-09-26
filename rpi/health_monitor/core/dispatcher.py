@@ -142,6 +142,7 @@ class AlarmDispatcher:
         self._last_spoken: Dict[str, float] = {}
         self._silenced_until: float = 0.0
         self.dispatched: List[Dict[str, Any]] = []   # 下发流水（供手机端/日志查看）
+        self.realerts: int = 0                       # "报警持续提醒"的重发次数（诊断用）
         self.errors: List[str] = []
         self._send_failures: Dict[str, int] = {}     # 器件名 -> 连续下发失败次数
         self._quiet_after = 3                        # 连续失败达到该次数后停止刷屏
@@ -218,6 +219,69 @@ class AlarmDispatcher:
             blink=severity_light[1],
             lcd_lines=("ALARM", event.code.value[:16]),
         )
+
+    # ------------------------------------------------------------------
+    # 持续提醒（2026-09-26 新增：报警"响两声就完"变成"按周期重发"）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def plan_for(code: Any, severity: Severity = Severity.WARNING) -> AlarmPresentation:
+        """按报警码取呈现方案（纯查表 + 兜底）。
+
+        与 :meth:`plan` 的区别：这里**只有码**（用于"报警还在、要再提醒一次"的场景，
+        此时手上没有新的事件对象）。
+        """
+        known = PRESENTATION_TABLE.get(code)
+        if known is not None:
+            return AlarmPresentation(**vars(known))
+        severity_light = {
+            Severity.CRITICAL: ("red", True),
+            Severity.WARNING: ("yellow", True),
+            Severity.NOTICE: ("yellow", False),
+        }.get(severity, ("yellow", False))
+        code_text = getattr(code, "value", str(code))
+        return AlarmPresentation(
+            speak="请注意", beep_times=2 if severity >= Severity.WARNING else 0,
+            light=severity_light[0], blink=severity_light[1],
+            lcd_lines=("ALARM", str(code_text)[:16]),
+        )
+
+    def alert_light(self, code: Any, now: float, blink: bool = True, severity: Severity = Severity.WARNING) -> None:
+        """把报警灯切到"该报警码对应的颜色"，并按需**持续闪**（``blink=True``）或常亮。
+
+        用途：① 报警持续期间保持闪烁；② 用户**消音**后把灯切成常亮（"灯仍亮"是本项目的
+        明确设计：消音只停声音，不停状态提示）。
+        """
+        plan = self.plan_for(code, severity)
+        self._send_kind(DeviceKind.LIGHT, LightCommand(color=plan.light, blink=blink, ts=now))
+
+    def re_alert(self, code: Any, now: float, severity: Severity = Severity.WARNING) -> AlarmPresentation:
+        """**重发一次**某个仍在生效的报警（灯 + 屏 + 声），用于"报警持续提醒"。
+
+        与 :meth:`dispatch` 的区别（刻意设计）：
+        * **不追加** ``dispatched`` 流水（那是"事件流水"，重发会让手机端列表被刷屏）；
+          只累加 ``realerts`` 计数，便于测试与诊断；
+        * 尊重静音与 ``enabled``：静音期间只更新灯/屏、**不出声**；
+        * 播报仍受 ``speak_repeat_s`` 节流（同一句话不反复念）。
+        """
+        plan = self.plan_for(code, severity)
+        self.realerts += 1
+        self._send_kind(DeviceKind.LIGHT, LightCommand(color=plan.light, blink=plan.blink, ts=now))
+        self._send_kind(DeviceKind.DISPLAY, DisplayCommand(lines=plan.lcd_lines, ts=now))
+        if not self.enabled or self.is_silenced(now):
+            return plan
+        if plan.beep_times > 0:
+            self._send_kind(
+                DeviceKind.AUDIO,
+                BeepCommand(times=plan.beep_times, on_ms=plan.beep_on_ms, off_ms=plan.beep_off_ms, ts=now),
+                only_driver="buzzer",
+            )
+        if plan.speak and self._speak_allowed(plan.speak, now):
+            self._send_kind(
+                DeviceKind.AUDIO, SpeakCommand(text=plan.speak, priority=severity, ts=now),
+                only_driver="bt_speaker",
+            )
+        return plan
 
     # ------------------------------------------------------------------
     # 静音

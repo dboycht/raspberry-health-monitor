@@ -52,7 +52,7 @@ def lit_colors(led: Led) -> list:
 
 class TestLedConstruction(unittest.TestCase):
     def test_默认引脚映射符合接线表(self) -> None:
-        self.assertEqual(DEFAULT_PINS, {"green": 22, "yellow": 23, "red": 24})
+        self.assertEqual(DEFAULT_PINS, {"green": 22, "yellow": 23, "red": 12})
 
     def test_可扩展蓝色(self) -> None:
         led = make_led(pins={"green": 22, "yellow": 23, "red": 24, "blue": 25})
@@ -277,7 +277,7 @@ class TestLedStatusAndLifecycle(unittest.TestCase):
         self.assertEqual(st["current_color"], "yellow")
         self.assertEqual(st["levels"]["yellow"], 1)
         self.assertEqual(st["levels"]["red"], 0)
-        self.assertEqual(st["pins"], {"green": 22, "yellow": 23, "red": 24})
+        self.assertEqual(st["pins"], {"green": 22, "yellow": 23, "red": 12})
         led.close()
 
     def test_read返回基类Sample且计数(self) -> None:
@@ -297,7 +297,7 @@ class TestLedStatusAndLifecycle(unittest.TestCase):
         self.assertIn("GPIO22", desc["pins"]["green"])
         self.assertIn("物理脚 15", desc["pins"]["green"])
         self.assertIn("物理脚 16", desc["pins"]["yellow"])
-        self.assertIn("物理脚 18", desc["pins"]["red"])
+        self.assertIn("物理脚 32", desc["pins"]["red"], "红灯已改到 GPIO12（物理脚 32）")
         self.assertIn("220", desc["pins"]["green"])
         self.assertIn("先熄灭其他颜色", desc["notes"])
         led.close()
@@ -326,6 +326,104 @@ class TestLedStatusAndLifecycle(unittest.TestCase):
         led = make_led(active_low=True)
         self.assertTrue(led.active_low)
         self.assertTrue(led.describe()["notes"].find("低") >= 0)
+        led.close()
+
+
+class Test持续闪与停闪(unittest.TestCase):
+    """`blink_forever()` / `stop_blink()`（2026-09-26 新增，配合"报警持续提醒"）。
+
+    真机背景：原来 `send(blink=True)` = 驱动里**阻塞**闪 3 秒后停在亮态 ⇒
+    用户看到的是"报警只闪一下就常亮"（实机反馈"黄灯指示亮也不是闪"），
+    而且那 3 秒**会阻塞主循环**（不采样、不响应按键）。
+    现在 `blink=True` = **持续闪**（gpiozero 后台线程），消音后 `stop_blink(steady_on=True)` 转常亮。
+    """
+
+    def test_blink_true表示持续闪(self) -> None:
+        led = make_led()
+        led.send(LightCommand(color="yellow", blink=True))
+        self.assertEqual(led.blinking_color, "yellow", "应当是持续闪状态")
+        self.assertEqual(led.current_color, "yellow")
+        self.assertEqual(led.status()["blinking"], "yellow")
+
+    def test_停闪后保持常亮(self) -> None:
+        led = make_led()
+        led.send(LightCommand(color="yellow", blink=True))
+        led.stop_blink(steady_on=True)
+        self.assertIsNone(led.blinking_color, "停闪后不该还在闪")
+        self.assertEqual(led.current_color, "yellow", "消音后灯仍要亮（本项目的明确设计）")
+        self.assertEqual(lit_colors(led), ["yellow"], "常亮 = 逻辑电平为 1")
+
+    def test_停闪并熄灭(self) -> None:
+        led = make_led()
+        led.send(LightCommand(color="red", blink=True))
+        led.stop_blink(steady_on=False)
+        self.assertIsNone(led.blinking_color)
+        self.assertEqual(lit_colors(led), [], "steady_on=False 应当熄灭")
+
+    def test_换色会停掉上一个颜色的闪(self) -> None:
+        """不然旧颜色的闪烁线程会继续抢 GPIO（红绿同亮 / 鬼闪）。"""
+        led = make_led()
+        led.send(LightCommand(color="red", blink=True))
+        led.send(LightCommand(color="green"))
+        self.assertIsNone(led.blinking_color, "换色后不该还留着旧颜色的闪")
+        self.assertEqual(lit_colors(led), ["green"])
+
+    def test_all_off也会停闪(self) -> None:
+        led = make_led()
+        led.send(LightCommand(color="red", blink=True))
+        led.all_off()
+        self.assertIsNone(led.blinking_color)
+        self.assertEqual(lit_colors(led), [])
+
+    def test_未open不许起闪(self) -> None:
+        led = Led(mock=True, sleep=FakeSleep())
+        with self.assertRaises(DeviceNotReady):
+            led.blink_forever("green")
+
+    def test_未知颜色不许起闪(self) -> None:
+        led = make_led()
+        with self.assertRaises(UnsupportedError):
+            led.blink_forever("purple")
+
+    def test_停闪是幂等的(self) -> None:
+        led = make_led()
+        led.stop_blink()          # 没在闪时调用
+        led.stop_blink()
+        led.send(LightCommand(color="green", blink=True))
+        led.stop_blink()
+        led.stop_blink()
+        self.assertIsNone(led.blinking_color)
+
+    def test_真机后端走gpiozero的后台闪烁(self) -> None:
+        """注入假 LED 后端，断言我们**确实用了 gpiozero 的 background blink**（不自己写线程）。"""
+        calls: list = []
+
+        class FakeGpioLed:
+            def __init__(self, pin, active_high=True, initial_value=False) -> None:
+                self.pin = pin
+                self.value = initial_value
+
+            def blink(self, on_time=1, off_time=1, n=None, background=True):
+                calls.append(("blink", on_time, off_time, n, background))
+
+            def on(self) -> None:
+                calls.append(("on",))
+
+            def off(self) -> None:
+                calls.append(("off",))
+
+            def close(self) -> None:
+                calls.append(("close",))
+
+        led = Led(pins={"red": 12}, mock=False, sleep=FakeSleep(), led_factory=FakeGpioLed)
+        led.open()
+        led.send(LightCommand(color="red", blink=True))
+        blink_calls = [c for c in calls if c[0] == "blink"]
+        self.assertEqual(len(blink_calls), 1, "应当调用 gpiozero 的 blink()")
+        self.assertIsNone(blink_calls[0][3], "n=None 才是「一直闪」")
+        self.assertTrue(blink_calls[0][4], "background=True 才不阻塞主循环")
+        led.stop_blink(steady_on=True)
+        self.assertIn(("on",), calls, "停闪转常亮应当用 gpiozero 的 on()（它会先停闪）")
         led.close()
 
 

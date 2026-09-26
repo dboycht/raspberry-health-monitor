@@ -389,6 +389,12 @@ class ConsoleLed(ConsoleOutput):
         self.current_color = command.color
         self._record(f"颜色={command.color}" + ("（闪烁）" if command.blink else ""), command)
 
+    @property
+    def blink_requested(self) -> bool:
+        """最近一次灯光指令是否要求"持续闪"（供演示/测试观察，2026-09-26 加）。"""
+        lights = [c for c in self.history if isinstance(c, LightCommand)]
+        return bool(lights[-1].blink) if lights else False
+
 
 # ==========================================================================
 # 三、驱动缺席时的"退回模拟"工厂

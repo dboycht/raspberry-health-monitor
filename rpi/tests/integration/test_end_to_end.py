@@ -231,6 +231,106 @@ class Test实体按键接线(unittest.TestCase):
             rt.close()
 
 
+class Test报警持续提醒(unittest.TestCase):
+    """★ 2026-09-26 真机 T3 用户反馈后新增：报警不能"响两声就完"。
+
+    真机现象（用户原话）：拔掉传感器 → 黄灯 + 蜂鸣 2 声 → **之后再无动静**，
+    于是"短按消音"根本看不出效果；而且灯只是"闪 3 秒就常亮"（不是持续闪）。
+
+    现在：报警仍在且**未消音**期间，每 `re_alert_interval_s` 秒**重发**一次（响 + 刷屏，
+    灯持续闪）；短按消音后**不再响**、灯转**常亮**；报警解除后彻底停。
+    """
+
+    def setUp(self) -> None:
+        self.clock = _Clock()
+        self.rt = self._runtime(5.0)
+        self.led = self.rt.outputs["status_led"]
+        self.buzzer = self.rt.outputs["alarm_buzzer"]
+
+    def tearDown(self) -> None:
+        self.rt.close()
+
+    @staticmethod
+    def _config_with(interval: float) -> AppConfig:
+        import copy
+
+        config = copy.deepcopy(DEMO_CONFIG)
+        thresholds = config.setdefault("thresholds", {})
+        thresholds["re_alert_interval_s"] = interval
+        # ⚠️ 演示配置里 `repeat_cooldown_s=0`（为了几十秒演完 11 幕）⇒ **每一帧都会重新报同一条报警**。
+        #    那会污染本组测试（把"持续重发"与"规则引擎每帧重报"混在一起），所以这里把它调大。
+        thresholds["repeat_cooldown_s"] = 300
+        return AppConfig.from_dict(config)
+
+    def _runtime(self, interval: float) -> PlaybackRuntime:
+        rt = PlaybackRuntime(self._config_with(interval), clock=self.clock, sleep=lambda _s: None)
+        self.assertEqual(rt.open(), {}, "演示配置下不该有装配失败")
+        return rt
+
+    def _trigger_alarm(self) -> None:
+        self.rt.set_vitals(heart_rate=130.0, spo2=98.0)
+        self.rt.tick()
+
+    def test_报警期间灯持续闪(self) -> None:
+        self._trigger_alarm()
+        self.assertTrue(self.led.blink_requested, "报警期间 LED 应当处于持续闪状态")
+
+    def test_到间隔才重响不到不响(self) -> None:
+        self._trigger_alarm()
+        first = self.buzzer.total_beeps
+        self.clock.advance(1.0)
+        self.rt.tick()
+        self.assertEqual(self.buzzer.total_beeps, first, "没到间隔不该重响")
+        self.clock.advance(5.0)
+        self.rt.tick()
+        self.assertGreater(self.buzzer.total_beeps, first, "到了间隔必须再响一次")
+        self.assertGreaterEqual(self.rt.dispatcher.realerts, 1, "重发次数要能被观察")
+
+    def test_消音后不再重响但灯仍亮(self) -> None:
+        self._trigger_alarm()
+        self.rt.silence(self.clock())
+        self.clock.advance(0.1)
+        self.rt.tick()
+        self.assertFalse(self.led.blink_requested, "消音后灯应转常亮（不再闪）")
+        self.assertNotEqual(self.led.current_color, "off", "消音只停声音，灯仍要亮")
+
+        beeps = self.buzzer.total_beeps
+        for _ in range(4):
+            self.clock.advance(5.0)
+            self.rt.tick()
+        self.assertEqual(self.buzzer.total_beeps, beeps, "消音期间不许再响")
+
+    def test_报警解除后不再重发(self) -> None:
+        self._trigger_alarm()
+        self.rt.set_vitals(heart_rate=72.0, spo2=98.0)
+        self.clock.advance(5.0)
+        events = self.rt.tick()
+        self.assertIn("all_clear", [e.code.value for e in events], "恢复正常应当发 ALL_CLEAR")
+
+        beeps = self.buzzer.total_beeps
+        for _ in range(3):
+            self.clock.advance(5.0)
+            self.rt.tick()
+        self.assertEqual(self.buzzer.total_beeps, beeps, "报警解除后不该再重发")
+
+    def test_间隔为0时回到只提示一次(self) -> None:
+        """`re_alert_interval_s=0` = 关闭持续提醒（保留旧行为，便于对照与降级）。"""
+        clock = _Clock()
+        rt = PlaybackRuntime(self._config_with(0.0), clock=clock, sleep=lambda _s: None)
+        self.assertEqual(rt.open(), {})
+        try:
+            rt.set_vitals(heart_rate=130.0, spo2=98.0)
+            rt.tick()
+            beeps = rt.outputs["alarm_buzzer"].total_beeps
+            for _ in range(3):
+                clock.advance(10.0)
+                rt.tick()
+            self.assertEqual(rt.outputs["alarm_buzzer"].total_beeps, beeps, "关闭后不该重发")
+            self.assertEqual(rt.dispatcher.realerts, 0)
+        finally:
+            rt.close()
+
+
 class TestHttpApiEndToEnd(unittest.TestCase):
     """起真实 HTTP 服务，走真实 socket 请求（不是直接调 WebApi）。"""
 

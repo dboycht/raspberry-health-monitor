@@ -112,6 +112,12 @@ class Runtime:
             config, self.inputs, store=self.store, clock=clock,
         )
 
+        # ---- 3.2 报警"持续提醒"的状态（2026-09-26 新增，见 `_drive_persistent_alert`）----
+        #: 上次重发提示的时间（0 = 还没有过）
+        self._last_re_alert: float = 0.0
+        #: 当前报警灯的 (颜色, 是否在闪)；用来避免每帧重复下发 GPIO
+        self._alert_light: Optional[Tuple[str, bool]] = None
+
         # ---- 3.5 上云（可选；没配置或没装 paho 就整体降级，绝不影响本地监护） ----
         # 本项目实际使用的云平台是 **OneNET**（旧版 MQTT物联网套件，数据流-数据点）；
         # 通用 MQTT 保留作为备选（例如自建 EMQX / 巴法云）。两者**只启用一个**：
@@ -265,6 +271,9 @@ class Runtime:
             for event in events:
                 _LOG.info("[报警] %s %s", event.code.value, event.message)
 
+        # ---- 报警"持续提醒"（重发 + 灯持续闪 / 消音后常亮）----
+        self._drive_persistent_alert(now)
+
         # 上云：按 interval_s 周期发布读数摘要（失败只计数，不影响本地）
         # ⚠️ 周期也**跑在假时钟下**：演示/单测推进时钟即可触发上报，不必真的等 30 秒。
         if self.mqtt is not None and self.mqtt_started:
@@ -286,6 +295,63 @@ class Runtime:
         # 按键引发的报警（SOS）**已经在下发时就地处理过**，这里只是把它一起返回，
         # 让调用方（演示/日志/单测）看到"这一帧发生过什么"；不会二次下发。
         return events + button_alarms
+
+    def _top_active_code(self, active: Dict[str, float]) -> Any:
+        """从"仍在报警的项"里挑**最该被提醒**的那个（红 > 黄 > 绿，同色取最早触发）。"""
+        order = {"red": 0, "yellow": 1, "green": 2}
+
+        def rank(item: Tuple[str, float]) -> Tuple[int, float]:
+            name, first_ts = item
+            try:
+                code: Any = AlarmCode(name)
+            except ValueError:  # pragma: no cover - 理论上不会发生
+                code = name
+            plan = self.dispatcher.plan_for(code)
+            return (order.get(str(plan.light), 3), float(first_ts))
+
+        return min(active.items(), key=rank)[0]
+
+    def _drive_persistent_alert(self, now: float) -> None:
+        """报警"持续提醒"：**按周期重发**提示，并让报警灯**持续闪**（消音后转常亮）。
+
+        为什么需要它（2026-09-26 真机 T3，用户实测反馈）：
+        * 原来报警**只在事件发生那一帧下发一次**（`SENSOR_FAULT` 响 2 声就结束）⇒
+          ① 安全性不足：老人房间里"响两声就完"等于没报警；
+          ② **"消音"在真机上根本没有可观察的效果**（没有持续的声音可停）；
+        * 灯原来 `blink=True` = 驱动里**阻塞**闪 3 秒后常亮 ⇒ 用户看到的其实是"灯不闪"，
+          而且那 3 秒**阻塞主循环**（不采样、不响应按键）。
+        现在：未消音期间每 `re_alert_interval_s` 秒重发一次（响 + 刷屏，灯保持闪）；
+        用户短按消音后**不再响**、灯转**常亮**（"灯仍亮"是本项目的明确设计）。
+        """
+        interval = float(getattr(self.config.thresholds, "re_alert_interval_s", 0.0) or 0.0)
+        active = self.engine.active_alarms()          # {报警码字符串: 首次触发时间}
+        if not active:
+            self._last_re_alert = 0.0
+            self._alert_light = None
+            return
+        if interval <= 0:
+            return                                    # 0 = 关闭持续提醒（回到"只提示一次"）
+
+        silenced = self.dispatcher.is_silenced(now)
+        code = self._top_active_code(active)
+        plan = self.dispatcher.plan_for(code)
+        want_blink = bool(plan.blink) and not silenced
+        desired = (str(plan.light), want_blink)
+
+        if self._alert_light != desired:
+            # 状态变了（刚报警 / 刚消音 / 报警颜色变了）⇒ 立刻把灯切过去并重新计时
+            self.dispatcher.alert_light(code, now, blink=want_blink)
+            self._alert_light = desired
+            self._last_re_alert = now
+            return
+
+        if not silenced and (now - self._last_re_alert) >= interval:
+            self._last_re_alert = now
+            self.dispatcher.re_alert(code, now)
+            _LOG.info(
+                "[报警] 持续提醒：%s 仍在报警，每 %.0fs 重发一次（第 %d 次）",
+                getattr(code, "value", code), interval, self.dispatcher.realerts,
+            )
 
     def _consume_button_events(self, now: float) -> List[AlarmEvent]:
         """把采集器攒下的实体按键事件变成动作：**短按消音 / 长按求助**。

@@ -53,6 +53,11 @@ class Thresholds:
     sensor_fault_after: int = 3
     # 报警重复抑制：同一报警码在多少秒内只报一次（防止刷屏/吵人）
     repeat_cooldown_s: float = 300.0
+    # 报警"持续提醒"：报警仍在生效且**未消音**时，每隔多少秒重发一次提示
+    # （响 + 刷屏；灯在此期间持续闪）。**0 = 关闭**（回到"只在事件发生时提示一次"）。
+    # ⚠️ 2026-09-26 真机 T3 后新增：原来只提示一次 ⇒ 老人房间里"响两声就完"，
+    # 而且"消音"在真机上没有可观察的效果（没有持续的声音可停）。
+    re_alert_interval_s: float = 15.0
     # 数值回落的迟滞（防止在阈值附近反复抖动）
     hysteresis: float = 3.0
 
@@ -74,6 +79,10 @@ class Thresholds:
             raise ConfigError("夜间时段小时数必须在 0~23 之间")
         if self.repeat_cooldown_s < 0:
             raise ConfigError("repeat_cooldown_s 不能为负")
+        if self.re_alert_interval_s < 0:
+            raise ConfigError(
+                "re_alert_interval_s 不能为负（0 = 关闭报警持续提醒，正数 = 每多少秒重发一次）"
+            )
         if self.sensor_fault_after < 1:
             raise ConfigError("sensor_fault_after 至少为 1")
 
@@ -332,6 +341,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "night_window_s": 3600,
         "sensor_fault_after": 3,
         "repeat_cooldown_s": 300,
+        "re_alert_interval_s": 15,
         "hysteresis": 3,
     },
     "devices": {
@@ -403,7 +413,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "driver": "led",
             "enabled": True,
             "read_interval_s": 1.0,
-            "params": {"pins": {"green": 22, "yellow": 23, "red": 24}},
+            # ⚠️ 红灯用 **GPIO12（物理脚 32）**：它原来是 GPIO24，而 TFT 的 DC 也是 GPIO24
+            #    ⇒ **撞脚**（2026-09-26 发现：撞脚检查当时没统计 tft.dc_pin，所以没报出来）。
+            "params": {"pins": {"green": 22, "yellow": 23, "red": 12}},
         },
         "sos_button": {
             "driver": "button",
