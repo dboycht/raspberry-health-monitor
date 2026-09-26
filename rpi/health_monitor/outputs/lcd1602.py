@@ -29,9 +29,12 @@ PCF8574 → HD44780 的位分配（本项目固定用这一种，市面上 99% �
 
 设计要点（为什么这么写）
 ------------------------
-1. **4 位模式初始化序列**：上电后 HD44780 处于 8 位模式且状态未知，必须按数据手册
-   的"软复位"流程走：``0x33 → 0x32 → 功能设置 0x28 → 显示关 0x08 → 清屏 0x01
-   → 输入模式 0x06 → 显示开 0x0C``。少一步就会出现"屏幕只亮不显示"或花屏。
+1. **4 位模式初始化序列 + 三段毫秒级等待**：上电后 HD44780 处于 8 位模式且状态未知，必须按
+   数据手册的"软复位"流程走：``0x33 → 0x32 → 功能设置 0x28 → 显示关 0x08 → 清屏 0x01
+   → 输入模式 0x06 → 显示开 0x0C``。**每一步之间的等待也不能省**（``0x33/0x32/0x28`` 后各
+   4.1ms、清屏后 1.52ms、上电 40ms+）——不等的症状极具误导性：
+   **背光亮、I2C 地址能扫到、写入还 ACK，但屏上什么都不显示**（2026-09-26 T1 验收真机踩到，
+   见 `ERROR.md` E42）。等待通过 `sleep=` 注入，单测用记录器断言。
 2. **纯逻辑拆出来**：字节↔PCF8574 位↔I2C 缓冲区的编码放在
    :class:`Pcf8574LcdCodec`（不碰总线），单测不需要硬件也能验证时序与位序。
 3. **自动探测地址**：0x27 / 0x3F 最常见，0x20 / 0x38 作备选；探测结果写进
@@ -50,6 +53,7 @@ PCF8574 → HD44780 的位分配（本项目固定用这一种，市面上 99% �
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..hal.device import OutputDevice
@@ -89,6 +93,19 @@ CMD_SET_DDRAM = 0x80         # 设置 DDRAM 地址（| 地址）
 
 #: 两行在 DDRAM 中的起始地址（HD44780：第 2 行从 0x40 开始）
 ROW_OFFSETS: Tuple[int, ...] = (0x00, 0x40)
+
+
+def _noop_sleep(_seconds: float) -> None:
+    """mock 模式下的空等待（没有硬件，等待没有意义；真机走 `time.sleep`）。"""
+    return None
+
+#: HD44780 数据手册要求的**毫秒级等待**（秒）。⚠️ 少一个就会出现"背光亮、地址能扫到、
+#: 写入还 ACK，但屏上什么都不显示"——因为不等就发下一条，芯片会**静默忽略**。
+#: 2026-09-26 真机踩到：驱动当时一个等待都没有，T1（LCD）验收时屏上只有纯色块。
+DELAY_POWER_ON = 0.050        # 上电后等内部复位完成（手册要求 >40ms）
+DELAY_INIT_RESET = 0.0041     # 0x33 / 0x32 / 功能设置之后各等 4.1ms
+DELAY_CLEAR = 0.00152         # 清屏 / 回原点 1.52ms
+DELAY_COMMAND = 0.00004       # 普通指令 37µs（取 40µs 留余量）
 
 
 # ==========================================================================
@@ -248,6 +265,7 @@ class Lcd1602(OutputDevice):
         non_ascii_fallback: str = "?",
         mock: bool = False,
         name: str = "",
+        sleep: Optional[Callable[[float], None]] = None,
     ) -> None:
         # ⚠️ 这里刻意把 ``bus``（总线号）单独保存，不直接传给基类的 bus=…：
         #    契约要求 ``bus`` 是"总线号 int"，但注册表 create_device() 会注入一个
@@ -271,6 +289,11 @@ class Lcd1602(OutputDevice):
         self._address_auto = self.address == 0
         self._handle: Any = bus_handle
         self._codec = Pcf8574LcdCodec(backlight=self.backlight)
+        #: 延时注入：真机用 `time.sleep`（HD44780 的毫秒级等待是**必须**的），
+        #: mock 模式默认**不真等**（没有硬件，等待没有意义），测试可注入记录器来断言等待。
+        self._sleep: Callable[[float], None] = (
+            sleep if sleep is not None else (_noop_sleep if mock else time.sleep)
+        )
         # 驱动"自己记录的"当前屏幕内容（硬件读不回来，见模块文档）
         self._lines: Tuple[str, str] = ("", "")
         self._page = 0
@@ -362,16 +385,29 @@ class Lcd1602(OutputDevice):
 
         序列（缺一不可）：``0x33 → 0x32 → 功能设置 0x28 → 显示关 0x08
         → 清屏 0x01 → 输入模式 0x06 → 显示开 0x0C``。
+
+        ⚠️ **每一步之间的等待同样是"缺一不可"**（2026-09-26 真机踩到：
+        没有等待时背光亮、地址能扫到、写入还 ACK，但屏上一直不出字）：
+        ``0x33/0x32/0x28`` 后各 4.1ms、清屏后 1.52ms、普通指令 37µs。
+        I2C 总线本身比 37µs 慢得多，所以真正必须的是那三段**毫秒级**等待。
         """
         # 上电后芯片可能停在 8 位模式：连续 0x33/0x32（8 位模式下的软复位字节，
         # 在本驱动的 4 位编码里等价于连续发送 0x3 半字节）把它拉回已知状态。
+        self._sleep(DELAY_POWER_ON)                    # 上电复位（手册要求 >40ms）
         self._write_nibbles(0x33, rs=0)
+        self._sleep(DELAY_INIT_RESET)                  # ⚠️ 手册：功能设置后 4.1ms
         self._write_nibbles(0x32, rs=0)
-        self._write_nibbles(CMD_FUNCTION_SET, rs=0)   # 4 位 / 2 行 / 5x8
-        self._write_nibbles(CMD_DISPLAY_OFF, rs=0)    # 先关显示，避免清屏时闪白
-        self._write_nibbles(CMD_CLEAR_DISPLAY, rs=0)  # 清屏 + 光标回原点
-        self._write_nibbles(CMD_ENTRY_MODE, rs=0)     # 写入后光标右移
-        self._write_nibbles(CMD_DISPLAY_ON, rs=0)     # 显示开、光标/闪烁关
+        self._sleep(DELAY_INIT_RESET)
+        self._write_nibbles(CMD_FUNCTION_SET, rs=0)    # 4 位 / 2 行 / 5x8
+        self._sleep(DELAY_INIT_RESET)
+        self._write_nibbles(CMD_DISPLAY_OFF, rs=0)     # 先关显示，避免清屏时闪白
+        self._sleep(DELAY_COMMAND)
+        self._write_nibbles(CMD_CLEAR_DISPLAY, rs=0)   # 清屏 + 光标回原点
+        self._sleep(DELAY_CLEAR)                       # ⚠️ 手册：清屏要 1.52ms
+        self._write_nibbles(CMD_ENTRY_MODE, rs=0)      # 写入后光标右移
+        self._sleep(DELAY_COMMAND)
+        self._write_nibbles(CMD_DISPLAY_ON, rs=0)      # 显示开、光标/闪烁关
+        self._sleep(DELAY_COMMAND)
         self._set_backlight_hw(self.backlight)
         self._lines = ("", "")  # 清屏后驱动记录的内容也要归零
 
@@ -482,7 +518,9 @@ class Lcd1602(OutputDevice):
         self._require_open()
         try:
             self._write_command(CMD_CLEAR_DISPLAY)
+            self._sleep(DELAY_CLEAR)      # ⚠️ 清屏要 1.52ms，不等就会丢后面的指令
             self._write_command(CMD_RETURN_HOME)
+            self._sleep(DELAY_CLEAR)
         except Exception as exc:  # noqa: BLE001
             self._note_fault(exc)
             raise AlarmDispatchError(f"LCD1602 清屏失败：{exc}") from exc

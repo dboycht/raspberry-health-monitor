@@ -119,6 +119,63 @@ class TestPcf8574Codec(unittest.TestCase):
         )
 
 
+class TestInitTiming(unittest.TestCase):
+    """★ 回归测试（2026-09-26 真机 T1 验收踩到）：初始化**必须等够毫秒级时间**。
+
+    真机现象：背光亮、`i2cdetect` 扫到 0x27、写入还 ACK，但屏上一直不显示字符
+    （写密集字符时只看到纯色块）——**极具误导性**，容易误判成"模块坏了/对比度问题"。
+    根因：初始化序列里一个等待都没有；HD44780 在 ``0x33/0x32/功能设置`` 后要等 4.1ms、
+    清屏后要等 1.52ms，不等就发下一条，芯片会**静默忽略**。
+
+    判据（可执行的一句话）：
+    > **初始化过程中记录到的等待里，必须包含"≥40ms 一次、≥4.1ms 三次、≥1.52ms 一次"。**
+    """
+
+    def _open_recording(self) -> list:
+        waits: list = []
+        lcd = Lcd1602(mock=True, sleep=lambda seconds: waits.append(seconds))
+        lcd.open()
+        return waits
+
+    def test_上电后先等够内部复位(self) -> None:
+        waits = self._open_recording()
+        self.assertTrue(waits, "初始化里必须至少有一次等待（否则真机上会静默失败）")
+        self.assertGreaterEqual(waits[0], 0.04, "第一步就要等上电复位（手册要求 >40ms）")
+
+    def test_三次功能设置后各等4毫秒(self) -> None:
+        waits = self._open_recording()
+        long_enough = [w for w in waits if w >= 0.004]
+        self.assertGreaterEqual(
+            len(long_enough), 4,
+            f"0x33 / 0x32 / 0x28 之后与上电复位都该 ≥4ms，实际只记录到 {long_enough}",
+        )
+
+    def test_清屏后等1点52毫秒(self) -> None:
+        waits = self._open_recording()
+        self.assertTrue(
+            any(0.001 <= w < 0.004 for w in waits),
+            f"清屏后要等 1.52ms（介于 1ms 与 4ms 之间），实际记录：{waits}",
+        )
+
+    def test_清屏方法也要等(self) -> None:
+        waits: list = []
+        lcd = Lcd1602(mock=True, sleep=lambda seconds: waits.append(seconds))
+        lcd.open()
+        waits.clear()
+        lcd.clear()
+        self.assertGreaterEqual(
+            len([w for w in waits if w >= 0.001]), 2,
+            "clear() 里清屏与回原点各要等 1.52ms",
+        )
+
+    def test_mock模式默认不真等(self) -> None:
+        """mock 没有硬件，默认不该真的睡（否则每个用例白等 60ms）。"""
+        import time as _time
+
+        lcd = Lcd1602(mock=True)
+        self.assertIsNot(lcd._sleep, _time.sleep)  # noqa: SLF001 - 刻意断言默认实现
+
+
 class TestLcd1602Mock(unittest.TestCase):
     def test_未open就send必须报错(self) -> None:
         lcd = Lcd1602(mock=True)
