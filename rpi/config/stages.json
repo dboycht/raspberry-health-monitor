@@ -1,0 +1,99 @@
+{
+  "note": [
+    "分级验收的『本级器件集合』**单一来源**：docs/14-分步实施路线图.md 的阶梯表按这里执行。",
+    "用法：python3 scripts/stage_run.py --stage T2   （临时只开这一级的器件起服务，--stop 还原配置）",
+    "为什么只存『哪些器件 enabled』而不复制代码：阶梯的差别只在『接线 + 配置』，",
+    "代码是同一份（rpi/health_monitor）；复制 13 份会让一次 bug 修复要改 13 处、并互相漂移。",
+    "status=verified 的级 = 已在真机验收通过（verified_on/commit 指向当时的提交）。"
+  ],
+  "reference": "rpi/config/devices.example.json",
+  "stages": {
+    "T0": {
+      "title": "温湿度 + CSV + 动态曲线（课程作业 H）",
+      "devices": [],
+      "status": "verified",
+      "verified_on": "2026-09-25",
+      "commit": "0dc0378",
+      "note": "T0 走 basic/（独立实现、不 import 主项目），不涉及 rpi 的配置开关；真机 111 样本全成功"
+    },
+    "T1": {
+      "title": "LCD1602 字符屏（I2C）",
+      "devices": ["ambient", "display"],
+      "status": "verified",
+      "verified_on": "2026-09-26",
+      "commit": "7f17f53",
+      "note": "官方验收 --only display = PASS 7/0/0/0；首轮不出字=初始化缺毫秒级等待（E42）"
+    },
+    "T2": {
+      "title": "蜂鸣器 + 双色 LED（本地报警）",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led"],
+      "status": "verified",
+      "verified_on": "2026-09-26",
+      "commit": "ba6ae30",
+      "note": "官方验收 --only alarm_buzzer,status_led = PASS 7/0/0/1 + 端到端闭环（拔 DHT11 线→报警，插回→ALL_CLEAR）；闭环第一轮撞到 E44"
+    },
+    "T3": {
+      "title": "按键：短按消音 / 长按求助",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button"],
+      "status": "planned",
+      "note": "代码链路已在 2026-09-26 接好（CLICK→消音、LONG_PRESS→sos），本级只剩插线 + 真机按一次"
+    },
+    "T4": {
+      "title": "HC-SR501 人体红外（久无活动）",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
+      "status": "planned",
+      "note": "演示时把 thresholds.no_motion_timeout_s 临时改小（默认 1800 秒）"
+    },
+    "T5": {
+      "title": "MCP3002 ADC 自证两个通道",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
+      "status": "planned",
+      "note": "MCP3002 由 tmp36 组合使用、没有独立设备名；本级用 diag_pin_levels.py --adc 自证"
+    },
+    "T6": {
+      "title": "TMP36 精密体温（模拟量 → 温度）",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp"],
+      "status": "planned"
+    },
+    "T7": {
+      "title": "MAX30102 心率血氧",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals"],
+      "status": "planned",
+      "note": "器件现状：Part ID 读回 0x00（应 0x15），先确认模块型号"
+    },
+    "T8": {
+      "title": "蓝牙音箱语音播报",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker"],
+      "status": "planned"
+    },
+    "T9": {
+      "title": "TFT 1.8\" SPI 彩屏",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "status": "planned"
+    },
+    "T10": {
+      "title": "服务化：HTTP API + 状态网页",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "status": "planned",
+      "note": "到这里本级器件集合与 T9 相同；差别在『全部起服务』（S1–S10 逐项验收）"
+    },
+    "T11": {
+      "title": "SQLite 历史与趋势",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "status": "planned",
+      "note": "内核已具备；本级是『用起来』：连跑 30~60 分钟 + 历史接口 + 保留期清理"
+    },
+    "T12": {
+      "title": "OneNET 上云（数据点 + 规则引擎转发）",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "status": "planned",
+      "note": "另需在板子的 devices.local.json 里开 onenet.enabled 并配密钥（密钥不入库）；平台接收已实测过 'accepted'"
+    },
+    "T13": {
+      "title": "手机 App 联调 + 整机收口",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "status": "planned",
+      "note": "安卓端在局域网联调；本级还要填完 docs/07 的 54 项与准备答辩材料"
+    }
+  }
+}

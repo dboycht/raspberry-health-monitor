@@ -75,6 +75,7 @@ except ImportError:  # pragma: no cover - 只在 basic 不可用时
     safe_print = print
 
 CONFIG_PATH = RPI_DIR / "config" / "devices.json"
+STAGES_PATH = RPI_DIR / "config" / "stages.json"
 BACKUP_PATH = RPI_DIR / "config" / "devices.json.stage-bak"
 STATE_PATH = RPI_DIR / "config" / ".stage-run.json"
 LOG_PATH = Path("/tmp/health-monitor-stage.log")
@@ -91,6 +92,55 @@ def parse_only(text: Optional[str]) -> List[str]:
         if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def load_stages(path: Optional[Path] = None) -> Dict[str, Any]:
+    """读分级快照（`config/stages.json`）：**"每一级开哪些器件"的单一来源**。
+
+    为什么是这一个文件而不是 14 个小文件：级与级之间的差别只是"多开一个器件"，
+    分散成 14 份必然互相漂移（本项目刚在"板上漏同步一个目录"上踩过同类坑）。
+
+    Raises:
+        FileNotFoundError / ValueError: 文件不在或结构不对（**大声报错**，不静默放行）。
+    """
+    target = Path(path) if path else STAGES_PATH
+    data = json.loads(target.read_text(encoding="utf-8"))
+    stages = data.get("stages")
+    if not isinstance(stages, dict) or not stages:
+        raise ValueError(f"{target} 里没有可用的 stages 字段")
+    return data
+
+
+def sorted_stage_names(stages: Dict[str, Any]) -> List[str]:
+    """按**数字序**排级别（T2 在 T10 前面，别按字符串排成 T1、T10、T2）。"""
+    def key(name: str) -> Tuple[int, str]:
+        digits = "".join(ch for ch in str(name) if ch.isdigit())
+        return (int(digits) if digits else 10**6, str(name))
+    return sorted(stages, key=key)
+
+
+def stage_devices(data: Dict[str, Any], name: str) -> List[str]:
+    """取某一级的器件列表。
+
+    Raises:
+        KeyError: 没有这一级（消息里带上可用级别，避免"什么都没开却看起来正常"）。
+    """
+    stages = data.get("stages") or {}
+    key = str(name).strip().upper()
+    if key not in stages:
+        raise KeyError(f"没有 {key} 这一级；可用：{', '.join(sorted_stage_names(stages))}")
+    return [str(x) for x in (stages[key].get("devices") or [])]
+
+
+def stage_info(data: Dict[str, Any], name: str) -> Dict[str, Any]:
+    """取某一级的完整快照（title/status/devices/note…）。"""
+    stages = data.get("stages") or {}
+    key = str(name).strip().upper()
+    if key not in stages:
+        raise KeyError(f"没有 {key} 这一级；可用：{', '.join(sorted_stage_names(stages))}")
+    info = dict(stages[key])
+    info["stage"] = key
+    return info
 
 
 def select_enabled(devices: Dict[str, Any], only: List[str]) -> Tuple[List[str], List[str], List[str]]:
@@ -250,18 +300,58 @@ def do_status(port: int) -> int:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="分级验收用的临时服务（只开本级器件）")
     parser.add_argument("--only", default=None, help="只开这些设备（配置里的设备名，逗号分隔）")
+    parser.add_argument("--stage", default=None, metavar="Tn",
+                        help="按分级快照开器件，例如 --stage T2（快照见 config/stages.json）")
+    parser.add_argument("--list-stages", action="store_true", help="列出所有分级快照与状态")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"端口（默认 {DEFAULT_PORT}）")
     parser.add_argument("--wait", type=float, default=8.0, help="启动后等几秒再打摘要（默认 8）")
     parser.add_argument("--stop", action="store_true", help="停服务并还原配置")
     parser.add_argument("--status", action="store_true", help="只看状态，不启动")
     args = parser.parse_args(argv)
 
+    if args.list_stages:
+        try:
+            data = load_stages()
+        except (OSError, ValueError) as exc:
+            safe_print(f"[X] 读不了 {STAGES_PATH}：{type(exc).__name__}: {exc}")
+            return 1
+        safe_print("分级快照（config/stages.json）：")
+        for name in sorted_stage_names(data["stages"]):
+            info = data["stages"][name]
+            mark = "[已验]" if info.get("status") == "verified" else "[计划]"
+            safe_print(f"  {mark} {name:<4} {info.get('title','')}")
+            safe_print(f"          器件：{', '.join(info.get('devices') or []) or '（无，走 basic/）'}")
+        return 0
+
     if args.stop:
         return do_stop()
     if args.status:
         return do_status(args.port)
 
+    if args.only and args.stage:
+        safe_print("[X] --only 与 --stage 只能给一个（--stage 是快照，--only 是临时指定）")
+        return 1
+
     only = parse_only(args.only)
+    if args.stage:
+        try:
+            data = load_stages()
+            info = stage_info(data, args.stage)
+        except (OSError, ValueError, KeyError) as exc:
+            safe_print(f"[X] 取分级快照失败：{exc}")
+            return 1
+        only = list(info.get("devices") or [])
+        status = info.get("status", "?")
+        safe_print(f"[{args.stage}] {info.get('title','')}（{status}）")
+        if info.get("note"):
+            safe_print(f"    备注：{info['note']}")
+        if not only:
+            safe_print(f"[X] {args.stage} 没有器件集合（T0 走 basic/，不在 rpi 的配置开关里）")
+            return 1
+        if status != "verified" and not info.get("devices"):
+            safe_print("[X] 该级的器件集合还没定义")
+            return 1
+
     if not CONFIG_PATH.exists():
         safe_print(f"[X] 找不到 {CONFIG_PATH}（先跑 python3 scripts/init_config.py）")
         return 1

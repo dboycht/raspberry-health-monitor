@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -127,6 +128,95 @@ class TestStateFile(unittest.TestCase):
             self.assertEqual(stage_run.read_state(), {})          # 类型不对
         finally:
             stage_run.STATE_PATH = real
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+class TestStageSnapshots(unittest.TestCase):
+    """分级快照 `config/stages.json`：**"每一级开哪些器件"的单一来源**，必须能被机器校验。
+
+    为什么（2026-09-26 用户选定"只存每级配置快照"）：快照一旦写错（名字写错/漏一档），
+    后果是"某一级起服务时少开一个器件却说不出哪里不对"。所以这里钉住四条：
+    文件可解析且结构完整；器件名都真实存在；`verified` 的级必须留下日期；
+    **级别是单调递增的**（后一级 ⊇ 前一级的器件集合）。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.data = stage_run.load_stages()
+        cls.stages = cls.data["stages"]
+        example = _RPI_DIR / "config" / "devices.example.json"
+        cls.known_devices = set(json.loads(example.read_text(encoding="utf-8"))["devices"])
+
+    def test_每一级结构完整(self) -> None:
+        for name, info in self.stages.items():
+            with self.subTest(stage=name):
+                self.assertRegex(name, r"^T\d+$", "级名必须是 T<数字>")
+                self.assertTrue(info.get("title"), "缺 title")
+                self.assertIn(info.get("status"), ("verified", "planned"), "status 只能是 verified/planned")
+                self.assertIsInstance(info.get("devices"), list, "devices 必须是列表")
+
+    def test_器件名都真实存在(self) -> None:
+        for name, info in self.stages.items():
+            unknown = [d for d in info["devices"] if d not in self.known_devices]
+            self.assertEqual(unknown, [], f"{name} 里有配置中不存在的器件名：{unknown}")
+
+    def test_器件不重复(self) -> None:
+        for name, info in self.stages.items():
+            self.assertEqual(len(info["devices"]), len(set(info["devices"])), f"{name} 有重复器件")
+
+    def test_已验证的级必须留下日期(self) -> None:
+        for name, info in self.stages.items():
+            if info.get("status") == "verified":
+                self.assertTrue(info.get("verified_on"), f"{name} 标了 verified 却没写 verified_on")
+
+    def test_级别单调递增(self) -> None:
+        """★ 后一级只能"多开"，不能"少开"——阶梯的本意就是一次只加一个元件。"""
+        ordered = stage_run.sorted_stage_names(self.stages)
+        previous: set = set()
+        for name in ordered:
+            current = set(self.stages[name]["devices"])
+            missing = previous - current
+            self.assertEqual(missing, set(), f"{name} 比上一级少了器件：{sorted(missing)}")
+            previous = current
+
+    def test_级别按数字序排(self) -> None:
+        """T2 必须在 T10 前面（字符串排序会把 T10/T11 排到 T2 前面）。"""
+        ordered = stage_run.sorted_stage_names(self.stages)
+        self.assertLess(ordered.index("T2"), ordered.index("T10"))
+        self.assertEqual(ordered[0], "T0")
+
+    def test_T0走basic不占rpi配置(self) -> None:
+        self.assertEqual(self.stages["T0"]["devices"], [])
+        self.assertTrue(self.stages["T0"].get("note"), "T0 必须写明'走 basic/'，否则读者会以为漏配了")
+
+    def test_至少T1T2已验证(self) -> None:
+        verified = [n for n, i in self.stages.items() if i.get("status") == "verified"]
+        self.assertIn("T1", verified)
+        self.assertIn("T2", verified)
+
+
+class TestStageDevices(unittest.TestCase):
+    def test_取某一级的器件(self) -> None:
+        data = stage_run.load_stages()
+        self.assertIn("display", stage_run.stage_devices(data, "t2"), "级名大小写不敏感")
+        self.assertEqual(stage_run.stage_devices(data, "T0"), [])
+
+    def test_没有这一级要报错并给出可用列表(self) -> None:
+        data = stage_run.load_stages()
+        with self.assertRaises(KeyError) as ctx:
+            stage_run.stage_devices(data, "T99")
+        self.assertIn("T1", str(ctx.exception))
+
+    def test_结构不对要报错(self) -> None:
+        tmp = _RPI_DIR / "config" / ".stages.test.json"
+        try:
+            tmp.write_text('{"note": "没有 stages"}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                stage_run.load_stages(tmp)
+        finally:
             try:
                 tmp.unlink()
             except OSError:
