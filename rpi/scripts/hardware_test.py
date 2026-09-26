@@ -413,6 +413,31 @@ def tool_check_needed(name: str, needs: Set[str]) -> bool:
     return True
 
 
+#: 拿不到器件自报的颜色时，LED 检查默认点这三个
+DEFAULT_LED_COLORS: Tuple[str, ...] = ("green", "yellow", "red")
+
+
+def led_colors_to_check(led: Any) -> List[str]:
+    """本次该点哪些 LED 颜色 —— **以器件自己支持的为准**。
+
+    ⚠️ 为什么（2026-09-26 规划 T2 时查出来的"假红"隐患）：默认配置在 2026-09-24
+    去掉了红灯（GPIO24 让给了 TFT 的 DC 脚），而本脚本原来**硬写**"绿→黄→红"三色 ⇒
+    点到红灯时驱动按设计抛 ``UnsupportedError``，检查被算成 FAIL：
+    灯是好的、线也是对的，却报"没有全亮"。
+    判据 = 只点 ``led.available_colors()``（`off` 不点）。
+    """
+    getter = getattr(led, "available_colors", None)
+    if callable(getter):
+        try:
+            colors = [str(c) for c in getter() if str(c)]
+        except Exception:  # noqa: BLE001 - 器件自报失败就退回默认三色
+            colors = []
+        colors = [c for c in colors if c != "off"]
+        if colors:
+            return colors
+    return list(DEFAULT_LED_COLORS)
+
+
 # --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
@@ -732,21 +757,24 @@ def main() -> int:
             try:
                 from health_monitor.hal.models import LightCommand
 
-                print("\n>>> 观察 LED：现在依次点亮 绿 → 黄 → 红（各 1.5 秒）")
-                for color in ("green", "yellow", "red"):
+                colors = led_colors_to_check(led)
+                print(f"\n>>> 观察 LED：现在依次点亮 {' → '.join(colors)}（各 1.5 秒）")
+                for color in colors:
                     led.send(LightCommand(color=color))
                     time.sleep(1.5)
                 led.send(LightCommand(color="off"))
-                ok = input("    三种颜色都亮了吗？[y/N] ").strip().lower().startswith("y")
+                ok = input(f"    {len(colors)} 种颜色都亮了吗？[y/N] ").strip().lower().startswith("y")
                 rep.add(
-                    "LED 三色指示", PASS if ok else FAIL,
-                    "用户确认三种颜色都亮" if ok else "用户报告没有全亮",
-                    "每路 LED 都要串 220Ω~1kΩ 限流电阻，负极接 GND\n"
+                    "LED 颜色指示", PASS if ok else FAIL,
+                    f"用户确认 {len(colors)} 种颜色（{'、'.join(colors)}）都亮"
+                    if ok else "用户报告没有全亮",
+                    "每路 LED 都要串 220Ω~1kΩ 限流电阻，**长脚（阳极）接 GPIO、短脚接 GND**\n"
                     "共阳 LED 需要在配置里设 active_low=true\n"
-                    "引脚：绿=GPIO22（脚15）、黄=GPIO23（脚16）、红=GPIO24（脚18）",
+                    "⚠️ 引脚**以配置为准**：绿=GPIO22（脚15）、黄=GPIO23（脚16）；\n"
+                    "   红灯的 GPIO24 已让给 TFT 的 DC，所以默认不接红灯（本检查也只点配置里有的颜色）",
                 )
             except Exception as exc:  # noqa: BLE001
-                rep.add("LED 三色指示", FAIL, f"{type(exc).__name__}: {exc}", "检查 GPIO 权限与引脚配置")
+                rep.add("LED 颜色指示", FAIL, f"{type(exc).__name__}: {exc}", "检查 GPIO 权限与引脚配置")
 
         lcd = devices.get("display")
         if lcd is not None:

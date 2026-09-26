@@ -139,6 +139,53 @@ class TestScopeFilters(unittest.TestCase):
         self.assertFalse(hardware_test.tool_check_needed("aplay", {"gpio"}))
 
 
+class TestLedColorsToCheck(unittest.TestCase):
+    """LED 检查要点哪些颜色：**以器件自报为准**（防"点不存在的红灯"造成假红）。
+
+    2026-09-26 规划 T2 时发现：配置在 9-24 去掉了红灯（GPIO24 让给 TFT 的 DC），
+    而脚本硬写"绿→黄→红" ⇒ 驱动按设计抛 `UnsupportedError` ⇒ 好灯被判 FAIL。
+    """
+
+    class _Led:
+        def __init__(self, colors=None, boom=False) -> None:
+            self._colors = colors
+            self._boom = boom
+
+        def available_colors(self):
+            if self._boom:
+                raise RuntimeError("器件自报失败")
+            return list(self._colors)
+
+    def test_按器件自报的颜色(self) -> None:
+        led = self._Led(["green", "off", "yellow"])
+        self.assertEqual(hardware_test.led_colors_to_check(led), ["green", "yellow"])
+
+    def test_没有红灯就只点绿黄(self) -> None:
+        """本项目现状：只有 green/yellow。"""
+        led = self._Led(["green", "yellow", "off"])
+        self.assertNotIn("red", hardware_test.led_colors_to_check(led))
+
+    def test_器件不提供颜色时退回默认三色(self) -> None:
+        self.assertEqual(
+            hardware_test.led_colors_to_check(object()),
+            list(hardware_test.DEFAULT_LED_COLORS),
+        )
+
+    def test_自报失败也要退回默认(self) -> None:
+        led = self._Led(["green"], boom=True)
+        self.assertEqual(
+            hardware_test.led_colors_to_check(led),
+            list(hardware_test.DEFAULT_LED_COLORS),
+        )
+
+    def test_自报为空时退回默认(self) -> None:
+        led = self._Led(["off"])
+        self.assertEqual(
+            hardware_test.led_colors_to_check(led),
+            list(hardware_test.DEFAULT_LED_COLORS),
+        )
+
+
 class TestRegistrationGuards(unittest.TestCase):
     """新增驱动 / 新建设备时"必须登记"，否则守卫会红 —— 这是防漏查的机器判据。"""
 
