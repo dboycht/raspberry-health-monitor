@@ -35,8 +35,10 @@
     "T3": {
       "title": "按键：短按消音 / 长按求助",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button"],
-      "status": "planned",
-      "note": "代码链路已在 2026-09-26 接好（CLICK→消音、LONG_PRESS→sos），本级只剩插线 + 真机按一次"
+      "status": "verified",
+      "verified_on": "2026-09-26",
+      "commit": "83730b8",
+      "note": "官方验收 PASS 7/0/0/1（三色 LED 含红灯 + 蜂鸣器）；端到端四步全对：报警（黄灯持续闪 + 每 5 秒重响）→ 短按消音（此后无重发行、灯转常亮）→ 插回 all_clear → 长按 SOS（红灯+蜂鸣+LCD）。本级踩到 E45：报警只响两声没法验消音 + 灯不闪（起闪后被 on() 取消）"
     },
     "T4": {
       "title": "HC-SR501 人体红外（久无活动）",

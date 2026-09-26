@@ -192,10 +192,10 @@ class TestStageSnapshots(unittest.TestCase):
         self.assertEqual(self.stages["T0"]["devices"], [])
         self.assertTrue(self.stages["T0"].get("note"), "T0 必须写明'走 basic/'，否则读者会以为漏配了")
 
-    def test_至少T1T2已验证(self) -> None:
+    def test_至少T1T2T3已验证(self) -> None:
         verified = [n for n, i in self.stages.items() if i.get("status") == "verified"]
-        self.assertIn("T1", verified)
-        self.assertIn("T2", verified)
+        for stage in ("T1", "T2", "T3"):
+            self.assertIn(stage, verified, f"{stage} 已在真机验收通过，快照里应标 verified")
 
 
 class TestStageDevices(unittest.TestCase):
