@@ -58,6 +58,23 @@ function normalize(rel) {
   return String(rel).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
 }
 
+/**
+ * 算出这个条目在 `scp` 里的**远端目标**。
+ *
+ * ⚠️⚠️ 血泪（2026-09-26，本脚本第一版的 bug）：
+ * `scp -r <本地目录> host:<远端同名目录>` 时，若远端那个目录**已存在**，
+ * scp 会把本地目录**塞进去** ⇒ 板上多出一层嵌套（`rpi/scripts/scripts/…`、
+ * `rpi/health_monitor/health_monitor/…`、`rpi/tests/tests/…`）——
+ * 轻则文件没更新（我因此跑了一次"没有 --blink"的旧探针），
+ * 重则**测试被重复收集**。
+ * 正确做法：远端目标一律写**父目录**，让 scp 把 basename 放进去。
+ */
+function remoteTarget(rel, host = 'pi-health', root = REMOTE_ROOT) {
+  const target = normalize(rel);
+  const parent = target.includes('/') ? target.slice(0, target.lastIndexOf('/')) : '.';
+  return `${host}:${root}/${parent}/`;
+}
+
 /** 某个相对路径是否属于"绝不许推送"的本机文件（含其子路径与 `.bak` 变体）。 */
 function isForbiddenPath(rel) {
   const target = normalize(rel);
@@ -106,6 +123,20 @@ function selfTest() {
   assert('反斜杠路径也能识别', isForbiddenPath('rpi\\config\\devices.json'));
   assert('代码目录照常可推', buildPlan(['rpi/health_monitor']).items.length === 1);
   assert('子路径同样被拦', isForbiddenPath('rpi/config/devices.json.bak'));
+  // ★ 回归（2026-09-26 本脚本自己的 bug）：远端目标必须是**父目录**，
+  //   否则 scp 会把本地目录塞进同名远端目录，板上多一层嵌套（文件没更新 / 测试重复收集）。
+  assert(
+    '目录的远端目标是父目录（不嵌套）',
+    remoteTarget('rpi/scripts') === 'pi-health:raspberry-health-monitor/rpi/',
+  );
+  assert(
+    '文件的远端目标也是父目录',
+    remoteTarget('README.md') === 'pi-health:raspberry-health-monitor/./',
+  );
+  assert(
+    '两级目录同样只去到父目录',
+    remoteTarget('rpi/config/stages.json') === 'pi-health:raspberry-health-monitor/rpi/config/',
+  );
 
   const failed = cases.filter((c) => !c.ok);
   for (const c of cases) {
@@ -162,10 +193,9 @@ function main(argv) {
 
   for (const rel of items) {
     const local = path.join(root, rel);
-    const remote = `${host}:${REMOTE_ROOT}/${rel}`;
-    const scpArgs = rel.includes('.') && !rel.endsWith('/') ? ['-q', local, remote] : ['-q', '-r', local, remote];
-    console.log(`scp ${rel} ...`);
-    sh('scp', scpArgs);
+    const remote = remoteTarget(rel, host);
+    console.log(`scp ${rel} -> ${remote}`);
+    sh('scp', ['-q', '-r', local, remote]);
   }
 
   let ok = true;
@@ -184,4 +214,7 @@ if (require.main === module) {
   process.exit(main(process.argv));
 }
 
-module.exports = { DEFAULT_PLAN, FORBIDDEN, PROTECTED, buildPlan, isForbiddenPath, normalize };
+module.exports = {
+  DEFAULT_PLAN, FORBIDDEN, PROTECTED, REMOTE_ROOT,
+  buildPlan, isForbiddenPath, normalize, remoteTarget,
+};

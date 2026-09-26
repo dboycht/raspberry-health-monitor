@@ -270,11 +270,21 @@ class Led(OutputDevice):
         half = 0.5 / self.blink_hz
         device = self._devs.get(color)
         if device is not None and hasattr(device, "blink"):
+            # ⚠️⚠️ **顺序铁律**：先把其它颜色灭掉，**再**起闪；起闪之后**绝不许再碰这个引脚**。
+            #     gpiozero 的 `on()` / `off()` 都会先 `_stop_blink()` ⇒
+            #     若起闪后再来一次 `_set(color, True)`（= `on()`），**刚起的闪会被当场取消**，
+            #     现象就是"灯亮着不闪"—— 2026-09-26 真机复验时**用户第二次抓到**这个顺序 bug。
+            for other in self.pins:
+                if other != color:
+                    self._set(other, False)
+            self._levels[color] = 1
             device.blink(on_time=half, off_time=half, background=True)   # n 默认 None = 一直闪
-        self._set(color, True)          # mock 模式只更新逻辑电平；真机由 blink 线程接管
-        for other in self.pins:
-            if other != color:
-                self._set(other, False)
+        else:
+            # mock 模式：只维护逻辑电平（测试据此断言"处于持续闪状态"）
+            self._set(color, True)
+            for other in self.pins:
+                if other != color:
+                    self._set(other, False)
         self._blinking = color
         self._current = color
         self._blink_count += 1

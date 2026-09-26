@@ -123,6 +123,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--led-colors", default=None, help="点哪些颜色，逗号分隔（默认取配置里真有的）")
     parser.add_argument("--hold", type=float, default=1.5, help="每个颜色亮多久（秒，默认 1.5）")
     parser.add_argument("--beeps", type=int, default=2, help="蜂鸣几声（默认 2）")
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="先倒数多少秒再动作（默认 0；**需要人看/听时请给 8~10**，见下）")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="整套动作重复几轮（默认 1；给人看的时候给 2，错过第一轮还有第二轮）")
+    parser.add_argument("--blink", default=None, metavar="COLOR",
+                        help="**专测持续闪**：让这个颜色一直闪 --seconds 秒（如 --blink yellow）")
+    parser.add_argument("--seconds", type=float, default=8.0, help="--blink 持续多少秒（默认 8）")
     args = parser.parse_args(argv)
 
     if args.led_only and args.buzzer_only:
@@ -144,35 +151,79 @@ def main(argv: Optional[List[str]] = None) -> int:
         safe_print(f"[X] 加载配置失败：{type(exc).__name__}: {exc}")
         return 2
 
-    # ---- LED ----
-    if do_led:
+    # ---- 预告（★ 2026-09-26 真机教训）----
+    # 用户原话："我没注意，你再试一下【下一次这种你提前说一声】"。
+    # 结论：**凡是要人看/听的验收，必须先"预告"再动作**，并且给足观察窗口
+    # ⇒ 探针先倒数（--delay）+ 整套动作可重复（--repeat），别让人抢那 1.5 秒。
+    if args.delay > 0:
+        safe_print(f"[预告] {args.delay:g} 秒后开始动作，请**现在就看/听**输出器件……")
+        remaining = int(args.delay)
+        while remaining > 0:
+            safe_print(f"        … {remaining}")
+            time.sleep(1.0)
+            remaining -= 1
+        safe_print("       开始！")
+
+    # ---- 专测持续闪（--blink yellow --seconds 8）----
+    if args.blink:
+        color = str(args.blink).strip().lower()
         try:
             led = _open(config, "status_led")
-            colors = resolve_colors(led, parse_colors(args.led_colors))
-            safe_print(f"[..] LED：将依次点亮 {' → '.join(colors)}（各 {args.hold:g} 秒）")
-            for color in colors:
-                led.send(LightCommand(color=color))
-                safe_print(f"     -> {color}")
-                time.sleep(max(0.0, args.hold))
+            colors = resolve_colors(led, None)
+            if color not in colors:
+                safe_print(f"[X] 配置里没有颜色 {color!r}；可用：{'、'.join(colors)}")
+                led.close()
+                return 2
+            seconds = max(0.0, float(args.seconds))
+            safe_print(f"[..] 持续闪：{color}，共 {seconds:g} 秒（亮 {0.5 / max(led.blink_hz, 0.1):.2f}s / 灭同）")
+            led.send(LightCommand(color=color, blink=True))
+            time.sleep(seconds)
             led.send(LightCommand(color="off"))
-            safe_print("     -> off")
             led.close()
-            report["LED"] = f"已按 {'、'.join(colors)} 依次点亮（各 {args.hold:g}s）后熄灭"
+            safe_print(f"[OK] {color} 已持续闪 {seconds:g} 秒后熄灭")
+            safe_print("     ⚠️ 判据：**中间必须有一次一次地灭/亮**，只是常亮不算通过")
+            return 0
         except Exception as exc:  # noqa: BLE001
-            problems.append(f"LED：{type(exc).__name__}: {exc}")
-            safe_print(f"[X] LED 失败：{type(exc).__name__}: {exc}")
+            safe_print(f"[X] 持续闪失败：{type(exc).__name__}: {exc}")
+            return 2
 
-    # ---- 蜂鸣器 ----
-    if do_buzzer:
-        try:
-            buzzer = _open(config, "alarm_buzzer")
-            safe_print(f"[..] 蜂鸣器：鸣叫 {args.beeps} 声（200ms 响 / 200ms 停）")
-            buzzer.send(BeepCommand(times=max(1, int(args.beeps)), on_ms=200, off_ms=200))
-            buzzer.close()
-            report["蜂鸣器"] = f"已鸣叫 {max(1, int(args.beeps))} 声"
-        except Exception as exc:  # noqa: BLE001
-            problems.append(f"蜂鸣器：{type(exc).__name__}: {exc}")
-            safe_print(f"[X] 蜂鸣器失败：{type(exc).__name__}: {exc}")
+    rounds = max(1, int(args.repeat))
+    for round_index in range(rounds):
+        if rounds > 1:
+            safe_print(f"---- 第 {round_index + 1}/{rounds} 轮 ----")
+
+        # ---- LED ----
+        if do_led:
+            try:
+                led = _open(config, "status_led")
+                colors = resolve_colors(led, parse_colors(args.led_colors))
+                safe_print(f"[..] LED：将依次点亮 {' → '.join(colors)}（各 {args.hold:g} 秒）")
+                for color in colors:
+                    led.send(LightCommand(color=color))
+                    safe_print(f"     -> {color}")
+                    time.sleep(max(0.0, args.hold))
+                led.send(LightCommand(color="off"))
+                safe_print("     -> off")
+                led.close()
+                report["LED"] = f"已按 {'、'.join(colors)} 依次点亮（各 {args.hold:g}s）后熄灭"
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"LED：{type(exc).__name__}: {exc}")
+                safe_print(f"[X] LED 失败：{type(exc).__name__}: {exc}")
+
+        # ---- 蜂鸣器 ----
+        if do_buzzer:
+            try:
+                buzzer = _open(config, "alarm_buzzer")
+                safe_print(f"[..] 蜂鸣器：鸣叫 {args.beeps} 声（200ms 响 / 200ms 停）")
+                buzzer.send(BeepCommand(times=max(1, int(args.beeps)), on_ms=200, off_ms=200))
+                buzzer.close()
+                report["蜂鸣器"] = f"已鸣叫 {max(1, int(args.beeps))} 声"
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"蜂鸣器：{type(exc).__name__}: {exc}")
+                safe_print(f"[X] 蜂鸣器失败：{type(exc).__name__}: {exc}")
+
+        if round_index + 1 < rounds:
+            time.sleep(1.0)          # 两轮之间留一点间隔，便于分辨"一轮的结束"
 
     safe_print("-" * 72)
     for name, detail in report.items():

@@ -422,6 +422,14 @@ class Test持续闪与停闪(unittest.TestCase):
         self.assertEqual(len(blink_calls), 1, "应当调用 gpiozero 的 blink()")
         self.assertIsNone(blink_calls[0][3], "n=None 才是「一直闪」")
         self.assertTrue(blink_calls[0][4], "background=True 才不阻塞主循环")
+        # ★★ 回归（2026-09-26 真机**第二次**抓到"灯不闪"）：
+        #    起闪之后**绝不许**再对同一引脚 on()/off() —— gpiozero 的 on()/off() 会先
+        #    `_stop_blink()`，会把刚起的闪**当场取消**（现象：灯亮着不闪）。
+        self.assertEqual(
+            calls[-1][0], "blink",
+            f"起闪之后最后一次引脚操作必须是 blink（否则闪被取消）：{calls}",
+        )
+        calls.clear()
         led.stop_blink(steady_on=True)
         self.assertIn(("on",), calls, "停闪转常亮应当用 gpiozero 的 on()（它会先停闪）")
         led.close()
