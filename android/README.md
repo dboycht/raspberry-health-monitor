@@ -127,8 +127,8 @@ powershell -File D:\code\DeepSeekHarness\raspberry-health-monitor\android\tools\
 
 | 命令 | 结果 |
 | --- | --- |
-| `--no-daemon testDebugUnitTest` | **BUILD SUCCESSFUL，73 个测试全部通过**（0 失败 / 0 跳过） |
-| `--no-daemon assembleDebug` | **BUILD SUCCESSFUL**，产出 `app-debug.apk`，**11.25 MB**（11,796,364 字节） |
+| `--no-daemon testDebugUnitTest` | **BUILD SUCCESSFUL，78 个测试全部通过**（0 失败 / 0 跳过） |
+| `--no-daemon assembleDebug` | **BUILD SUCCESSFUL**，产出 `app-debug.apk`，**约 11.31 MB** |
 
 用 `aapt2 dump badging` 核对过 APK 内容：`package=com.dboycht.healthmonitor.debug`、
 `minSdkVersion=26`、`targetSdkVersion=36`、`compileSdkVersion=36`、

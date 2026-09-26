@@ -9,7 +9,7 @@
 ```bash
 cd rpi
 python -m pytest -q                     # 全部单测（也可 python -m unittest discover -s tests -v）
-python scripts/validate.py              # 9 项提交前检查（含引脚撞脚与文档一致性）
+python scripts/validate.py              # 11 项提交前检查（含引脚撞脚与文档一致性）
 python -m health_monitor demo           # 11 幕全链路演示（应当退出码 0）
 ```
 
@@ -18,7 +18,7 @@ python -m health_monitor demo           # 11 幕全链路演示（应当退出�
 | # | 判据 | 命令 |
 | --- | --- | --- |
 | 1 | 全部单测通过 | `cd rpi && python -m pytest -q` |
-| 2 | 9 项检查全 PASS（含**引脚冲突**与**文档一致性**） | `python scripts/validate.py` |
+| 2 | 11 项检查全 PASS（含**引脚冲突**与**文档一致性**） | `python scripts/validate.py` |
 | 3 | 没有把运行时数据/产物带进提交 | `git status --porcelain` |
 
 **禁止入库**：`rpi/data/`、`*.db`、`*.log`、`__pycache__/`、`.venv/`、`android/build/`、
