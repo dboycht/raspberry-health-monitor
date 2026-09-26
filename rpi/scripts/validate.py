@@ -461,42 +461,53 @@ def check_basic_version() -> Tuple[bool, str]:
 
 
 def check_node_scripts() -> Tuple[bool, str]:
-    """主机侧 Node 脚本的自检（``scripts/selftest.cjs``，**离线、不联网**）。
+    """主机侧 Node 脚本的自检（**离线、不联网**）。
+
+    跑两个：
+    * ``scripts/selftest.cjs`` —— CI/发布/隐私扫描等工具的公共自检；
+    * ``scripts/push_to_board.cjs --self-test`` —— **推送白名单守卫**（2026-09-26 加，见 `ERROR.md` E46）：
+      我用 ``scp -r rpi/config`` 图省事，把**板子本机的** ``devices.json`` 覆盖成仓库默认版，
+      一次丢掉 ``onenet.enabled=true`` / 红灯引脚 / 持续提醒阈值，而板子上没有备份。
+      守卫的判据是"**计划里绝不许出现那两个本机文件**"，必须每次都跑。
 
     为什么要在提交前跑它：``scripts/`` 下是"只在开发机上用、不参与运行"的工具
-    （查 CI 状态、打印发布材料、隐私扫描），它们坏掉**不会让任何单测变红**——
+    （查 CI 状态、打印发布材料、隐私扫描、推送板子），它们坏掉**不会让任何单测变红**——
     2026-09-25 就真出过一次：文档写着 `node scripts/check_ci.cjs`，
     而这台机器上直接跑会因 TLS 证书链报错（见 `ERROR.md` E33）。
 
     ⚠️ **不带 `--online`**：提交前检查不该依赖 github.com 是否可达，
     否则"没网"会变成一次红构建 —— 正是本文件要消灭的那类假失败。
     """
-    selftest = REPO_ROOT / "scripts" / "selftest.cjs"
-    if not selftest.exists():
-        return False, f"找不到 Node 自检脚本：{selftest}"
     if not shutil.which("node"):
         return False, "没找到 node（主机侧工具需要 Node；装了之后重跑）"
 
-    proc = run_node([str(selftest)], cwd=REPO_ROOT)
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
-    if proc.returncode == 0:
-        summary = ""
-        for line in reversed(stdout.splitlines()):
-            if line.startswith("selftest OK"):
-                summary = line.strip()
-                break
-        return True, summary or "Node 脚本自检通过"
-
-    detail = [
-        ln for ln in (stdout + "\n" + stderr).splitlines()
-        if ln.strip().startswith("-") or "FAIL" in ln
+    targets = [
+        (REPO_ROOT / "scripts" / "selftest.cjs", []),
+        (REPO_ROOT / "scripts" / "push_to_board.cjs", ["--self-test"]),
     ]
-    if not detail:
-        # 没抓到"FAIL"行也要给东西：把尾部原样带出来（否则只看到一句"失败"，无从下手）
-        tail = "\n      ".join((stdout + "\n" + stderr).strip().splitlines()[-12:])
-        return False, "Node 脚本自检失败：\n      " + (tail or _NO_OUTPUT_HINT)
-    return False, "Node 脚本自检失败：\n      " + "\n      ".join(detail[:12])
+    summaries: List[str] = []
+    for script, extra in targets:
+        if not script.exists():
+            return False, f"找不到 Node 脚本：{script}"
+        proc = run_node([str(script), *extra], cwd=REPO_ROOT)
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        if proc.returncode != 0:
+            detail = [
+                ln for ln in (stdout + "\n" + stderr).splitlines()
+                if ln.strip().startswith("-") or "FAIL" in ln or ln.strip().startswith("[X")
+            ]
+            if not detail:
+                # 没抓到"FAIL"行也要给东西：把尾部原样带出来（否则只看到一句"失败"，无从下手）
+                tail = "\n      ".join((stdout + "\n" + stderr).strip().splitlines()[-12:])
+                return False, f"{script.name} 自检失败：\n      " + (tail or _NO_OUTPUT_HINT)
+            head = "\n      ".join(d.strip() for d in detail[:12])
+            return False, f"{script.name} 自检失败：\n      {head}"
+        for line in reversed(stdout.splitlines()):
+            if line.startswith("selftest OK") or line.startswith("self-test:"):
+                summaries.append(line.strip())
+                break
+    return True, "；".join(summaries) or "Node 脚本自检通过"
 
 
 def main() -> int:
