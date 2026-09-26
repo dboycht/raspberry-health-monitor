@@ -88,9 +88,14 @@ python3 tools/diag_dht_line.py --read 5   # 顺便连读 5 次真实数据
 
 ```
 basic/
-├── run.py                 入口：python3 run.py（把参数交给 plot.py）
+├── hw/run.py              ★**单文件作业版**（一个文件跑完题设 H；交作业推荐用它）
+│   ├── fonts/             随包中文字体（自己带一份，保证拷一个文件夹就能出中文图）
+│   └── data/              它产生的 CSV（**不入库**）
+├── 交接文档.md             ★交付说明（交付物清单 / 题设逐条对照 / 怎么运行 / 实测记录）
+├── run.py                 模块化版入口：python3 run.py（把参数交给 plot.py）
 ├── plot.py                动态曲线 + 采集主循环 + 命令行参数
 ├── dht11read.py           DHT11 读取：lgpio 边沿时间戳 / gpiozero / mock 三种后端
+├── console.py             控制台安全网（中文 Windows/GBK 下打印符号不崩，见 ERROR.md E32/E41）
 ├── pins.py                引脚映射（只查表，不写偏移公式）
 ├── wire_spec.py           ★接线事实来源（电源脚/地脚/上拉/周期 + 自检）
 ├── series.py              曲线数据窗口（滚动窗口 / 横轴 / 统计量，纯逻辑）
@@ -180,7 +185,7 @@ index,timestamp,temperature_c,humidity_percent,status,note
 | 目的 | **交课程作业 H**（温湿度 + 动态曲线） | 整套"居家老人监护系统"（课程设计团队作品） |
 | 依赖 | 标准库 + matplotlib（可选） | HAL 契约层 + 12 个驱动 + HTTP API + 上云 + 安卓端 |
 | 数据 | CSV | SQLite + HTTP 接口 + OneNET 云 |
-| 代码量 | 8 个模块、117 项单测 | 40+ 个文件、597 项单测 |
+| 代码量 | 9 个模块（含单文件版 `hw/run.py`）、**125 项单测** | 40+ 个文件、**614 项单测** |
 | 谁能用 | 任何同学，拷贝即用 | 团队分工协作 |
 
 两者是**同一套工程纪律的两个尺度**：基础版同样坚持"读不到就是 `None`、不补 0"、
@@ -197,7 +202,7 @@ cd raspberry-health-monitor        # 仓库根
 python basic/tools/selfcheck.py              # 10 项自检（含接线事实与接线表）
 python basic/tools/wire_docs.py --check      # 接线表与代码是否一致（含检查器注入自测）
 python basic/tools/wire_docs.py --generate   # 改了引脚/接线事实后重新生成接线表
-python -m pytest basic/tests -q              # 117 项单测（开发机实测）
+python -m pytest basic/tests -q              # 125 项单测（开发机实测）
 python -m unittest discover -s basic/tests   # 不装 pytest 也能跑
 ```
 

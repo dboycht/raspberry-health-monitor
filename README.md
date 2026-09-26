@@ -73,13 +73,19 @@ python -m pytest -q          # 全部单元测试（不需要硬件、不需要 
 
 课程任务 **H（温湿度测量 + 动态曲线）** 有一条**最小可用路径**，专门放在
 [`basic/`](basic/README.md)：不 import 主项目任何代码，整个文件夹拷走就能交。
+**已在树莓派 5 + 真实 DHT11 上跑通**（111 个样本全成功，证据与交付说明见
+[`basic/交接文档.md`](basic/交接文档.md)）。
 
 ```powershell
-cd D:\code\DeepSeekHarness\raspberry-health-monitor\basic
-
+# ① 单文件版（老师要求"一个运行入口文件"时用这个；推荐交它）
+cd D:\code\DeepSeekHarness\raspberry-health-monitor\basic\hw
 python run.py --mock            # 没有树莓派/没有传感器也能看到动态曲线（合成数据）
 python run.py                   # 树莓派上真实读取 DHT11（GPIO4 = 物理脚 7）
-python run.py --no-plot         # 只采集与存档（CSV）
+python run.py --no-plot         # 只采集与存档（CSV）；SSH 没有桌面时用这个
+python run.py --headless --duration 60 --save curve.png   # 没有窗口也能导出曲线图
+
+# ② 模块化版（拆成多个模块，便于继续扩展）
+cd D:\code\DeepSeekHarness\raspberry-health-monitor\basic
 python run.py --replay          # 离线回放演示数据，验证"读 → 存 → 画"这条链路
 python tools\selfcheck.py       # 基础版自检（10 项，不依赖硬件）
 python tools\wire_docs.py --check   # 接线文档与代码是否一致（接线事实机器校验）
@@ -87,12 +93,13 @@ python tools\wire_docs.py --check   # 接线文档与代码是否一致（接线
 
 - 采集周期可配（默认 3 秒；DHT11 硬件要求 ≥2 秒），每次采样**立刻写进 CSV**（拔电源也不丢）；
 - 动态曲线：温度（红，左轴 ℃）+ 湿度（蓝，右轴 %），标题实时显示"最新一次读数"；
+  图里的中文靠**随包字体**（`basic/fonts/`），不用先装系统字体包；
 - **课程作业那条线（`basic/`）的接线就一份**：
   [`basic/hardware/接线表.md`](basic/hardware/接线表.md) / [`.pdf`](basic/hardware/接线表.pdf)
   —— **两张表**（树莓派接线 + 元件接线），每个数字都由代码生成、`--check` 机器校验；
 - 完整监护系统的逐器件接线见 [`hardware/`](hardware/README.md)（引脚分配 / 接线图 / 供电安全）；
-- 硬件、文档与"实测 / 未实测"声明见 [`basic/README.md`](basic/README.md) 与
-  [`basic/验收说明.md`](basic/验收说明.md)。
+- 硬件、文档与"实测 / 未实测"声明见 [`basic/README.md`](basic/README.md)、
+  [`basic/验收说明.md`](basic/验收说明.md) 与 [`basic/交接文档.md`](basic/交接文档.md)。
 
 ## 2. 树莓派上的部署（有硬件时）
 
@@ -167,6 +174,8 @@ raspberry-health-monitor/
 │   └── tests/                单元测试（unittest；无需硬件）
 ├── android/                              ← 安卓监护 App（Kotlin + Jetpack Compose）
 ├── basic/                                ← **课程作业 H 的最小可用版**（温湿度 + 动态曲线，可单独交）
+│   ├── hw/run.py                         ← 单文件作业版（一个文件跑完题设，交作业推荐）
+│   └── 交接文档.md                        ← 交付说明：交付物清单 / 题设逐条对照 / 怎么运行 / 实测记录
 ├── hardware/                             ← 硬件文档：引脚分配、接线图、供电与安全
 ├── docs/                                 ← 接口规格、报警规则、开发规范、通信协议
 ├── contrib/                              ← 团队分工与提交规范
@@ -258,29 +267,31 @@ raspberry-health-monitor/
 - 版本单一来源：`rpi/health_monitor/__init__.py` 的 `__version__`（HTTP `/api/v1/health` 会返回它）
 - 当前版本：**1.0.1**
 
-## 9. 验证基线（2026-09-25 实测）
+## 9. 验证基线（2026-09-26 实测）
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **11 项全 PASS**（开发机默认环境，无需设任何环境变量） |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **584 passed, 1 skipped, 296 subtests** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **614 passed, 1 skipped, 296 subtests** |
 | 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
-| 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0 |
+| 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0（**GBK 控制台下也 0**） |
 | 驱动注册表 | `python -m health_monitor drivers` | 12 个驱动全部可构造 |
 | 引脚冲突 | `python scripts/validate.py` 第 5 项 | 7 个独占引脚无冲突 |
-| 文档一致性 | `python scripts/check_docs.py` | 27 份文档链接可解析；报警码三方一致 |
-| **基础版（课程作业 H）** | `python basic/tools/selfcheck.py` + `python -m pytest basic/tests -q` | **自检 10 项全 PASS；单测 119 passed** |
+| 文档一致性 | `python scripts/check_docs.py` | 26 份文档链接可解析；报警码三方一致 |
+| **基础版（课程作业 H）** | `python basic/tools/selfcheck.py` + `python -m pytest basic/tests -q` | **自检 10 项全 PASS；单测 125 passed** |
 | OneNET token 算法自检 | `python scripts/onenet_token.py --selftest` | md5/sha1/sha256 手算对照通过 |
 | 同步 + 入库验收 | `python scripts/check_sync.py --hash` | 两侧文件一致；无误忽略源码 |
 | 安卓端单元测试 | 见 `docs/手册/06-安卓开发指南.md` 的构建命令 | **78 passed** |
 | 安卓端打包 | 同上（`assembleDebug`） | `app-debug.apk`，11.31 MB |
 | CI | `.github/workflows/checks.yml` | 每次推送自动跑上面两套（无硬件） |
 
-> ⚠️ **以上全部是 PC 上的"模拟/无硬件"验证**（真机 `validate.py` 上一次实测 9/9，
-> 但**本轮改动尚未在树莓派上复测——树莓派当前离线**）。真实器件读数、真实 I2C/SPI 时序、
-> 蓝牙音箱配对、手机与树莓派的真实局域网往返**都还没验过**——
-> 这些必须由真人接硬件后跑 `python -m health_monitor selfcheck --real` 与真机联调；
-> 基础版对应的真机验证清单见 [`basic/验收说明.md`](basic/验收说明.md)。
+> ⚠️ **除下面这条"真机实测"外，上表全部是 PC 上的"模拟/无硬件"验证**。
+> ✅ **真机实测过的**：树莓派 5 上的 **DHT11 温湿度读取**（2026-09-25 夜，111 个样本全成功，
+> 证据在 [`basic/evidence/`](basic/evidence/README.md)）、以及基础版动态曲线出图；
+> ❌ **仍未实测**：TMP36 / MAX30102 / HC-SR501 的真实读数、真实 I2C/SPI 时序、
+> 蓝牙音箱配对、手机与树莓派的真实局域网往返（树莓派当前离线，接回后按 `docs/13` 逐器件验）。
+> 真机联调命令：`python -m health_monitor selfcheck --real`；
+> 基础版对应的真机验收记录见 [`basic/验收说明.md`](basic/验收说明.md)。
 
 ## 10. 许可
 
