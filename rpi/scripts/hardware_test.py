@@ -26,6 +26,15 @@
     python3 scripts/hardware_test.py --interval 3      # 每项连续采样 3 次
     python3 scripts/hardware_test.py --json out.json   # 同时导出机器可读报告
 
+    # 阶梯式验收（一次只加一个器件，见 docs/14-分步实施路线图.md）：
+    python3 scripts/hardware_test.py --list            # 先看配置里有哪些设备名
+    sudo python3 scripts/hardware_test.py --only ambient            # 只验 DHT11 这一级
+    sudo python3 scripts/hardware_test.py --only ambient,display    # 也可以多个（逗号分隔）
+    sudo python3 scripts/hardware_test.py --exclude speaker         # 排除某个器件
+
+⚠️ `--only` 会**一并收窄前置检查**：只验 DHT11 时不再因为"没接 I2C 器件"而报 I2C 扫描失败
+（否则阶梯式推进时满屏都是还没接的器件造成的噪音）。
+
 退出码：0 = 全部通过；1 = 有失败项（报告里逐条给出排查动作）。
 """
 
@@ -41,7 +50,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 # 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
 # ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
@@ -278,6 +287,133 @@ def evaluate_bounds(values: List[Optional[float]], low: float, high: float) -> T
 
 
 # --------------------------------------------------------------------------
+# 检查范围（--only / --exclude）：阶梯式验收"只测我这一级新加的器件"
+# --------------------------------------------------------------------------
+
+#: 每个驱动需要哪些"总线 / 依赖 / 外部工具"检查。
+#: 为什么要它（2026-09-26）：阶梯式推进时一次只加一个器件（见 `docs/14-分步实施路线图.md`），
+#: 若仍按全量跑前置检查，**还没接的器件**会制造一堆失败/警告，把本级真正的信息埋掉。
+#: ⚠️ 新增驱动时**必须**在这里登记；`tests/scripts/test_hardware_test_filters.py` 会检查
+#: "注册表里的每个驱动都登记过"，漏登记就会红。
+DRIVER_NEEDS: Dict[str, Set[str]] = {
+    "max30102": {"i2c"},
+    "lcd1602": {"i2c"},
+    "tmp36": {"spi"},
+    "mcp3002": {"spi"},
+    "tft_spi": {"spi", "gpio"},
+    "dht11": {"gpio"},
+    "hc_sr501": {"gpio"},
+    "hc_sr04": {"gpio"},
+    "button": {"gpio"},
+    "led": {"gpio"},
+    "buzzer": {"gpio"},
+    "bt_speaker": {"audio"},
+}
+
+#: 设备节点检查项（`check_devices()` 的标签）→ 需要哪一类
+NODE_CHECK_NEEDS: Dict[str, str] = {
+    "I2C": "i2c",
+    "SPI": "spi",
+    "GPIO": "gpio",
+}
+
+#: 工具 / Python 库检查项（`check_tools()` 的名字）→ 需要哪一类
+TOOL_CHECK_NEEDS: Dict[str, str] = {
+    "i2cdetect": "i2c",
+    "smbus2": "i2c",
+    "spidev": "spi",
+    "gpiozero": "gpio",
+    "espeak-ng": "audio",
+    "aplay": "audio",
+}
+
+#: 本脚本**有为它写专门检查**的设备名（其余设备只做"能否打开"）。
+#: 名字来自默认配置（`core/config.py::DEFAULT_CONFIG`）；改了设备名要同步这里，
+#: 测试会断言"默认配置里的每个设备名要么在这里、要么在 COMPOSED_DEVICE_HINTS 里"。
+CHECKED_DEVICE_NAMES: Set[str] = {
+    "vitals", "body_temp", "ambient", "motion", "distance",
+    "display", "status_led", "alarm_buzzer", "speaker", "sos_button",
+}
+
+#: 没有专门检查、但有**别的**验收办法的设备名 → 提示用哪个脚本/为什么
+COMPOSED_DEVICE_HINTS: Dict[str, str] = {
+    "tft": "TFT 的显示确认要用：python3 scripts/tft_check.py --steps（人眼确认颜色/方向）",
+    "mcp3002": "MCP3002 由 tmp36 的检查覆盖；也可单独验通道：python3 scripts/diag_pin_levels.py --adc",
+}
+
+
+def parse_name_list(values: Optional[List[str]]) -> Set[str]:
+    """把 ``--only a,b --only c`` 解析成 ``{"a","b","c"}``（去空白、去重）。"""
+    out: Set[str] = set()
+    for raw in values or []:
+        for piece in str(raw).split(","):
+            name = piece.strip()
+            if name:
+                out.add(name)
+    return out
+
+
+def needs_of(drivers: Iterable[str]) -> Set[str]:
+    """这组驱动需要哪些检查类别（**未知驱动按 gpio 处理**：宁可多查，不可漏查）。"""
+    needs: Set[str] = set()
+    for driver in drivers:
+        needs |= DRIVER_NEEDS.get(driver, {"gpio"})
+    return needs
+
+
+def select_devices(
+    configured: List[Tuple[str, str]],
+    enabled: Set[str],
+    only: Set[str],
+    exclude: Set[str],
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """算出本次要检查哪些设备（纯函数，好测）。
+
+    Args:
+        configured: ``[(设备名, 驱动名), ...]``，**含** disabled 的。
+        enabled: 配置里 ``enabled=true`` 的设备名集合。
+        only: 只查这些（空集 = 不限制）。
+        exclude: 排除这些。
+
+    Returns:
+        ``(selected, disabled_requested, unknown_only, unknown_exclude)``：
+        - ``selected``：本次真正要检查的设备名（保持配置顺序）；
+        - ``disabled_requested``：用户点名了、但在配置里是 disabled 的；
+        - ``unknown_only`` / ``unknown_exclude``：配置里根本没有的名字（打错字要报错，
+          否则会出现"什么都没查却报全绿"的假通过）。
+    """
+    names = [name for name, _ in configured]
+    known = set(names)
+    chosen = [
+        name
+        for name in names
+        if (not only or name in only) and name not in exclude and name in enabled
+    ]
+    return (
+        chosen,
+        sorted((only & known) - enabled),
+        sorted(only - known),
+        sorted(exclude - known),
+    )
+
+
+def node_check_needed(label: str, needs: Set[str]) -> bool:
+    """这条设备节点检查要不要跑（按标签里的 I2C/SPI/GPIO 关键字判定）。"""
+    for keyword, need in NODE_CHECK_NEEDS.items():
+        if keyword in label:
+            return need in needs
+    return True
+
+
+def tool_check_needed(name: str, needs: Set[str]) -> bool:
+    """这条工具/库检查要不要跑。"""
+    for keyword, need in TOOL_CHECK_NEEDS.items():
+        if keyword in name:
+            return need in needs
+    return True
+
+
+# --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
 
@@ -289,6 +425,24 @@ def main() -> int:
     parser.add_argument("--skip-output", action="store_true", help="不做会发声/闪灯的检查")
     parser.add_argument("--json", default="", help="把报告写成 JSON 文件")
     parser.add_argument("--yes", action="store_true", help="跳过开头的确认提示（无人值守）")
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="设备名",
+        help="只检查这些设备（配置里的设备名，可逗号分隔、可重复）：--only ambient 或 --only ambient,display",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="设备名",
+        help="排除这些设备（写法同 --only）",
+    )
+    parser.add_argument(
+        "--list", action="store_true",
+        help="只列出配置里的设备与各自的检查类别，然后退出（用来查设备名）",
+    )
     args = parser.parse_args()
 
     rep = Reporter()
@@ -298,6 +452,70 @@ def main() -> int:
     print("=" * 78)
     print("说明：本脚本会访问真实硬件；会发声/闪灯的检查可用 --skip-output 跳过。")
     print("每一项失败都会给出下一步的排查命令，照着做通常就能定位。\n")
+
+    # ---------------- 0. 配置 + 本次检查范围 ----------------
+    # ⚠️ 配置要在前置检查之前读：`--only` 需要先知道"这一步要验哪些器件"，
+    #    才能把无关的总线/依赖检查一起收窄（否则阶梯式推进满屏噪音）。
+    from health_monitor.core.config import load_config
+    from health_monitor.hal import create_device
+
+    try:
+        config = load_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        rep.add("加载配置", FAIL, f"{type(exc).__name__}: {exc}", "检查 rpi/config/devices.json 是否存在且 JSON 合法")
+        return rep.summary()
+
+    configured = [(d.name, d.driver) for d in config.devices]
+    enabled = {d.name for d in config.enabled_devices()}
+    only, exclude = parse_name_list(args.only), parse_name_list(args.exclude)
+
+    if args.list:
+        print("配置里的设备（`*` = enabled=true）：\n")
+        for name, driver in configured:
+            mark = "*" if name in enabled else " "
+            categories = ", ".join(sorted(needs_of([driver]))) or "-"
+            print(f"  {mark} {name:<14s} {driver:<12s} 检查类别：{categories}")
+        print("\n本次可用写法：")
+        print("  sudo python3 scripts/hardware_test.py --only <设备名>[,<设备名>]")
+        print("  sudo python3 scripts/hardware_test.py --exclude <设备名>")
+        return 0
+
+    selected, disabled_requested, unknown_only, unknown_exclude = select_devices(
+        configured, enabled, only, exclude
+    )
+    if unknown_only or unknown_exclude:
+        rep.add(
+            "检查范围", FAIL,
+            f"配置里没有这些设备名：--only {unknown_only} / --exclude {unknown_exclude}",
+            "看一遍可用名字：python3 scripts/hardware_test.py --list\n"
+            "（注意用的是**配置里的设备名**，例如 ambient / body_temp / vitals，不是驱动名 dht11）",
+        )
+        return rep.summary()
+    if disabled_requested:
+        rep.add(
+            "检查范围", FAIL,
+            f"这些设备在配置里是 enabled=false：{disabled_requested}",
+            "先在 rpi/config/devices.json 里把它打开（enabled 改成 true）再跑；\n"
+            "阶梯式推进时**一次只打开一个**，见 docs/14-分步实施路线图.md",
+        )
+        return rep.summary()
+    if not selected:
+        rep.add("检查范围", FAIL, "没有任何设备被选中（--only / --exclude 把范围清空了？）",
+                "去掉限制跑全量，或用 --list 看设备名")
+        return rep.summary()
+
+    selected_drivers = [driver for name, driver in configured if name in set(selected)]
+    needs = needs_of(selected_drivers)
+    if only:
+        scope = "--only " + ",".join(sorted(only))
+    elif exclude:
+        scope = "--exclude " + ",".join(sorted(exclude))
+    else:
+        scope = "全部已启用器件"
+    print(f"本次范围：{scope}")
+    print(f"  将检查 {len(selected)} 个设备：{', '.join(selected)}")
+    print(f"  需要的检查类别：{', '.join(sorted(needs)) or '-'}")
+    print()
 
     # ---------------- 1. 平台 ----------------
     is_pi, info = detect_platform()
@@ -311,8 +529,10 @@ def main() -> int:
             "PC 上请用：python -m health_monitor selfcheck --mock",
         )
 
-    # ---------------- 2. 设备节点 ----------------
+    # ---------------- 2. 设备节点（按本次范围收窄） ----------------
     for label, ok, detail in check_devices():
+        if not node_check_needed(label, needs):
+            continue
         if ok:
             rep.add(label, PASS, detail)
         else:
@@ -325,10 +545,12 @@ def main() -> int:
             )
             rep.add(label, FAIL, detail, next_step)
 
-    # ---------------- 3. 外部工具与库 ----------------
+    # ---------------- 3. 外部工具与库（按本次范围收窄） ----------------
     missing_tools = []
     missing_blockers: List[Tuple[str, str]] = []
     for name, ok, detail, install in check_tools():
+        if not tool_check_needed(name, needs):
+            continue
         if ok:
             rep.add(name, PASS, detail)
         else:
@@ -353,50 +575,48 @@ def main() -> int:
             _write_json(args.json, rep)
         return code
 
-    # ---------------- 4. I2C 扫描 ----------------
-    found = i2c_scan()
-    if found is None:
-        rep.add(
-            "I2C 总线扫描", WARN, "i2cdetect 不可用或执行失败，跳过扫描",
-            "安装 i2c-tools：sudo apt install -y i2c-tools\n然后手动跑：i2cdetect -y 1",
-        )
+    # ---------------- 4. I2C 扫描（只在本次范围包含 I2C 器件时做） ----------------
+    if "i2c" not in needs:
+        rep.add("I2C 总线扫描", SKIP, "本次范围不含 I2C 器件，跳过（--only/--exclude 收窄）")
     else:
-        table = ", ".join(f"0x{addr:02X}" for addr in sorted(found)) or "（空）"
-        critical = {0x57: "MAX30102 心率血氧"}
-        lcd_candidates = [0x27, 0x3F, 0x20, 0x38]
-        missing_critical = [f"0x{a:02X}（{n}）" for a, n in critical.items() if a not in found]
-        if missing_critical:
+        want_max = "max30102" in selected_drivers
+        want_lcd = "lcd1602" in selected_drivers
+        found = i2c_scan()
+        if found is None:
             rep.add(
-                "I2C 总线扫描", FAIL,
-                f"扫到的地址：{table}\n缺少：{', '.join(missing_critical)}",
-                "1) 检查 SDA=物理脚3、SCL=物理脚5、VCC/GND 是否接好（3.3V）\n"
-                "2) 单独只接这一个器件再扫（排除总线被拉死）\n"
-                "3) 换一根杜邦线；确认没有和 LCD 的地址冲突\n"
-                "4) 再扫一次：i2cdetect -y 1",
-            )
-        elif not any(a in found for a in lcd_candidates):
-            rep.add(
-                "I2C 总线扫描", WARN,
-                f"扫到的地址：{table}\n未发现 LCD 转接板（候选 {[hex(a) for a in lcd_candidates]}）",
-                "检查 LCD 背面的 PCF8574 是否焊好、VCC 是 3.3V 还是 5V（两种都要试）\n"
-                "再看一次：i2cdetect -y 1",
+                "I2C 总线扫描", WARN, "i2cdetect 不可用或执行失败，跳过扫描",
+                "安装 i2c-tools：sudo apt install -y i2c-tools\n然后手动跑：i2cdetect -y 1",
             )
         else:
-            rep.add("I2C 总线扫描", PASS, f"扫到的地址：{table}")
+            table = ", ".join(f"0x{addr:02X}" for addr in sorted(found)) or "（空）"
+            critical = {0x57: "MAX30102 心率血氧"} if want_max else {}
+            lcd_candidates = [0x27, 0x3F, 0x20, 0x38]
+            missing_critical = [f"0x{a:02X}（{n}）" for a, n in critical.items() if a not in found]
+            if missing_critical:
+                rep.add(
+                    "I2C 总线扫描", FAIL,
+                    f"扫到的地址：{table}\n缺少：{', '.join(missing_critical)}",
+                    "1) 检查 SDA=物理脚3、SCL=物理脚5、VCC/GND 是否接好（3.3V）\n"
+                    "2) 单独只接这一个器件再扫（排除总线被拉死）\n"
+                    "3) 换一根杜邦线；确认没有和 LCD 的地址冲突\n"
+                    "4) 再扫一次：i2cdetect -y 1",
+                )
+            elif want_lcd and not any(a in found for a in lcd_candidates):
+                rep.add(
+                    "I2C 总线扫描", WARN,
+                    f"扫到的地址：{table}\n未发现 LCD 转接板（候选 {[hex(a) for a in lcd_candidates]}）",
+                    "检查 LCD 背面的 PCF8574 是否焊好、VCC 是 3.3V 还是 5V（两种都要试）\n"
+                    "再看一次：i2cdetect -y 1",
+                )
+            else:
+                rep.add("I2C 总线扫描", PASS, f"扫到的地址：{table}")
 
-    # ---------------- 5. 装配真实设备 ----------------
-    from health_monitor.core.config import load_config
-    from health_monitor.hal import create_device
-    from health_monitor.hal.exceptions import HealthMonitorError
-
-    try:
-        config = load_config(args.config)
-    except Exception as exc:  # noqa: BLE001
-        rep.add("加载配置", FAIL, f"{type(exc).__name__}: {exc}", "检查 rpi/config/devices.json 是否存在且 JSON 合法")
-        return rep.summary()
-
+    # ---------------- 5. 装配真实设备（只装配本次选中的） ----------------
     devices: Dict[str, Any] = {}
-    for cfg in config.enabled_devices():
+    for name in selected:
+        cfg = config.device(name)
+        if cfg is None:  # pragma: no cover - select_devices 已保证存在
+            continue
         try:
             dev = create_device(cfg.driver, params=cfg.params, mock=False, name=cfg.name)
             dev.open()
@@ -607,6 +827,22 @@ def main() -> int:
                     )
             except Exception as exc:  # noqa: BLE001
                 rep.add("求救按键", FAIL, f"{type(exc).__name__}: {exc}", "检查 GPIO 权限与引脚配置")
+
+    # ---------------- 7.5 覆盖度提示（哪些器件本脚本还没数值判据） ----------------
+    # 为什么要有这一段（2026-09-26）：加了 `--only` 之后，用户可以只验一个器件；
+    # 但如果那个器件在本脚本里**没有专门的检查**（例如 tft 由 tft_check.py 验、
+    # mcp3002 由 tmp36 组合使用），报告会只显示"打开成功"——看起来全绿，其实什么都没验。
+    uncovered = [name for name in selected if name not in CHECKED_DEVICE_NAMES]
+    if uncovered:
+        hints = [
+            f"  - {name}：{COMPOSED_DEVICE_HINTS.get(name, '本脚本还没有为它写数值判据')}"
+            for name in uncovered
+        ]
+        rep.add(
+            "检查覆盖", WARN,
+            f"这些设备本次只做了\"能否打开\"检查（没有数值/输出判据）：{uncovered}",
+            "\n".join(hints) + "\n（这不是失败，但报告里别把它们写成\"已实测通过\"）",
+        )
 
     # ---------------- 8. 关闭设备 ----------------
     for name, dev in devices.items():

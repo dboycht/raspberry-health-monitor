@@ -8,11 +8,12 @@
 
 主循环一帧做的事
 ----------------
-1. 采集所有到期的设备（``Collector.collect_due``）；
-2. 汇总快照（``Collector.snapshot``，含"陈旧即空"的保护）；
-3. 规则引擎判定（``RuleEngine.evaluate``）；
-4. 报警下发（``AlarmDispatcher.dispatch``）、落库、记录；
-5. 按最近到期时间睡眠（不空转烧 CPU）。
+1. **实体按键**：先处理按键动作（短按 = 消音、长按 = 求助，见 `_consume_button_events`）；
+2. 采集所有到期的设备（``Collector.collect_due``）；
+3. 汇总快照（``Collector.snapshot``，含"陈旧即空"的保护）；
+4. 规则引擎判定（``RuleEngine.evaluate``）；
+5. 报警下发（``AlarmDispatcher.dispatch``）、落库、记录；
+6. 按最近到期时间睡眠（不空转烧 CPU）。
 
 额外兜底：**所有传感器都读不到时**（例如一次性拔了线），
 会自发一条 ``SENSOR_FAULT``，避免"系统还在跑但什么都测不到"却悄无声息。
@@ -34,7 +35,7 @@ from .core.rules import RuleEngine
 from .core.store import Store
 from .hal import Device, OutputDevice, create_device
 from .hal.exceptions import ConfigError
-from .hal.models import AlarmCode, AlarmEvent, Severity, now_ts
+from .hal.models import AlarmCode, AlarmEvent, ButtonAction, Severity, now_ts
 from .hal.registry import get_spec
 from .net.web import WebApi, start_in_thread
 
@@ -238,6 +239,12 @@ class Runtime:
         self.collector.collect_due()
         snap = self.collector.snapshot()
 
+        # ---- 实体按键：先处理（"按下去"应当立刻生效，而不是等下一帧判定）----
+        # ⚠️ 2026-09-26 之前这条链是断的：驱动能报 CLICK / LONG_PRESS，但业务层没人消费
+        #    ⇒ 真机上按实体键毫无反应（`docs/14` 的 T3）。这里把它接上，
+        #    并且**复用 `sos()` / `silence()`** —— HTTP 接口走的就是这两个动作，行为一致。
+        button_alarms = self._consume_button_events(now)
+
         # 所有输入设备都拿不到数据时，自发一条故障报警（避免"静默失能"）
         if self.inputs and not self._has_any_reading(snap):
             if (now - self._last_stale_alert) >= self.config.thresholds.repeat_cooldown_s:
@@ -276,7 +283,36 @@ class Runtime:
                 self.store.prune(now)
             except Exception as exc:  # noqa: BLE001
                 _LOG.debug("清理历史失败（已忽略）：%s", exc)
-        return events
+        # 按键引发的报警（SOS）**已经在下发时就地处理过**，这里只是把它一起返回，
+        # 让调用方（演示/日志/单测）看到"这一帧发生过什么"；不会二次下发。
+        return events + button_alarms
+
+    def _consume_button_events(self, now: float) -> List[AlarmEvent]:
+        """把采集器攒下的实体按键事件变成动作：**短按消音 / 长按求助**。
+
+        设计取舍（为什么放在这里，而不是放进规则引擎）：
+        - 按键是**动作**，不是"状态"：规则引擎只判"数据是否越界"，不认"刚刚按了一下"；
+        - 动作要**立刻生效**：所以在本帧的规则判定之前处理，
+          这样"按下消音"能同时压住本帧即将下发的报警声；
+        - **复用 `sos()` / `silence()`**：与 HTTP `/api/v1/sos`、`/api/v1/silence` 完全同一条路径
+          （`sos()` 会先解除静音——求救不能被之前的静音挡住）。
+
+        Returns:
+            由按键产生的报警事件（目前只有 SOS；CLICK 只是消音，不产生事件）。
+        """
+        produced: List[AlarmEvent] = []
+        drain = getattr(self.collector, "drain_button_events", None)
+        if not callable(drain):  # pragma: no cover - 兼容老的自定义采集器
+            return produced
+        for event in drain():
+            action = getattr(event, "action", None)
+            if action is ButtonAction.LONG_PRESS:
+                _LOG.info("[按键] 长按 %.1fs：触发紧急求助", getattr(event, "pressed_for_s", 0.0))
+                produced.append(self.sos(now))
+            elif action is ButtonAction.CLICK:
+                _LOG.info("[按键] 短按：消音（灯仍亮）")
+                self.silence(now)
+        return produced
 
     @staticmethod
     def _has_any_reading(snap: Any) -> bool:

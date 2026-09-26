@@ -243,5 +243,71 @@ class TestCollectorWithStore(unittest.TestCase):
         self.assertIn("没接", errors["vitals"])
 
 
+class Test实体按键事件队列(unittest.TestCase):
+    """按键**动作事件**的攒与取（2026-09-26 接上"实体键 → 业务层"这条链路时新增）。
+
+    为什么不让它进快照：快照表示"当前状态"，而按键是"刚刚发生了一次动作"——
+    放进快照会被下一帧的 ``action=NONE`` 覆盖掉，表现为"按一下时灵时不灵"。
+    所以采集器单独攒一个队列，由运行时每帧 `drain_button_events()` 取走。
+    """
+
+    def setUp(self) -> None:
+        from health_monitor.playback import SimButton
+
+        self.clock = FakeClock()
+        self.config = AppConfig.from_dict(
+            {
+                "thresholds": {"sensor_fault_after": 3},
+                "devices": {"sos_button": {"driver": "button", "read_interval_s": 0.2}},
+            }
+        )
+        self.button = SimButton(name="sos_button")
+        self.collector = Collector(
+            self.config, {"sos_button": self.button}, store=None, clock=self.clock
+        )
+        self.collector.open_all()
+
+    def test_短按与长按都会被攒下来(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        self.button.press(ButtonAction.CLICK)
+        self.collector.collect_due()
+        self.clock.advance(0.5)
+        self.button.press(ButtonAction.LONG_PRESS)
+        self.collector.collect_due()
+
+        actions = [e.action for e in self.collector.drain_button_events()]
+        self.assertEqual(actions, [ButtonAction.CLICK, ButtonAction.LONG_PRESS])
+
+    def test_取过一次就清空(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        self.button.press(ButtonAction.CLICK)
+        self.collector.collect_due()
+        self.assertEqual(len(self.collector.drain_button_events()), 1)
+        self.assertEqual(self.collector.drain_button_events(), [], "取过之后必须清空，不能重复触发")
+
+    def test_空闲的NONE不会被攒(self) -> None:
+        self.collector.collect_due()   # 队列空 → 驱动返回 action=NONE
+        self.assertEqual(self.collector.drain_button_events(), [])
+
+    def test_关闭设备会清掉没消费的事件(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        self.button.press(ButtonAction.CLICK)
+        self.collector.collect_due()
+        self.collector.close_all()
+        self.assertEqual(self.collector.drain_button_events(), [], "停机后不该再残留按键动作")
+
+    def test_队列有上限不会被撑爆(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        for _ in range(100):          # 造 100 个事件但一直不消费
+            self.button.press(ButtonAction.CLICK)
+            self.collector.collect_due()
+            self.clock.advance(0.5)
+        self.assertLessEqual(len(self.collector.drain_button_events()), 64)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

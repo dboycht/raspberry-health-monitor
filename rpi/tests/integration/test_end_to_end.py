@@ -160,6 +160,77 @@ class TestFullPipeline(unittest.TestCase):
         self.assertGreaterEqual(len(status["dispatcher"]["outputs"]), 4)
 
 
+class Test实体按键接线(unittest.TestCase):
+    """★ 回归测试（2026-09-26）：**实体按键此前没有接到业务层**。
+
+    当时的情况：`sensors/button.py` 的去抖与 CLICK / LONG_PRESS 事件都有单测，
+    但 `ReadingSnapshot` 里没有按键字段、`Runtime.tick()` 也不消费按键事件
+    ⇒ 真机上按实体键**毫无反应**（`docs/14` 的 T3 就是这么发现的）。
+    这里钉住"短按消音 / 长按求助"这两条链路，避免以后又被拆掉。
+
+    为什么用配置加一个 `sos_button`：演示配置（`DEMO_CONFIG`）里本来没有按键，
+    而按键的接线正是被测对象，所以这里显式造一个。
+    """
+
+    def setUp(self) -> None:
+        import copy
+
+        config = copy.deepcopy(DEMO_CONFIG)
+        config["devices"]["sos_button"] = {"driver": "button", "read_interval_s": 0.2}
+        self.clock = _Clock()
+        self.rt = PlaybackRuntime(
+            AppConfig.from_dict(config), clock=self.clock, sleep=lambda _s: None
+        )
+        self.errors = self.rt.open()
+        self.assertEqual(self.errors, {}, f"装配不应失败：{self.errors}")
+        self.button = self.rt.sim("sos_button")
+        self.assertIsNotNone(self.button, "配置里的 sos_button 没有被装配出来")
+
+    def tearDown(self) -> None:
+        self.rt.close()
+
+    def test_短按消音(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        self.rt.set_vitals(heart_rate=130.0, spo2=98.0)
+        self.button.press(ButtonAction.CLICK)
+        self.rt.tick()
+        self.assertTrue(
+            self.rt.dispatcher.is_silenced(self.clock()),
+            "短按实体键应当消音（灯仍亮、不出声）",
+        )
+
+    def test_短按不产生求助事件(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        self.button.press(ButtonAction.CLICK)
+        codes = [e.code.value for e in self.rt.tick()]
+        self.assertNotIn("sos_pressed", codes)
+
+    def test_长按触发求助并且先解除静音(self) -> None:
+        from health_monitor.hal.models import ButtonAction
+
+        self.rt.silence(self.clock())
+        buzzer = self.rt.outputs["alarm_buzzer"]
+        before = buzzer.total_beeps
+
+        self.button.press(ButtonAction.LONG_PRESS)
+        codes = [e.code.value for e in self.rt.tick()]
+        self.assertIn("sos_pressed", codes, "长按必须触发 SOS 事件")
+        self.assertFalse(self.rt.dispatcher.is_silenced(self.clock()), "求救必须能响：先解除静音")
+        self.assertGreater(buzzer.total_beeps, before, "SOS 应当让蜂鸣器响")
+        self.assertEqual(self.rt.outputs["status_led"].current_color, "red", "SOS 应当亮红灯")
+
+    def test_没有按键设备时不影响主循环(self) -> None:
+        """没装配按键的配置（例如只接了 DHT11 的 T0/T1 阶段）必须照常跑。"""
+        rt = demo_runtime(clock=_Clock())
+        self.assertEqual(rt.open(), {})
+        try:
+            self.assertIsInstance(rt.tick(), list)
+        finally:
+            rt.close()
+
+
 class TestHttpApiEndToEnd(unittest.TestCase):
     """起真实 HTTP 服务，走真实 socket 请求（不是直接调 WebApi）。"""
 

@@ -21,6 +21,8 @@ from ..hal.device import Device
 from ..hal.exceptions import DeviceError
 from ..hal.models import (
     AmbientSample,
+    ButtonAction,
+    ButtonEvent,
     MotionSample,
     MotionState,
     PrecisionTempSample,
@@ -105,6 +107,11 @@ class Collector:
         self.sensor_failures: Dict[str, int] = {}
         self.sensor_errors: Dict[str, str] = {}
         self.read_counts: Dict[str, int] = {name: 0 for name in self.entries}
+        #: 实体按键的**动作事件**队列（只攒 CLICK / LONG_PRESS，见 `drain_button_events`）。
+        #: 为什么用队列而不是塞进快照：按键事件是"一次性动作"，而快照是"当前状态"——
+        #: 放进快照会被下一帧的 NONE 覆盖掉（驱动空闲时返回 action=NONE），
+        #: 于是"按一下消音"会时灵时不灵（2026-09-26 接这条链路时特意避开）。
+        self._button_events: List[ButtonEvent] = []
 
     # ------------------------------------------------------------------
     # 主循环入口
@@ -169,6 +176,7 @@ class Collector:
             entry.last_ok_ts = now
         else:
             _LOG.debug("设备 %s 返回缓存值（器件正常行为，非故障）：%s", entry.name, sample.error or "")
+        self._remember_button_event(entry, sample)
         self.read_counts[entry.name] = self.read_counts.get(entry.name, 0) + 1
         return sample
 
@@ -286,6 +294,31 @@ class Collector:
         return None
 
     # ------------------------------------------------------------------
+    # 实体按键事件（短按消音 / 长按求助）
+    # ------------------------------------------------------------------
+
+    def _remember_button_event(self, entry: _Entry, sample: Sample) -> None:
+        """把"按下了"这类**动作事件**攒进队列（其余样本类型原样忽略）。"""
+        if not isinstance(sample, ButtonEvent):
+            return
+        if sample.action not in (ButtonAction.CLICK, ButtonAction.LONG_PRESS):
+            return
+        self._button_events.append(sample)
+        # 上限保护：万一没人消费（比如没接业务层的自定义用法），队列也不会无限长
+        if len(self._button_events) > 64:
+            self._button_events = self._button_events[-64:]
+
+    def drain_button_events(self) -> List[ButtonEvent]:
+        """取出并清空按键动作事件（由 :class:`~health_monitor.service.Runtime` 每帧调用）。
+
+        Returns:
+            自上次调用以来发生的 CLICK / LONG_PRESS 事件（按发生顺序）。
+        """
+        events = list(self._button_events)
+        self._button_events.clear()
+        return events
+
+    # ------------------------------------------------------------------
     # 生命周期与诊断
     # ------------------------------------------------------------------
 
@@ -306,6 +339,7 @@ class Collector:
 
     def close_all(self) -> None:
         """关闭所有设备（幂等；任何单个关闭失败都不影响其它）。"""
+        self._button_events.clear()          # 停机后不该再残留"没处理的按键动作"
         for entry in self.entries.values():
             try:
                 entry.device.close()
