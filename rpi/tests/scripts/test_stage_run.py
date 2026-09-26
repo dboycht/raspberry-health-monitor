@@ -223,5 +223,44 @@ class TestStageDevices(unittest.TestCase):
                 pass
 
 
+class Test临时阈值覆盖(unittest.TestCase):
+    """`--set thresholds.no_motion_timeout_s=20`（2026-09-26 加，为 T4"久无活动"验收）。
+
+    为什么需要：默认 `no_motion_timeout_s=1800`（30 分钟），真机验收不可能等半小时；
+    而"临时改阈值"必须**可还原**（`--stop` 从备份恢复）且**写错要报错**（别静默失效）。
+    """
+
+    def test_解析各类值(self) -> None:
+        got = stage_run.parse_overrides(
+            ["thresholds.no_motion_timeout_s=20", "onenet.enabled=true", "x=1.5", "y=abc", "z=null"]
+        )
+        self.assertEqual(got[0], (["thresholds", "no_motion_timeout_s"], 20))
+        self.assertEqual(got[1], (["onenet", "enabled"], True))
+        self.assertEqual(got[2], (["x"], 1.5))
+        self.assertEqual(got[3], (["y"], "abc"), "解析不了的当字符串")
+        self.assertEqual(got[4], (["z"], None))
+
+    def test_缺等号要报错(self) -> None:
+        with self.assertRaises(ValueError):
+            stage_run.parse_overrides(["thresholds.no_motion_timeout_s"])
+
+    def test_空键要报错(self) -> None:
+        with self.assertRaises(ValueError):
+            stage_run.parse_overrides(["=20"])
+
+    def test_空列表返回空(self) -> None:
+        self.assertEqual(stage_run.parse_overrides(None), [])
+        self.assertEqual(stage_run.parse_overrides([]), [])
+
+    def test_按路径写值(self) -> None:
+        data = {"thresholds": {"a": 1}}
+        stage_run.set_path(data, ["thresholds", "a"], 9)
+        stage_run.set_path(data, ["thresholds", "no_motion_timeout_s"], 20)
+        stage_run.set_path(data, ["new", "deep", "key"], True)     # 中间层不存在就建
+        self.assertEqual(data["thresholds"]["a"], 9)
+        self.assertEqual(data["thresholds"]["no_motion_timeout_s"], 20)
+        self.assertTrue(data["new"]["deep"]["key"])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)

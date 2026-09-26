@@ -218,19 +218,59 @@ def service_alive(port: int, timeout: float = 1.0) -> bool:
     return api_get(port, "/api/v1/health", timeout=timeout).startswith("{")
 
 
-def apply_config(only: List[str]) -> Tuple[List[str], List[str], List[str]]:
-    """备份 + 写临时配置。返回 :func:`select_enabled` 的三元组。"""
+def parse_overrides(items: Optional[List[str]]) -> List[Tuple[List[str], Any]]:
+    """解析 ``--set a.b=值``（值按 JSON 解析，解析不了就当字符串）。
+
+    Raises:
+        ValueError: 缺 ``=`` 或路径为空（**大声报错**，别静默忽略）。
+    """
+    out: List[Tuple[List[str], Any]] = []
+    for raw in items or []:
+        text = str(raw)
+        if "=" not in text:
+            raise ValueError(f"--set 需要 KEY=VALUE 形式，收到 {raw!r}")
+        key, _, value_text = text.partition("=")
+        path = [piece for piece in key.strip().split(".") if piece]
+        if not path:
+            raise ValueError(f"--set 的键为空：{raw!r}")
+        try:
+            value: Any = json.loads(value_text)
+        except json.JSONDecodeError:
+            value = value_text
+        out.append((path, value))
+    return out
+
+
+def set_path(data: Dict[str, Any], path: List[str], value: Any) -> None:
+    """按点号路径写值（中间层缺失就建字典）。"""
+    node: Any = data
+    for piece in path[:-1]:
+        nxt = node.get(piece)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            node[piece] = nxt
+        node = nxt
+    node[path[-1]] = value
+
+
+def apply_config(
+    only: List[str], overrides: Optional[List[Tuple[List[str], Any]]] = None
+) -> Tuple[List[str], List[str], List[str]]:
+    """备份 + 写临时配置（含 ``--set`` 的临时覆盖）。返回 :func:`select_enabled` 的三元组。"""
     raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     devices = raw.get("devices") or {}
-    if not only:
+    if not only and not overrides:
         return list(devices), [], []
     if not BACKUP_PATH.exists():
         BACKUP_PATH.write_text(CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-    enabled, unknown, disabled = select_enabled(devices, only)
+    enabled, unknown, disabled = select_enabled(devices, only) if only else (list(devices), [], [])
     if unknown:
         return enabled, unknown, disabled
     for name, dev in devices.items():
-        dev["enabled"] = name in set(enabled)
+        if only:
+            dev["enabled"] = name in set(enabled)
+    for path, value in overrides or []:
+        set_path(raw, path, value)
     CONFIG_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return enabled, unknown, disabled
 
@@ -303,6 +343,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--stage", default=None, metavar="Tn",
                         help="按分级快照开器件，例如 --stage T2（快照见 config/stages.json）")
     parser.add_argument("--list-stages", action="store_true", help="列出所有分级快照与状态")
+    parser.add_argument("--set", dest="overrides", action="append", default=None, metavar="KEY=VALUE",
+                        help="临时覆盖配置里的值（点号路径，可重复），"
+                             "如 --set thresholds.no_motion_timeout_s=20（验完 --stop 会还原）")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"端口（默认 {DEFAULT_PORT}）")
     parser.add_argument("--wait", type=float, default=8.0, help="启动后等几秒再打摘要（默认 8）")
     parser.add_argument("--stop", action="store_true", help="停服务并还原配置")
@@ -333,6 +376,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     only = parse_only(args.only)
+    try:
+        overrides = parse_overrides(args.overrides)
+    except ValueError as exc:
+        safe_print(f"[X] {exc}")
+        return 1
     if args.stage:
         try:
             data = load_stages()
@@ -363,11 +411,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         safe_print("    python3 scripts/stage_run.py --stop")
         return 1
 
-    enabled, unknown, disabled = apply_config(only)
+    enabled, unknown, disabled = apply_config(only, overrides)
     if unknown:
         safe_print(f"[X] --only 里有配置中不存在的设备名：{unknown}")
         safe_print("    可用名字：python3 scripts/hardware_test.py --list")
         return 1
+    if overrides:
+        for path, value in overrides:
+            safe_print(f"[OK] 临时覆盖：{'.'.join(path)} = {value!r}（--stop 会还原）")
     safe_print(f"[OK] 临时配置：开 {len(enabled)} 个 -> {', '.join(enabled) or '(无)'}")
     if disabled:
         safe_print(f"     （临时关掉 {len(disabled)} 个：{', '.join(disabled)}）")
