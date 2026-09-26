@@ -145,7 +145,7 @@ def main() -> int:
 
     print("\n【结论】")
     if accepted:
-        print("  🎉 平台已接收（accepted）—— OneNET 链路**实测打通**")
+        safe_print("  🎉 平台已接收（accepted）—— OneNET 链路**实测打通**")
         print("     去控制台看：设备 t1 → 数据流，应能看到 heart_rate_bpm / spo2_percent / ... ")
         code = 0
     elif rejected:

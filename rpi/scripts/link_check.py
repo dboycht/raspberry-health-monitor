@@ -105,7 +105,7 @@ def main() -> int:
     args = parser.parse_args()
 
     print("=" * 78)
-    print("网线直连验收　（目标：电脑侧 " + args.pc_ip + " ↔ 树莓派 " + args.ip + "）")
+    safe_print("网线直连验收　（目标：电脑侧 " + args.pc_ip + " ↔ 树莓派 " + args.ip + "）")
     print("=" * 78)
     problems: List[str] = []
 
@@ -146,14 +146,14 @@ def main() -> int:
     # ---- 第 3 层：树莓派侧 IP 与连通性 ----
     print(f"\n【第 3 层 · 能不能通到树莓派 {args.ip}】")
     if not link_up or not has_pc_ip:
-        print("   ⏭ 前两层没过，先别测这层（测了也一定不通，容易误判成树莓派的问题）")
+        safe_print("   ⏭ 前两层没过，先别测这层（测了也一定不通，容易误判成树莓派的问题）")
     else:
         ping_ok = ping(args.ip)
         ssh_ok = tcp_open(args.ip)
         safe_print(f"   ping：{'✅ 通' if ping_ok else '❌ 不通'}　"
               f"22 端口：{'✅ 开' if ssh_ok else '❌ 关闭/不通'}")
         if ssh_ok:
-            print("   🎉 树莓派可达且 SSH 在监听！下一步装公钥：")
+            safe_print("   🎉 树莓派可达且 SSH 在监听！下一步装公钥：")
             print(f'     type $env:USERPROFILE\\.ssh\\id_ed25519_pi_health.pub | ssh pi@{args.ip} '
                   '"mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"')
         elif ping_ok:

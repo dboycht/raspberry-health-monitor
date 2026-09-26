@@ -15,7 +15,23 @@ from __future__ import annotations
 import contextlib
 import time
 
+import sys
 import lgpio
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 DATA = 4          # 物理脚 7
 DRIVE_MS = 50
@@ -49,15 +65,15 @@ def main() -> int:
     try:
         during0, after0 = drive_and_readback(handle, DATA, 0)
         print(f"  驱动 0 期间回读：{during0}/20　释放后（内部下拉）：{after0}/20")
-        print("    驱动 0 却仍读 1 ⇒ 有线以更强的力量把它顶在 3.3V（短接到电源 / 模块反插）")
-        print("    驱动 0 读回 0   ⇒ 线能被拉低 ⇒ 数据线很可能**不在脚 7 上**")
+        safe_print("    驱动 0 却仍读 1 ⇒ 有线以更强的力量把它顶在 3.3V（短接到电源 / 模块反插）")
+        safe_print("    驱动 0 读回 0   ⇒ 线能被拉低 ⇒ 数据线很可能**不在脚 7 上**")
         during1, after1 = drive_and_readback(handle, DATA, 1)
         print(f"  驱动 1 期间回读：{during1}/20　释放后（内部下拉）：{after1}/20")
     finally:
         free(handle, DATA)
         lgpio.gpiochip_close(handle)
 
-    print("""
+    safe_print("""
 结论怎么用
 ----------
 情况甲：驱动 0 期间仍读 1

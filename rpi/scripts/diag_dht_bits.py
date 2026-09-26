@@ -25,6 +25,21 @@ import lgpio
 sys.path.insert(0, ".")
 
 from health_monitor.sensors.dht11 import Dht11  # noqa: E402
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 P7, P11, P13 = 4, 17, 27
 
@@ -84,11 +99,11 @@ def main() -> int:
         print(f"  脚 7 当 DATA：边沿 {edges} 个（高电平段 {highs} 个）")
         print("  理论值：一帧 83 个边沿（起始 1 + 应答 2 + 40×2 + 收尾 1）")
         if edges == 0:
-            print("  ⇒ 0 个边沿 = 传感器完全没应答（供电/接线还没对）")
+            safe_print("  ⇒ 0 个边沿 = 传感器完全没应答（供电/接线还没对）")
         elif edges < 70:
-            print("  ⇒ 边沿偏少：供电不足或线材问题")
+            safe_print("  ⇒ 边沿偏少：供电不足或线材问题")
         else:
-            print("  ⇒ 边沿数接近满帧：模块在正常工作，问题多半在**上拉/线长**造成的最后一位丢失")
+            safe_print("  ⇒ 边沿数接近满帧：模块在正常工作，问题多半在**上拉/线长**造成的最后一位丢失")
 
         for label, plus_bcm, gnd_bcm in (
             ("原样（脚13 当 +、脚11 当 -）", P13, None),
@@ -107,7 +122,7 @@ def main() -> int:
             free(handle, bcm)
         lgpio.gpiochip_close(handle)
 
-    print("""
+    safe_print("""
 怎么读这些结果
 --------------
 · 有 OK ⇒ 直接去跑 `python3 -m health_monitor selfcheck --real` 看 DHT11 那行；

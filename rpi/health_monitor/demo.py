@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from .core.config import AppConfig
 from .hal.models import MotionState
 from .playback import PlaybackRuntime
+from .console import safe_print  # noqa: E402
 
 #: 演示用配置：阈值刻意收紧、久无活动改成 60 秒，便于在几十秒内演完
 DEMO_CONFIG: Dict[str, Any] = {
@@ -113,9 +114,9 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
         )
         if events:
             for ev in events:
-                print(f"   ⚠️  报警：{ev.message}   [{ev.code.value} / 严重度 {int(ev.severity)}]")
+                safe_print(f"   ⚠️  报警：{ev.message}   [{ev.code.value} / 严重度 {int(ev.severity)}]")
         else:
-            print("   ✅ 无报警")
+            safe_print("   ✅ 无报警")
         print(f"   LED={getattr(led, 'current_color', '?')}   LCD={getattr(lcd, 'current_lines', '?')}")
         spoken = getattr(speaker, "spoken", None)
         if spoken:
@@ -141,7 +142,7 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
     frame_no["n"] += 1
     clock.advance(5.0)
     sos_event = runtime.sos(clock())
-    print(f"   ⚠️  报警：{sos_event.message}   [{sos_event.code.value} / 严重度 {int(sos_event.severity)}]")
+    safe_print(f"   ⚠️  报警：{sos_event.message}   [{sos_event.code.value} / 严重度 {int(sos_event.severity)}]")
     print(f"   LED={getattr(led, 'current_color', '?')}   LCD={getattr(lcd, 'current_lines', '?')}")
     print()
 
@@ -159,7 +160,7 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
 
     # ---------------- 汇总 ----------------
     if runtime.script_warnings:
-        print("⚠️  剧本警告（说明某一步没真正生效）：")
+        safe_print("⚠️  剧本警告（说明某一步没真正生效）：")
         for warning in runtime.script_warnings:
             print(f"   - {warning}")
         print()
@@ -184,7 +185,7 @@ def _serve_for_demo(runtime: PlaybackRuntime, port: int) -> int:
     try:
         runtime.start_http(host="0.0.0.0", port=port)
     except OSError as exc:
-        print(f"❌ 端口 {port} 绑定失败：{exc}（换 --port，或先关掉占用端口的旧进程）")
+        safe_print(f"❌ 端口 {port} 绑定失败：{exc}（换 --port，或先关掉占用端口的旧进程）")
         runtime.close()
         return 2
     url = f"http://127.0.0.1:{port}/api/v1/current"
@@ -195,7 +196,7 @@ def _serve_for_demo(runtime: PlaybackRuntime, port: int) -> int:
         print("自测请求 /api/v1/current 返回：")
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     except Exception as exc:  # noqa: BLE001
-        print(f"⚠️  自测请求失败：{type(exc).__name__}: {exc}")
+        safe_print(f"⚠️  自测请求失败：{type(exc).__name__}: {exc}")
     print("\n按 Ctrl+C 结束演示服务…")
     try:
         while True:

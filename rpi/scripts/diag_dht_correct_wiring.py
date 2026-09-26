@@ -31,6 +31,21 @@ import lgpio
 sys.path.insert(0, ".")
 
 from health_monitor.sensors.dht11 import Dht11  # noqa: E402
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 P7, P11, P13 = 4, 17, 27
 ALL = (P7, P11, P13)
@@ -75,7 +90,7 @@ def main() -> int:
             print(f"\n{label}，读脚 7：")
             for i in range(3):
                 ok, note = read_once(P7)
-                print(f"  第 {i + 1} 次：{'★★★ ' + note if ok else note}")
+                safe_print(f"  第 {i + 1} 次：{'★★★ ' + note if ok else note}")
                 if ok:
                     hits.append((label, note))
                 time.sleep(2.1)
@@ -101,7 +116,7 @@ def main() -> int:
 """)
     else:
         print("两种假设都没读出数。请把三根线从**模块侧**拔下来，逐根量通断（断线很常见），")
-        print("并确认模块 + ↔ - 之间有 3.3V（红表笔在 +）。")
+        safe_print("并确认模块 + ↔ - 之间有 3.3V（红表笔在 +）。")
     return 0
 
 

@@ -131,7 +131,7 @@ def main() -> int:
     measure("当前状态")
 
     print("\n【3】拔线对照实验（**需要你动手，一步即可**）")
-    print("  👉 请把 **DHT11 模块上的 DATA 线拔掉**（只拔 DATA，VCC/GND 可以留着）")
+    safe_print("  👉 请把 **DHT11 模块上的 DATA 线拔掉**（只拔 DATA，VCC/GND 可以留着）")
     print("     拔好后按回车继续（这样能区分是模块的问题还是树莓派这一侧的问题）…")
     try:
         input()
@@ -147,12 +147,12 @@ def main() -> int:
     print("  " + verdict(up, down))
     print()
     if down <= 3:
-        print("  ⇒ 树莓派这一侧没问题。**问题在 DHT11 模块或它的其余接线**：")
+        safe_print("  ⇒ 树莓派这一侧没问题。**问题在 DHT11 模块或它的其余接线**：")
         print("     · 模块丝印顺序（有的模块是 DATA/VCC/GND，有的是 VCC/DATA/GND）——对调一下 VCC 与 DATA 试试")
         print("     · 模块可能损坏（内部把 DATA 短路到 VCC）：换一个模块验证")
         print("     · 杜邦线本身短路（用万用表量两端是否与相邻线导通）")
     else:
-        print("  ⇒ 拔了线还是被拉高 → **树莓派这一侧**有问题：")
+        safe_print("  ⇒ 拔了线还是被拉高 → **树莓派这一侧**有问题：")
         print("     · 面包板该列与 3.3V 电源列短路（换一列插）")
         print("     · 杜邦线插到了物理脚 1/17（3.3V）而不是 7   ← 最常见")
         print("     · 排针/面包板内部短路（换一个孔位）")

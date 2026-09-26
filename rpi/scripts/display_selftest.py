@@ -112,12 +112,12 @@ def test_lcd(rows: List[str]) -> bool:
         except Exception:  # noqa: BLE001
             pass
     if ok:
-        print("\n  👀 请看 LCD：")
+        safe_print("\n  👀 请看 LCD：")
         print("     · 第 1 行应显示 " + repr(rows[0][:16]))
         if len(rows) > 1:
             print("     · 第 2 行应显示 " + repr(rows[1][:16]))
-        print("     · 只有背光没有字 ⇒ 调背面的**对比度电位器**（蓝色小螺丝）")
-        print("     · 显示方块/乱码 ⇒ I2C 地址对了但初始化时序问题，可改用 address=0x3F 试")
+        safe_print("     · 只有背光没有字 ⇒ 调背面的**对比度电位器**（蓝色小螺丝）")
+        safe_print("     · 显示方块/乱码 ⇒ I2C 地址对了但初始化时序问题，可改用 address=0x3F 试")
     return ok
 
 
@@ -157,12 +157,12 @@ def test_tft(args: argparse.Namespace, rows: List[str]) -> bool:
         except Exception:  # noqa: BLE001
             pass
     if ok:
-        print("\n  👀 请看 TFT：")
+        safe_print("\n  👀 请看 TFT：")
         print("     · **上电瞬间**应先出现【红/绿/蓝三色条】（这是驱动的自检画面）")
         print(f"     · 随后是两行大字：{first!r} / {second!r}")
-        print("     · 颜色红蓝互换 ⇒ 加 --bgr；画面像底片 ⇒ 加 --invert")
-        print("     · 花屏/条纹 ⇒ 换控制器试，或降速 --baud 8000000")
-        print("     · 全白/全黑 ⇒ 查 DC(脚18)/RST(脚22)/CS(脚26)/VCC 接线")
+        safe_print("     · 颜色红蓝互换 ⇒ 加 --bgr；画面像底片 ⇒ 加 --invert")
+        safe_print("     · 花屏/条纹 ⇒ 换控制器试，或降速 --baud 8000000")
+        safe_print("     · 全白/全黑 ⇒ 查 DC(脚18)/RST(脚22)/CS(脚26)/VCC 接线")
     return ok
 
 

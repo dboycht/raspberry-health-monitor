@@ -59,6 +59,48 @@ def describe_pin(bcm: int) -> str:
     physical = BCM_TO_PHYSICAL.get(int(bcm))
     return f"GPIO{bcm}（物理脚 {physical}）" if physical else f"GPIO{bcm}（非标准 40-pin 脚）"
 
+
+#: 打印用的 ASCII 替身（只作用于会崩控制台的符号）。
+#: 为什么单文件版也要有它（2026-09-26 实测，见仓库 ERROR.md E41）：中文 Windows
+#: （GBK 控制台）上 `print("⚠️ …")` 会抛 UnicodeEncodeError 把程序**当场崩掉** ——
+#: 不是在树莓派上，而是在同学自己的笔记本上。本文件是"一个文件交作业"，不能 import
+#: 仓库里的 `basic/console.py`，所以这里内嵌一份等价的最小实现（判据同源）。
+_ASCII_FALLBACK = {
+    "\u2705": "[OK]", "\u274c": "[X]", "\u26a0": "[!]", "\ufe0f": "",
+    "\u2192": "->", "\u2190": "<-", "\u2194": "<->", "\u21d2": "=>",
+    "\u25b6": ">", "\u23ed": ">>", "\u26d4": "[!]", "\u00b5": "u",
+    "\u2103": "degC", "\u00d7": "x",
+}
+
+
+def _encodable(text: str) -> bool:
+    """这段文字能不能被当前控制台编码打出来（取不到编码就当 UTF-8）。"""
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(enc)
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
+def safe_print(*args, **kwargs) -> None:
+    """`print` 的安全版：窄编码控制台上把打不出的字符降级成 ASCII 替身。
+
+    * UTF-8 环境（树莓派 / CI / 管道）：**原样输出**，一个字符都不改；
+    * GBK 之类的窄编码：`⚠️` → `[!]`、`❌` → `[X]`，其余换成 `?`。
+    """
+    rendered = []
+    for arg in args:
+        text = str(arg)
+        if _encodable(text):
+            rendered.append(text)
+            continue
+        rendered.append("".join(
+            ch if _encodable(ch) else _ASCII_FALLBACK.get(ch, "?") for ch in text
+        ))
+    print(*rendered, **kwargs)
+
+
 #: 两次读取的最小间隔（秒）。DHT11 数据手册要求 ≥1 秒，实测 ≥2 秒才稳。
 MIN_INTERVAL_S = 2.0
 
@@ -541,7 +583,7 @@ def _explain_no_window(exc: Optional[BaseException] = None, backend: str = "") -
     """
     import os
 
-    print("⚠️ 现在**不会弹出窗口**，本次改为『只采集 + 存档』。")
+    safe_print("⚠️ 现在**不会弹出窗口**，本次改为『只采集 + 存档』。")
     if backend:
         print(f"   matplotlib 当前后端 = {backend}（`agg` = 只能出图片文件，不能开窗）")
     if exc is not None:
@@ -589,7 +631,7 @@ def _try_open_window(args, interval: float) -> Optional["CurveWindow"]:
 
     font_name = configure_cjk_font()
     if font_name is None:
-        print("⚠️ 没找到中文字体：图里的中文会变成方框（sudo apt install -y fonts-noto-cjk）")
+        safe_print("⚠️ 没找到中文字体：图里的中文会变成方框（sudo apt install -y fonts-noto-cjk）")
     else:
         print(f"中文字体：{font_name}")
     try:
@@ -609,14 +651,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     interval = max(args.interval, MIN_INTERVAL_S)
     if interval != args.interval:
-        print(f"⚠️ 采样周期已从 {args.interval:g}s 抬到硬件下限 {MIN_INTERVAL_S:g}s（DHT11 要求）")
+        safe_print(f"⚠️ 采样周期已从 {args.interval:g}s 抬到硬件下限 {MIN_INTERVAL_S:g}s（DHT11 要求）")
 
     # ① 传感器
     sensor = Dht11(pin=args.pin, mock=args.mock)
     try:
         backend = sensor.open()
     except Dht11Error as exc:
-        print(f"❌ 打不开 DHT11：{exc}")
+        safe_print(f"❌ 打不开 DHT11：{exc}")
         return 2
     print(f"数据源：DHT11（{describe_pin(args.pin)}）　后端：{backend}")
 

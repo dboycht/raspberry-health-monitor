@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""控制台输出的编码安全网（基础版专用）。
+"""控制台输出的编码安全网（主项目）。
 
-为什么需要（2026-09-25 在中文 Windows 上实测踩到，见仓库 `ERROR.md` E32）
-------------------------------------------------------------------------
+为什么需要（2026-09-25 在中文 Windows 上实测踩到，见仓库 `ERROR.md` E32 / E41）
+--------------------------------------------------------------------------------
 Python 在中文 Windows 上的 `sys.stdout.encoding` 是 **GBK（cp936）**——即使控制台
 已经 `chcp 65001` 也一样。此时 `print("✅ 通过")` 会直接抛：
 
     UnicodeEncodeError: 'gbk' codec can't encode character '\\u2705'
 
-**注意这不是"打印得难看"，而是程序崩掉**：`basic/tools/selfcheck.py` 跑完 10 项检查、
-明明全通过，却在最后一行打印 `✅` 时抛异常 ⇒ 退出码 1 ⇒
-`rpi/scripts/validate.py` 的第 10 项把它判成"基础版自检未通过"；
-交给老师的同学在 Windows 上运行也会看到一坨 traceback。
+**注意这不是"打印得难看"，而是程序崩掉**：`python -m health_monitor demo` 演到
+"报警"那一幕时会带着 traceback 退出；`python -m health_monitor status` 同样。
 树莓派（Debian，UTF-8 locale）永远碰不到这个问题，所以它一直是"只在开发机上炸"的暗雷。
 
 判据很简单：**凡是可能进不了"当前输出编码"的字符，打印前都要过一遍 :func:`safe_text`。**
 "当前输出编码"取 `sys.stdout.encoding`，取不到就当 UTF-8（树莓派/管道/CI 都是这样）。
+
+与 `basic/console.py` 的关系
+----------------------------
+基础版（`basic/`）**不 import 主项目**，所以那边有一份同样的实现；两份都保留。
+改这里时建议同步看一眼 `basic/console.py`（判据与替身表保持同源）。
 """
 
 from __future__ import annotations
@@ -24,9 +27,6 @@ import sys
 from typing import Dict, Optional
 
 #: 常用符号的 ASCII 替身：既保证不抛异常，也保证**信息不丢**
-#: ⚠️ 这张表要覆盖"GBK 打不出来"的常用符号（箭头、圆圈数字、播放符…）——
-#: 漏掉的会退化成 `?`，虽然不崩但信息就丢了（2026-09-26 实测补全，见 ERROR.md E41）；
-#: 主项目那份同样的表在 `rpi/health_monitor/console.py`，改一处记得看另一处。
 _LABELS: Dict[str, str] = {
     "\u2705": "[OK]",      # ✅
     "\u274c": "[X]",       # ❌
@@ -38,7 +38,7 @@ _LABELS: Dict[str, str] = {
     "\u21d2": "=>",        # ⇒
     "\u21d0": "<=",        # ⇐
     "\u2265": ">=",        # ≥
-    "\u2264": "<=",        # <=
+    "\u2264": "<=",        # ≤
     "\u00b5": "u",         # µ
     "\u03a9": "ohm",       # Ω
     "\u2103": "degC",      # ℃
@@ -93,10 +93,9 @@ def safe_text(text: str, encoding: Optional[str] = None) -> str:
 def safe_print(*args, **kwargs) -> None:
     """`print` 的安全版：所有参数先过 :func:`safe_text`（窄编码控制台上不崩）。
 
-    为什么要有它：`rpi/scripts/` 下有 20 多个诊断/验收工具，原来是**直接**
-    `print("✅ …")`；在中文 Windows（GBK 控制台）上会抛 `UnicodeEncodeError` 把
-    整个脚本崩掉（2026-09-25 真机实测：`check_docs.py` 因此被误报成"文档自检失败"，
-    见 `ERROR.md` E32/E35）。有了它，这些工具只需把 `print(` 换成 `safe_print(`。
+    为什么要有它：`demo.py` / `main.py` 里原本是**直接** `print("⚠️ 报警：…")`；
+    在中文 Windows（GBK 控制台）上会抛 `UnicodeEncodeError` 把整个进程崩掉
+    （2026-09-26 实测，见 `ERROR.md` E41：同类问题在 `rpi/scripts/` 下曾有 39 处）。
     """
     print(*(safe_text(str(arg)) for arg in args), **kwargs)
 

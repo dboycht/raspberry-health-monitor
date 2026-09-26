@@ -46,6 +46,21 @@ from basic.dht11read import Dht11Error, Dht11Reader  # noqa: E402
 from basic.pins import describe_pin  # noqa: E402
 from basic import wire_spec  # noqa: E402
 from basic.console import safe_text  # noqa: E402
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 #: 每种电平配置读多少次（取"高电平次数"作为判据）
 DEFAULT_SAMPLES = 50
@@ -186,9 +201,9 @@ def diag_read(pin: int, times: int = 5, interval_s: float = None) -> List[Dict[s
     else:
         print(safe_text("  ❌ 一次都没读到。按顺序排查（每步都有判据，别跳步）："))
         print("     ① 万用表量模块 VCC 对 GND 是否约 3.3V（不是 5V）")
-        print(f"     ② 万用表蜂鸣档量模块 DATA ↔ 树莓派物理脚 {wire_spec.DATA_PHYSICAL} 是否导通")
-        print("     ③ 万用表蜂鸣档量模块 GND ↔ 树莓派 GND 是否导通（共地）")
-        print(f"     ④ 裸四针传感器：DATA ↔ 3.3V 之间应量到 "
+        safe_print(f"     ② 万用表蜂鸣档量模块 DATA ↔ 树莓派物理脚 {wire_spec.DATA_PHYSICAL} 是否导通")
+        safe_print("     ③ 万用表蜂鸣档量模块 GND ↔ 树莓派 GND 是否导通（共地）")
+        safe_print(f"     ④ 裸四针传感器：DATA ↔ 3.3V 之间应量到 "
               f"{wire_spec.PULLUP_OHM_RANGE[0] // 1000}kΩ~{wire_spec.PULLUP_OHM_RANGE[1] // 1000}kΩ")
         print("     ⑤ 换一个 DHT11 模块再试（器件本身坏是最常见的一种）")
     return results

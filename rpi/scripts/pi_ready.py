@@ -29,6 +29,21 @@ import sys
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 #: 候选网段（按可能性排序）：
 #: 192.168.137 = Windows 移动热点默认；192.168.50 = 本项目文档里的网线直连；其他为常见家用网段
@@ -232,7 +247,7 @@ def main() -> int:
     # ---- 结论与下一步 ----
     print("\n" + "=" * 78)
     if login_ok:
-        print("🎉 全通了！告诉我「连上了」，我就开始跑只读体检并给你逐器件结论。")
+        safe_print("🎉 全通了！告诉我「连上了」，我就开始跑只读体检并给你逐器件结论。")
         print(f"   我这边要用的别名：把 C:\\Users\\{Path.home().name}\\.ssh\\config 里 pi-health 的 "
               f"HostName 改成 {found[0]}（我可以自己改，你说一声即可）")
     elif found:
@@ -248,7 +263,7 @@ def main() -> int:
         print("   2) 树莓派接显示器，WiFi 选 pi-debug 连上；执行 sudo systemctl enable --now ssh")
         print("   3) 再跑一次本脚本：python rpi/scripts/pi_ready.py")
         print("\n  【方案 B：网线直连电脑】")
-        print("   1) 网线插电脑网口 ↔ 树莓派网口")
+        safe_print("   1) 网线插电脑网口 ↔ 树莓派网口")
         print("   2) 电脑设 IP：New-NetIPAddress -InterfaceAlias \"以太网\" -IPAddress 192.168.50.2 -PrefixLength 24")
         print("   3) 树莓派：sudo nmcli connection modify \"Wired connection 1\" ipv4.method manual "
               "ipv4.addresses 192.168.50.3/24 && sudo nmcli connection up \"Wired connection 1\"")

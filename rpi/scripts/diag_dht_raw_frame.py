@@ -18,6 +18,21 @@ import sys
 import time
 
 import lgpio
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 sys.path.insert(0, ".")
 
@@ -87,17 +102,17 @@ def main() -> int:
             else:
                 i += 1
         print(f"配对出的高电平段数：{len(pairs)}（理论 41 = 应答 1 + 数据 40）")
-        print("逐位宽度（µs）：")
+        safe_print("逐位宽度（µs）：")
         for index, width in enumerate(pairs):
             tag = "应答" if index == 0 else f"#{index:02d}"
             flag = "  ← 超过 200µs，会被驱动丢弃" if width >= MAX_BIT_WIDTH_US else ""
             print(f"  {tag:>5}: {width:8.1f}{flag}")
         data = pairs[1:]
         valid = [w for w in data if 0.0 < w < MAX_BIT_WIDTH_US]
-        print(f"\n丢掉应答后：{len(data)} 个候选位；其中有效（<200µs）：{len(valid)} 个")
+        safe_print(f"\n丢掉应答后：{len(data)} 个候选位；其中有效（<200µs）：{len(valid)} 个")
         print("判据：")
-        print("  · 候选位 40 个、有效 39 个 ⇒ 某一位宽度异常（多半是采样窗口/信号质量）")
-        print("  · 候选位只有 39 个        ⇒ 解码循环少配一对（off-by-one，改代码即可）")
+        safe_print("  · 候选位 40 个、有效 39 个 ⇒ 某一位宽度异常（多半是采样窗口/信号质量）")
+        safe_print("  · 候选位只有 39 个        ⇒ 解码循环少配一对（off-by-one，改代码即可）")
     finally:
         for bcm in ALL:
             free(handle, bcm)

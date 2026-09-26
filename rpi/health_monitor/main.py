@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from .core.config import ConfigError, load_config
 from .hal.registry import DRIVER_DOCS, MANIFEST, get_spec
 from .service import Runtime, build_runtime
+from .console import safe_print  # noqa: E402
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -114,13 +115,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     runtime = build_runtime(args.config, mock=mock, store_path=args.store, dispatcher_enabled=not args.quiet)
     errors = runtime.open()
     if errors:
-        print(f"⚠️  {len(errors)} 个设备打开失败（服务继续运行，但相关功能不可用）：")
+        safe_print(f"⚠️  {len(errors)} 个设备打开失败（服务继续运行，但相关功能不可用）：")
         for name, err in errors.items():
             print(f"   - {name}: {err}")
     try:
         runtime.start_http(host=args.host, port=args.port, token=args.token)
     except OSError as exc:
-        print(f"❌ 端口 {args.port} 无法绑定：{exc}")
+        safe_print(f"❌ 端口 {args.port} 无法绑定：{exc}")
         print("   可能已有实例在运行；换端口用 --port，或先关掉旧进程（按端口找 PID，别杀错 node 进程）。")
         runtime.close()
         return 2
@@ -242,7 +243,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return int(args.func(args))
     except ConfigError as exc:
-        print(f"❌ 配置错误：{exc}", file=sys.stderr)
+        safe_print(f"❌ 配置错误：{exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
         print("\n已中断。")

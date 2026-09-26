@@ -57,7 +57,7 @@ def diag_max30102() -> None:
         for attempt in range(1, 4):
             try:
                 value = bus.read_byte_data(addr, 0x21)
-                print(f"    0x{addr:02X} 第{attempt}次：0x{value:02X}"
+                safe_print(f"    0x{addr:02X} 第{attempt}次：0x{value:02X}"
                       + ("　✅ 正确" if value in (0x15, 0x11) else "　⚠️ 不是期望值"))
                 break
             except OSError as exc:

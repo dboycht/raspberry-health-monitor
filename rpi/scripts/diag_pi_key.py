@@ -86,10 +86,10 @@ def main() -> int:
 
     fix_needed = info["has_cr"] or info["has_bom"]
     if fix_needed:
-        print("\n🔎 结论：本机公钥带 CR/BOM —— **这就是免密失败的最可能原因**。")
+        safe_print("\n🔎 结论：本机公钥带 CR/BOM —— **这就是免密失败的最可能原因**。")
         print("   sshd 读 authorized_keys 时，一行末尾多出的 \\r 会让公钥解析失败。")
     else:
-        print("\n🔎 本机公钥格式看起来是干净的（无 CR/BOM）；若仍失败，原因多半在树莓派侧"
+        safe_print("\n🔎 本机公钥格式看起来是干净的（无 CR/BOM）；若仍失败，原因多半在树莓派侧"
               "（公钥没写进去 / 权限不对）。")
 
     # 核心：给出一条**不依赖文件**的安装命令（把公钥内联进远程命令，避免任何换行符问题）
@@ -103,7 +103,7 @@ def main() -> int:
         'echo KEY_INSTALLED && wc -l < ~/.ssh/authorized_keys'
     )
     print("\n" + "=" * 78)
-    print("👉 在电脑上执行这一条（会问一次树莓派密码）——它是**修复版**：")
+    safe_print("👉 在电脑上执行这一条（会问一次树莓派密码）——它是**修复版**：")
     print("   ① 不进管道、不读文件，公钥直接内联，绕开 CRLF/编码问题；")
     print("   ② 会先删掉之前写坏的同一把公钥，再写入干净的；")
     print("   ③ 顺手把权限设成 700/600（权限不对 sshd 会忽略）。")

@@ -31,7 +31,7 @@ if __package__ in (None, ""):  # pragma: no cover - 只影响"直接执行脚本
 BASIC_DIR = Path(__file__).resolve().parent
 
 from basic.dht11read import Dht11Error, Dht11Reader, MIN_INTERVAL_S  # noqa: E402
-from basic.console import safe_text  # noqa: E402
+from basic.console import safe_print, safe_text  # noqa: E402
 from basic.model import Reading  # noqa: E402
 from basic.pins import describe_pin  # noqa: E402
 from basic.series import Series  # noqa: E402
@@ -533,7 +533,7 @@ def run_curve(args: argparse.Namespace) -> int:
             if window is not None:
                 window.refresh()
             if runner.should_stop:
-                print(f"⛔ {runner.stopped_reason}")
+                safe_print(f"⛔ {runner.stopped_reason}")
                 break
             if deadline is not None and time.time() >= deadline:
                 break

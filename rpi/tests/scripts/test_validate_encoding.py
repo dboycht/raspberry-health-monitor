@@ -314,12 +314,16 @@ class TestBasicVersionRunnerFallback(unittest.TestCase):
 
 
 class TestScriptsPrintSymbolsSafely(unittest.TestCase):
-    """**AST 守卫**：`rpi/scripts/*.py` 里打印 ✅/❌/⚠ 的地方必须过 `safe_text`。
+    """**AST 守卫（初版，仍保留）**：`rpi/scripts/*.py` 里打印 ✅/❌/⚠ 必须过 `safe_text`。
 
     为什么（2026-09-25 真机实测，E32/E35）：`check_docs.py` 当时漏了这道加固，
     在中文 Windows（GBK 控制台）上打印"✅ 全部通过"直接抛 `UnicodeEncodeError` ——
     整个检查器崩掉，`validate.py` 把它报成"文档自检失败"，而**一个悬空引用都没有**。
     假失败会让人不再信任提交前检查，所以这里用机器把它钉住。
+
+    ⚠️ 这条守卫的**判据太窄**（只认五个符号），已经漏过一批（E41：`↔` `⇒` emoji `µ`…）；
+    真正的守卫是下面的 :class:`TestKilledConsoleCharsAreNeverPrintedBare`。
+    这里保留它是当"回归钉"用 —— 它比通用版更早发现问题时的定位更直白。
     """
 
     SYMBOLS = ("\u2705", "\u274c", "\u26a0", "\u2103", "\u2b50")
@@ -330,7 +334,6 @@ class TestScriptsPrintSymbolsSafely(unittest.TestCase):
 
         注意别把 `safe_print(safe_text("✅ …"))` 那种**已经加固过**的当违规：
         `ast.walk` 会把嵌套的 `print`/`safe_text` 一起走一遍，所以这里要记父节点。
-        多行拼接的 print 也跳过（本轮的重构脚本刻意不碰它们，避免改错）。
         """
         found = []
 
@@ -351,7 +354,6 @@ class TestScriptsPrintSymbolsSafely(unittest.TestCase):
                         and sub.func.id == "safe_text"
                         for sub in ast.walk(node)
                     )
-                    single_line = node.lineno == (node.end_lineno or node.lineno)
                     literals = [
                         sub.value for sub in ast.walk(node)
                         if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
@@ -360,7 +362,7 @@ class TestScriptsPrintSymbolsSafely(unittest.TestCase):
                         sym in text for text in literals
                         for sym in TestScriptsPrintSymbolsSafely.SYMBOLS
                     )
-                    if has_symbol and not inside_safe and not wraps_safe_text and single_line:
+                    if has_symbol and not inside_safe and not wraps_safe_text:
                         found.append(node.lineno)
             for child in ast.iter_child_nodes(node):
                 walk(child, parent_chain + [node])
@@ -385,6 +387,175 @@ class TestScriptsPrintSymbolsSafely(unittest.TestCase):
                 f"中文 Windows（GBK）上会把整个脚本崩掉（E32）：{offenders}"
             ),
         )
+
+    def test_通用编码守卫也覆盖scripts目录(self) -> None:
+        """两套守卫必须**同时**生效：只留窄的那套就是 E41 的成因，只留宽的那套会丢掉老回归钉。
+
+        断言方式：拿一个"只含 `↔`"的合成源码喂给通用守卫，必须报出来。
+        （窄守卫对它一律放行 —— 这正是当年漏掉 `check_sync.py` 的原因。）
+        """
+        sample = 'print("A \u2194 B")\n'
+        tree = ast.parse(sample)
+        self.assertEqual(self._printed_symbols(tree), [], "窄守卫本就不该认得 ↔（历史事实）")
+        generic = TestKilledConsoleCharsAreNeverPrintedBare()
+        self.assertTrue(
+            generic._offenders(tree, strict=True),
+            "通用守卫必须能抓出 ↔ —— 抓不到就说明它退化了（E41 会复发）",
+        )
+
+
+class TestKilledConsoleCharsAreNeverPrintedBare(unittest.TestCase):
+    """**AST 守卫（通用版）**：不许用裸 `print(...)` 输出"Windows 控制台打不出来"的字符。
+
+    为什么把旧守卫（只认 ✅/❌/⚠/℃/⭐ 五个符号）换成按**编码能力**判（2026-09-26，E41）
+    ------------------------------------------------------------------------------
+    旧守卫是"白名单符号"：只要违规字符不在那五个里就一路放行，于是
+    **U+2194 ↔ / U+21D2 ⇒ / emoji / U+26D4 ⛔ / U+25B6 ▶ / U+00B5 µ** 全都漏过去了。
+    真实后果：`rpi/scripts/check_sync.py` 在中文 Windows 上打印报告标题
+    （`同步验收：开发副本 ↔ canonical`）时抛 `UnicodeEncodeError`，
+    **一个字的结论都没打出来就崩了**，而提交前检查全绿 —— 这正是"守卫失效"的典型长相。
+
+    判据（可执行的一句话）：
+    > **凡是"cp936（中文 Windows）与 cp1252（西文 Windows）都打不出来"的字符，
+    > 都不许由裸 `print` 输出；必须走 `safe_print`（它按当前编码降级成 ASCII 替身）。**
+
+    为什么不用"所有非 ASCII"当判据：那样 `rpi/scripts/` 里几百处**中文**打印全会报违规，
+    而中文在 cp936 上是正常的（控制台本来就该显示中文），换成 `safe_print` 是噪音不是修复。
+    `safe_print` 在 UTF-8 环境（树莓派）**一个字符都不改**，所以这个守卫不会伤到真机输出。
+    """
+
+    @staticmethod
+    def _deadly(char: str) -> bool:
+        """True = 两种 Windows 控制台都打不出来（裸 print 必然崩）。"""
+        if ord(char) < 128:
+            return False
+        for encoding in ("cp936", "cp1252"):
+            try:
+                char.encode(encoding)
+                return False          # 有一种能打出来，就不算"必然崩"
+            except UnicodeEncodeError:
+                continue
+        return True
+
+    @staticmethod
+    def _deadly_on_gbk(char: str) -> bool:
+        """True = 中文 Windows（cp936）打不出来 —— 本项目实际会踩的那一类。
+
+        `µ`(U+00B5) 就是典型：cp1252 打得出，**cp936 打不出** ⇒ 在中文 Windows 上照样崩。
+        ⚠️ 它**只对"显式字形"生效**：中文字符在 cp936 上打得出来，所以中文打印**不会**被报违规
+        （判据写窄一点，守卫才不会变成噪音）。
+        """
+        if ord(char) < 128:
+            return False
+        try:
+            char.encode("cp936")
+            return False
+        except UnicodeEncodeError:
+            return True
+
+    @staticmethod
+    def _emoji(char: str) -> bool:
+        """True = emoji（哪个 Windows 控制台都打不出来，且从来不该出现在日志里）。"""
+        point = ord(char)
+        return (
+            0x1F000 <= point <= 0x1FAFF
+            or 0x2600 <= point <= 0x27BF
+            or point in (0x23ED, 0x23F0, 0x25B6)
+        )
+
+    @staticmethod
+    def _renderable(node: ast.AST) -> str:
+        """把这棵调用树里所有字符串字面量拼起来（f-string 的定值部分也算）。"""
+        return "".join(
+            sub.value
+            for sub in ast.walk(node)
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+        )
+
+    @staticmethod
+    def _already_safe(node: ast.AST, chain: list) -> bool:
+        inside = any(
+            isinstance(anc, ast.Call)
+            and isinstance(anc.func, ast.Name)
+            and anc.func.id == "safe_print"
+            for anc in chain
+        )
+        wraps = any(
+            isinstance(sub, ast.Call)
+            and isinstance(sub.func, ast.Name)
+            and sub.func.id in ("safe_text", "safe_print")
+            for sub in ast.walk(node)
+        )
+        return inside or wraps
+
+    def _offenders(self, tree: ast.AST, strict: bool) -> list:
+        """`strict=True` 用"cp936 打不出或 emoji"；`False` 用"两种控制台都打不出"。"""
+        predicate = (
+            (lambda c: self._deadly_on_gbk(c) or self._emoji(c))
+            if strict
+            else self._deadly
+        )
+        found: list = []
+
+        def walk(node: ast.AST, chain: list) -> None:
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "print":
+                    hits = sorted({c for c in self._renderable(node) if predicate(c)})
+                    if hits and not self._already_safe(node, chain):
+                        found.append("U+" + " U+".join(f"{ord(c):04X}" for c in hits))
+            for child in ast.iter_child_nodes(node):
+                walk(child, chain + [node])
+
+        walk(tree, [])
+        return found
+
+    def _scan(self, directory: Path, strict: bool = True) -> list:
+        offenders: list = []
+        scanned = 0
+        for path in sorted(directory.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            scanned += 1
+            source = path.read_text(encoding="utf-8")
+            for hit in self._offenders(ast.parse(source), strict):
+                offenders.append(f"{path.relative_to(_RPI_DIR.parent).as_posix()}: {hit}")
+        self.assertGreater(scanned, 0, f"{directory} 下没扫到脚本，守卫可能失效了")
+        return offenders
+
+    def test_判据本身有效(self) -> None:
+        """先证明判据有区分力：致命字符必须被认出，中文必须不被误伤。"""
+        for char in ("\u2705", "\u274c", "\u26a0", "\u26d4", "\u2194", "\u21d2", "\u25b6"):
+            self.assertTrue(self._deadly(char), f"U+{ord(char):04X} 应当被认成两种控制台都打不出")
+            self.assertTrue(self._deadly_on_gbk(char), f"U+{ord(char):04X} 应当被认成 cp936 打不出")
+        # µ：cp1252 打得出、cp936 打不出 —— 只该被"中文 Windows"那条判据抓住
+        self.assertFalse(self._deadly("\u00b5"), "µ 在 cp1252 上打得出，不该算'两种都打不出'")
+        self.assertTrue(self._deadly_on_gbk("\u00b5"), "µ 在 cp936 上打不出，必须被抓住")
+        # 中文/度符号：cp936 打得出 ⇒ 不许误报（否则守卫会淹没在几百条中文打印里）
+        for char in ("温", "度", "\u2103", "a", " "):
+            self.assertFalse(self._deadly_on_gbk(char), f"U+{ord(char):04X} 不该被误判")
+        self.assertTrue(self._emoji("\U0001f389"), "emoji 应当被认出来")
+        self.assertFalse(self._emoji("\u2103"), "度符号不是 emoji")
+
+    def test_rpi脚本与主项目打印致命字符时都过了safe_print(self) -> None:
+        offenders = self._scan(_SCRIPTS_DIR) + self._scan(_RPI_DIR / "health_monitor")
+        self.assertEqual(
+            offenders, [],
+            msg=(
+                "这些裸 print 会输出「中文 Windows（cp936）打不出」的字符或 emoji —— "
+                "会把整个脚本崩掉（E41，check_sync.py 就是这么崩的）："
+                f"{offenders}"
+            ),
+        )
+
+    def test_basic工具打印致命字符时都过了safe_print(self) -> None:
+        """基础版（`basic/`）里的**工具**同样要加固。
+
+        ⚠️ 只扫 `basic/tools/`：`basic/plot.py` 与 `basic/hw/run.py` 是**交互曲线程序**
+        （在树莓派的桌面里跑，UTF-8 控制台），它们的符号是给人看的、刻意保留；
+        需要保护的那几处各自带了自己的安全打印（`run.py` 单文件自带 `safe_print`）。
+        """
+        offenders = self._scan(_RPI_DIR.parent / "basic" / "tools")
+        self.assertEqual(offenders, [], msg=f"basic/tools 下有裸 print 打印致命字符：{offenders}")
 
 
 class TestNoBareSubprocessCalls(unittest.TestCase):

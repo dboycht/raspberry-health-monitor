@@ -137,7 +137,7 @@ def main() -> int:
 
     print("\n【结论】")
     if pub.received_results and any("accepted" in item["topic"] for item in pub.received_results):
-        print("  🎉 平台已接收数据点（accepted）—— 上云链路**实测打通**")
+        safe_print("  🎉 平台已接收数据点（accepted）—— 上云链路**实测打通**")
         code = 0
     elif pub.connected and status["published"]:
         safe_print("  ⚠️ 已连接且已发布，但没等到 accepted 回执："

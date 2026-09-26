@@ -139,7 +139,7 @@ def wiring_walkthrough(seconds_each: float) -> None:
     for physical in KEY_PHYSICAL:
         bcm = physical_to_bcm(physical)
         hint = hints.get(physical, "")
-        print(f"\n▶ 现在翻转 物理脚 {physical}（GPIO{bcm}）：应量 **{hint}**")
+        safe_print(f"\n▶ 现在翻转 物理脚 {physical}（GPIO{bcm}）：应量 **{hint}**")
         try:
             pulse(bcm, seconds_each, period=1.0)
         except Exception as exc:  # noqa: BLE001
@@ -177,7 +177,7 @@ def main() -> int:
     print("  python3 scripts/pin_probe.py --pulse 24 --seconds 60     # 验证 MCP3002 的 CS")
     print("  python3 scripts/pin_probe.py --pulse 7 --seconds 30      # 验证 DHT11 的 DATA")
     print("  python3 scripts/pin_probe.py --wiring                    # 逐脚走一遍")
-    print("\n物理脚 ↔ BCM 对照（本项目用到的）：")
+    safe_print("\n物理脚 ↔ BCM 对照（本项目用到的）：")
     for physical in KEY_PHYSICAL:
         bcm = physical_to_bcm(physical)
         # describe_pin() 自己会写 `GPIO{n}（…）`，这里只需要括号里的说明（E35）

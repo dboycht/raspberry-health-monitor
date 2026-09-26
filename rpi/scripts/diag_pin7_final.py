@@ -20,7 +20,23 @@ from __future__ import annotations
 import contextlib
 import time
 
+import sys
 import lgpio
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 PINS = [(7, 4, "DHT11 DATA（S 那根）"), (11, 17, "空脚对照"), (13, 27, "空脚对照")]
 SAMPLES = 25
@@ -65,7 +81,7 @@ def main() -> int:
             free(handle, bcm)
         lgpio.gpiochip_close(handle)
 
-    print("""
+    safe_print("""
 判定方法（30 秒，做一个就够）
 ----------------------------
 把模块的 **S（数据）那根线从物理脚 7 上拔下来**，然后重跑本脚本：

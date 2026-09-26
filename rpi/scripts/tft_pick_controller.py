@@ -75,7 +75,7 @@ def show(dev, name: str) -> None:
 
 def try_one(name: str, note: str, args: argparse.Namespace) -> bool:
     print("\n" + "-" * 74)
-    print(f"▶ 候选：{name}")
+    safe_print(f"▶ 候选：{name}")
     print(f"  {note}")
     print("-" * 74)
     dev = create_device(

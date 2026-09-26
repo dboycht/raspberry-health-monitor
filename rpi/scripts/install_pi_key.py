@@ -130,7 +130,7 @@ def main() -> int:
 
     print("【第一步】检查是否已经装过（能免密就直接结束）")
     if check_login(args.user, args.ip):
-        print("\n🎉 已经装好了，不需要再装。")
+        safe_print("\n🎉 已经装好了，不需要再装。")
         return 0
 
     print("\n【第二步】把公钥追加到树莓派")
@@ -168,7 +168,7 @@ def main() -> int:
     print()
     if ok:
         print("=" * 78)
-        print("🎉 装好了。接下来我会：")
+        safe_print("🎉 装好了。接下来我会：")
         print("   1) 改 ~/.ssh/config 里 pi-health 的 HostName 指向这台树莓派；")
         print("   2) 跑只读体检（设备节点 / 依赖 / i2cdetect / 逐器件）；")
         print("   3) 把项目代码传上去（或 git clone）并跑 hardware_test.py。")

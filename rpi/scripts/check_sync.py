@@ -166,7 +166,7 @@ def main() -> int:
     dev = collect(DEV_ROOT)
 
     print("=" * 78)
-    print("同步验收：开发副本 ↔ canonical")
+    safe_print("同步验收：开发副本 ↔ canonical")
     print(f"  开发副本：{DEV_ROOT}")
     print(f"  canonical：{target}")
     print("=" * 78)

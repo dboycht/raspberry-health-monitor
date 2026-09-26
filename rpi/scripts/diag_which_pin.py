@@ -28,7 +28,23 @@ from __future__ import annotations
 import contextlib
 import time
 
+import sys
 import lgpio
+# 让 `basic.console.safe_print` 可导入（打印 ✅/❌/⚠ 时在窄编码控制台上自动降级）
+# ⚠️ 为什么（2026-09-25 真机实测，ERROR.md E32/E35）：中文 Windows / GBK 控制台上
+#    `print` 直接打印这些符号时会抛 UnicodeEncodeError 把**整个脚本**崩掉；这些工具主要跑在
+#    树莓派（UTF-8）上，导入失败就退回内置 print（行为与过去一致）。
+try:
+    from pathlib import Path  # noqa: E402
+except ImportError:  # pragma: no cover - Path 是标准库，理论上不会失败
+    Path = None
+ROOT = Path(__file__).resolve().parents[2] if Path is not None else None
+if ROOT is not None and str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    from basic.console import safe_print  # noqa: E402
+except ImportError:  # pragma: no cover - 只在 basic 不可用时
+    safe_print = print
 
 CANDIDATES = [
     (1, None, "3.3V 电源脚（读它一定全是 1，属正常）"),
@@ -81,15 +97,15 @@ def main() -> int:
         after_low = sum(lgpio.gpio_read(handle, 4) for _ in range(20))
         free(handle, 4)
         print(f"  输出过 0 之后、用内部下拉读：{after_low}/20")
-        print("    0/20  ⇒ 脚 7 能被拉低（数据线上没有强驱动）")
-        print("    20/20 ⇒ 脚 7 被**强驱动到高**（模块反插/损坏，或线接在 3.3V 上）")
+        safe_print("    0/20  ⇒ 脚 7 能被拉低（数据线上没有强驱动）")
+        safe_print("    20/20 ⇒ 脚 7 被**强驱动到高**（模块反插/损坏，或线接在 3.3V 上）")
     finally:
         for _, bcm, _ in CANDIDATES:
             if bcm is not None:
                 free(handle, bcm)
         lgpio.gpiochip_close(handle)
 
-    print("""
+    safe_print("""
 怎么读
 ------
 · 脚 7 = 上拉/下拉/浮空 **全 1** 且实验 B 也是 20/20
