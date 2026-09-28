@@ -197,6 +197,36 @@ class TestStageSnapshots(unittest.TestCase):
         for stage in ("T1", "T2", "T3"):
             self.assertIn(stage, verified, f"{stage} 已在真机验收通过，快照里应标 verified")
 
+    def test_阶段tag名与级名一致(self) -> None:
+        """2026-09-28 用户下令为已验收的级补打了阶段 tag（T0…T4）。
+
+        判据（**能在开发副本上验证的那部分**）：`tag` 必须与级名**逐字符相同** ——
+        防"T4 的 tag 写成 T3"这类复制粘贴错；至于"远端是否真有这个 tag"，
+        开发副本没有 `.git`，只能在 canonical 里用 `git ls-remote --tags` 核。
+        """
+        tagged = []
+        for name, info in self.stages.items():
+            with self.subTest(stage=name):
+                if "tag" not in info:
+                    continue
+                self.assertEqual(info["tag"], name, f"{name} 的 tag 字段写成了 {info['tag']}")
+                tagged.append(name)
+        self.assertIn("T4", tagged, "T4 已验收，快照里应有 tag")
+
+    def test_阶段tag与发布tag是两套语义(self) -> None:
+        """阶段 tag 用 `T<数字>`；**发布版 tag 用版本号**（如 `1.0.1`）且须用户下令才打。
+
+        这条守卫的作用：防止将来有人把阶段快照写成 `1.0.4` 这类版本号，
+        与"发布版"混淆（本项目 tags 的语义区分写在 `docs/14` §5）。
+        """
+        for name, info in self.stages.items():
+            tag = info.get("tag")
+            if tag is None:
+                continue
+            self.assertNotRegex(
+                tag, r"^\d", f"{name} 的 tag 看着像发布版版本号，阶段 tag 必须是 T<数字>"
+            )
+
 
 class TestStageDevices(unittest.TestCase):
     def test_取某一级的器件(self) -> None:

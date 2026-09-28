@@ -4,7 +4,10 @@
     "用法：python3 scripts/stage_run.py --stage T2   （临时只开这一级的器件起服务，--stop 还原配置）",
     "为什么只存『哪些器件 enabled』而不复制代码：阶梯的差别只在『接线 + 配置』，",
     "代码是同一份（rpi/health_monitor）；复制 13 份会让一次 bug 修复要改 13 处、并互相漂移。",
-    "status=verified 的级 = 已在真机验收通过（verified_on/commit 指向当时的提交）。"
+    "status=verified 的级 = 已在真机验收通过（verified_on/commit 指向当时的提交）。",
+    "★ 2026-09-28 用户下令补打**阶段 tag**：每级另有 `tag`（T0…T4），",
+    "  要取回『那一级的完整代码』用 `git checkout T3` 即可 —— 阶段 tag 是快照，",
+    "  与『发布版 tag = 版本号（如 1.0.1，须用户下令才打）』是两套语义，别混。"
   ],
   "reference": "rpi/config/devices.example.json",
   "stages": {
@@ -14,6 +17,7 @@
       "status": "verified",
       "verified_on": "2026-09-25",
       "commit": "0dc0378",
+      "tag": "T0",
       "note": "T0 走 basic/（独立实现、不 import 主项目），不涉及 rpi 的配置开关；真机 111 样本全成功"
     },
     "T1": {
@@ -22,6 +26,7 @@
       "status": "verified",
       "verified_on": "2026-09-26",
       "commit": "7f17f53",
+      "tag": "T1",
       "note": "官方验收 --only display = PASS 7/0/0/0；首轮不出字=初始化缺毫秒级等待（E42）"
     },
     "T2": {
@@ -30,6 +35,7 @@
       "status": "verified",
       "verified_on": "2026-09-26",
       "commit": "ba6ae30",
+      "tag": "T2",
       "note": "官方验收 --only alarm_buzzer,status_led = PASS 7/0/0/1 + 端到端闭环（拔 DHT11 线→报警，插回→ALL_CLEAR）；闭环第一轮撞到 E44"
     },
     "T3": {
@@ -38,6 +44,7 @@
       "status": "verified",
       "verified_on": "2026-09-26",
       "commit": "83730b8",
+      "tag": "T3",
       "note": "官方验收 PASS 7/0/0/1（三色 LED 含红灯 + 蜂鸣器）；端到端四步全对：报警（黄灯持续闪 + 每 5 秒重响）→ 短按消音（此后无重发行、灯转常亮）→ 插回 all_clear → 长按 SOS（红灯+蜂鸣+LCD）。本级踩到 E45：报警只响两声没法验消音 + 灯不闪（起闪后被 on() 取消）"
     },
     "T4": {
@@ -46,6 +53,7 @@
       "status": "verified",
       "verified_on": "2026-09-28",
       "commit": "5ed5b50",
+      "tag": "T4",
       "note": "验收时板上代码 = 5ed5b50（开发副本与板上逐文件 md5 一致）。器件级 --only motion --interval 15 = PASS 5/0/0/1（4/15 次检测到人）；端到端 --set thresholds.no_motion_timeout_s=20 四轮闭环（no_motion_too_long → all_clear，含持续提醒 1~6 次），用户确认声/光/屏/语音。本级踩到 E47：PIR『从没检测到人』的 inf 让文案成了『已有 inf 分钟』、且 Infinity 是非法 JSON 被 OneNET 整包拒收（err_code 98）——已修（文案按秒/分钟/小时分档 + 出边界降级成 None + 上报前守卫），修复随本级收尾提交进入仓库"
     },
     "T5": {
