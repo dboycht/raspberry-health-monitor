@@ -11,11 +11,18 @@
 
 from __future__ import annotations
 
+import json
+import math
 import unittest
 from datetime import datetime
 
 from health_monitor.core.config import Thresholds
-from health_monitor.core.rules import ReadingSnapshot, RuleEngine
+from health_monitor.core.rules import (
+    ReadingSnapshot,
+    RuleEngine,
+    finite_or_none,
+    format_duration_s,
+)
 from health_monitor.hal.models import (
     AlarmCode,
     AmbientSample,
@@ -206,6 +213,58 @@ class TestMotionRules(unittest.TestCase):
         )
         self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, [e.code for e in engine.evaluate(snap)])
 
+    def test_从没检测到人时文案与数值都必须是合法JSON(self) -> None:
+        """★ 真机 T4 验收踩到（ERROR.md **E47**）。
+
+        PIR 的"**从没**检测到人"语义是 ``inf`` 秒（刻意不是 0）；旧代码把它塞进
+        ``f"{silent / 60:.0f} 分钟"`` 与 ``value=round(silent, 1)``，后果是：
+        ① 报警文案成了"已有 **inf** 分钟未检测到活动"；
+        ② ``value=inf`` 经 ``json.dumps`` 变成裸 ``Infinity``（**非法 JSON**），
+           实测被 OneNET 整包拒收（``err_code 98 illegal data``）。
+        """
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=1800))
+        snap = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        )
+        ev = next(e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
+        # ① 文案如实说"至今未检测到"，不许出现 "inf"
+        self.assertIn("至今未检测到", ev.message)
+        self.assertNotIn("inf", ev.message)
+        # ② 数值降级成 None（宁可说"未知"，也不发非法 JSON）
+        self.assertIsNone(ev.value)
+        self.assertEqual(ev.unit, "")
+        # ③ 判据：输出必须能过**严格** JSON（allow_nan=False 会把 Infinity/NaN 当场拒掉）
+        payload = json.dumps(ev.to_dict(), ensure_ascii=False, allow_nan=False)
+        self.assertNotIn("Infinity", payload)
+        self.assertIsNone(json.loads(payload)["value"])
+
+    def test_短时长文案用秒而不是0分钟(self) -> None:
+        """★ 真机 T4 的第二个坑：临时阈值 20 秒 ⇒ 旧文案"已有 **0** 分钟未检测到活动"，
+        读起来像"还没超时"，验收人当场以为没触发（阈值 1800 时反而正常，所以开发机测不出来）。"""
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=20, repeat_cooldown_s=0))
+        snap = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=20.0,
+        )
+        ev = next(e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
+        self.assertIn("20 秒", ev.message)
+        self.assertNotIn("0 分钟", ev.message)
+        self.assertEqual(ev.value, 20.0)
+        self.assertEqual(ev.unit, "s")
+
+    def test_长时长文案用分钟与小时(self) -> None:
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=1800, repeat_cooldown_s=0))
+        snap = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=5400.0,      # 1.5 小时
+        )
+        ev = next(e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
+        self.assertIn("1 小时 30 分钟", ev.message)
+
     def test_夜间频繁起夜(self) -> None:
         engine = RuleEngine(Thresholds(night_wake_count=3, night_window_s=7200, repeat_cooldown_s=0))
         events = []
@@ -300,6 +359,39 @@ class TestSensorFault(unittest.TestCase):
         )
 
 
+class Test时长文案与JSON安全(unittest.TestCase):
+    """两个边界工具（ERROR.md E47）：**判据是"跨出去的值必须是合法 JSON"**。"""
+
+    def test_时长文案分段与边界(self) -> None:
+        cases = [
+            (0.0, "0 秒"),
+            (20.0, "20 秒"),
+            (59.9, "60 秒"),        # <60 走"秒"分支
+            (60.0, "1 分钟"),
+            (90.0, "1 分钟"),       # 整除，不四舍五入
+            (1800.0, "30 分钟"),    # 项目默认阈值
+            (3599.0, "59 分钟"),    # ★ 不许凑成"60 分钟"
+            (3600.0, "1 小时 0 分钟"),
+            (5400.0, "1 小时 30 分钟"),
+        ]
+        for seconds, expected in cases:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(format_duration_s(seconds), expected)
+
+    def test_非有限数一律None(self) -> None:
+        self.assertIsNone(finite_or_none(math.inf))
+        self.assertIsNone(finite_or_none(-math.inf))
+        self.assertIsNone(finite_or_none(math.nan))
+        self.assertIsNone(finite_or_none(None))
+        self.assertEqual(finite_or_none(0.0), 0.0)
+        self.assertEqual(finite_or_none(12), 12.0)
+
+    def test_非数字输入不抛异常(self) -> None:
+        """驱动给错类型时宁可返回"未知"，也不要让 /api/v1/current 整个 500。"""
+        self.assertIsNone(finite_or_none("很久"))
+        self.assertIsNone(finite_or_none(object()))
+
+
 class TestSnapshotSummary(unittest.TestCase):
     def test_摘要里缺失值必须是None而不是0(self) -> None:
         """手机端把 None 显示为"未知"，把 0 显示成"0 bpm"会吓死人。"""
@@ -317,6 +409,36 @@ class TestSnapshotSummary(unittest.TestCase):
         self.assertEqual(s["heart_rate_bpm"], 72)
         self.assertEqual(s["ambient_temp_c"], 24.5)
         self.assertIsNone(s["body_temp_c"])
+
+    def test_摘要里不许出现inf或nan(self) -> None:
+        """★ 真机 T4 实测（ERROR.md E47）：PIR "从没检测到人"时 ``motion_silent_s`` 是 ``inf``，
+        旧代码原样透出 ⇒ ``/api/v1/current`` 的 JSON 里出现裸 ``Infinity``（**非法 JSON**），
+        手机端的严格解析器会当场失败。摘要出口统一降级成 ``None``（对客户端就是"未知"）。"""
+        snap = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+            data_age_s=math.inf,
+        )
+        summary = snap.health_summary()
+        self.assertIsNone(summary["motion_silent_s"])
+        self.assertIsNone(summary["data_age_s"])
+        # 判据：整个摘要必须能过严格 JSON（有 Infinity/NaN 会在这里抛 ValueError）
+        text = json.dumps(summary, ensure_ascii=False, allow_nan=False)
+        self.assertNotIn("Infinity", text)
+        self.assertNotIn("NaN", text)
+
+    def test_摘要里正常的有限值原样保留(self) -> None:
+        """降级只针对非有限数，别把正常读数一起吃掉。"""
+        snap = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=12.5,
+            data_age_s=0.4,
+        )
+        summary = snap.health_summary()
+        self.assertEqual(summary["motion_silent_s"], 12.5)
+        self.assertEqual(summary["data_age_s"], 0.4)
 
     def test_新鲜度字段(self) -> None:
         """★ 让手机端能区分"没有数据"与"数据是旧的"。

@@ -78,6 +78,26 @@ class TestModels(unittest.TestCase):
         self.assertEqual(back["severity"], 2)
         self.assertEqual(back["message"], "心率偏高")
 
+    def test_报警事件value为inf时降级成None(self) -> None:
+        """``to_dict()`` 的 docstring 写着"可直接 JSON 序列化" —— 那是**判据**。
+
+        真机 T4 实测（开发副本 ERROR.md **E47**）：PIR"从没检测到人"的 ``inf`` 值
+        经 ``json.dumps`` 变成裸 ``Infinity``（非法 JSON），**被 OneNET 整包拒收**
+        （``err_code 98 illegal data``）。这里用 ``allow_nan=False`` 把判据钉死：
+        只要有人再往 value 里塞 inf/nan，这条测试当场红。
+        """
+        ev = AlarmEvent(
+            code=AlarmCode.NO_MOTION_TOO_LONG,
+            severity=Severity.CRITICAL,
+            message="至今未检测到任何活动，请确认老人是否安全",
+            value=float("inf"),
+        )
+        d = ev.to_dict()
+        self.assertIsNone(d["value"])
+        text = json.dumps(d, ensure_ascii=False, allow_nan=False)
+        self.assertNotIn("Infinity", text)
+        self.assertIsNone(json.loads(text)["value"])
+
     def test_报警文案不许含markdown标记(self) -> None:
         """界面/音箱文本会原样显示，markdown 标记会露出来（见 memory/16）。"""
         for code in AlarmCode:

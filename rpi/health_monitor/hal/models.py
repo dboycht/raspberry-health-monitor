@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -238,6 +239,25 @@ class DisplayStatus(Sample):
 # --------------------------------------------------------------------------
 
 
+def _finite_or_none(value: Optional[float]) -> Optional[float]:
+    """``inf`` / ``nan`` → ``None``：`:meth:`AlarmEvent.to_dict` 的输出必须是**合法 JSON**。
+
+    为什么（项目开发副本 ERROR.md **E47**）：``AlarmEvent.value`` 可能是 PIR
+    "从没检测到人"的 ``inf``（那是**刻意**的语义，见 ``hc_sr501``）；
+    直接 ``json.dumps`` 会写出裸 ``Infinity`` —— 不是合法 JSON，
+    实测被 OneNET 整包拒收（``err_code 98 illegal data``），手机端严格解析器同样会失败。
+
+    ⚠️ 本函数刻意写在 ``hal`` 内、**不从 ``core`` 导入**：依赖方向是 hal ← core，
+    反过来引会破坏分层（``core/rules.py`` 里另有一份同语义的 ``finite_or_none``）。
+    """
+    if value is None:
+        return None
+    try:
+        return float(value) if math.isfinite(float(value)) else None
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True)
 class AlarmEvent:
     """一次报警事件。既用于本地播报，也用于推送安卓端。
@@ -263,13 +283,18 @@ class AlarmEvent:
     detail: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """转成可直接 JSON 序列化的字典（供 HTTP API / MQTT / SQLite 使用）。"""
+        """转成可直接 JSON 序列化的字典（供 HTTP API / MQTT / SQLite 使用）。
+
+        ⚠️ ``value`` 过了 :func:`_finite_or_none`：这条 docstring 里"可直接 JSON 序列化"
+        是**判据**，不是形容词 —— 带 ``inf`` 的字典 ``json.dumps`` 出来是非法 JSON
+        （ERROR.md E47，真机被 OneNET 拒收过）。
+        """
         return {
             "ts": self.ts,
             "code": self.code.value,
             "severity": int(self.severity),
             "message": self.message,
-            "value": self.value,
+            "value": _finite_or_none(self.value),
             "unit": self.unit,
             "source": self.source,
             "detail": dict(self.detail),

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -31,6 +32,49 @@ from ..hal.models import (
     now_ts,
 )
 from .config import Thresholds
+
+
+# --------------------------------------------------------------------------
+# 两个小工具：把内部数值/时间写成"人看的、JSON 合法的"形态
+# ⚠️ 为什么要有它们 —— ERROR.md **E47**（2026-09-28 真机 T4 验收时抓到）
+# --------------------------------------------------------------------------
+
+def format_duration_s(seconds: float) -> str:
+    """把秒数写成人能读的时长（**不许写成"0 分钟"**）。
+
+    为什么要它：真机 T4 验收把 `no_motion_timeout_s` 临时设成 **20 秒**，
+    旧写法 `f"{silent / 60:.0f} 分钟"` 把 20 秒四舍五入成"**0 分钟**" ——
+    报警文案成了"已有 0 分钟未检测到活动"，读起来像"还没超时"，
+    验收人当场以为没触发。（本函数只影响文案，不影响判据。）
+    """
+    if seconds < 60:
+        return f"{seconds:.0f} 秒"
+    if seconds < 3600:
+        # 用整除而不是四舍五入：3599 秒必须是"59 分钟"，不能凑成"60 分钟"
+        return f"{int(seconds // 60)} 分钟"
+    hours = int(seconds // 3600)
+    minutes = int((seconds - hours * 3600) // 60)
+    return f"{hours} 小时 {minutes} 分钟"
+
+
+def finite_or_none(value: Optional[float]) -> Optional[float]:
+    """把 ``inf`` / ``nan`` 换成 ``None``：**出去的值必须是合法 JSON**。
+
+    为什么（ERROR.md E47）：PIR 的"从没检测到人"语义是 ``inf`` 秒
+    （见 `hc_sr501.MotionTracker.seconds_since_motion`，**刻意不是 0**）。
+    这个 ``inf`` 一路流到 ``json.dumps`` 会写成裸 ``Infinity`` ——
+    **那不是合法 JSON**：实测被 OneNET 整包拒收（``err_code 98 illegal data``，
+    云端直接丢数据），手机端的严格 JSON 解析器也会当场失败。
+
+    所以分工是：**内部保留 ``inf`` 的语义**（规则引擎靠它判"从没动过"），
+    **跨出 JSON 边界时换成 ``None``**（对客户端就是"未知"）。
+    """
+    if value is None:
+        return None
+    try:
+        return float(value) if math.isfinite(float(value)) else None
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -87,10 +131,14 @@ class ReadingSnapshot:
             "ambient_temp_c": a.temperature_c if a else None,
             "humidity_percent": a.humidity_percent if a else None,
             "motion_state": m.state.value if m else None,
-            "motion_silent_s": self.motion_silent_s,
+            # ⚠️ 这里**必须**过 finite_or_none：PIR "从没检测到人"时它是 inf，
+            #    直接出去就是非法 JSON（ERROR.md E47，实测被 OneNET 拒收）。
+            "motion_silent_s": finite_or_none(self.motion_silent_s),
             "sensor_failures": dict(self.sensor_failures),
             # ---- 新鲜度：让手机端能区分"没有数据"与"数据是旧的" ----
-            "data_age_s": (None if self.data_age_s is None else round(self.data_age_s, 1)),
+            "data_age_s": finite_or_none(
+                None if self.data_age_s is None else round(self.data_age_s, 1)
+            ),
             "data_stale": self.data_stale,
         }
 
@@ -195,10 +243,21 @@ class RuleEngine:
             if silent is None and self._last_motion_seen is not None:
                 silent = snap.ts - self._last_motion_seen
             if silent is not None and silent >= self.th.no_motion_timeout_s:
+                # ⚠️ `silent` 为 inf = **从开机到现在一次都没检测到人**（不是"刚动过"）。
+                #    这种情况必须如实说"至今未检测到任何活动"：
+                #    ① 旧写法 `f"{silent / 60:.0f} 分钟"` 会印出"已有 inf 分钟未检测到活动"；
+                #    ② `value=round(inf, 1)` 会变成非法 JSON 的 `Infinity`，
+                #       实测被 OneNET 拒收（ERROR.md E47）。
+                never_seen = math.isinf(silent)
                 triggered[AlarmCode.NO_MOTION_TOO_LONG] = AlarmEvent(
                     ts=snap.ts, code=AlarmCode.NO_MOTION_TOO_LONG, severity=Severity.CRITICAL,
-                    message=f"已有 {silent / 60:.0f} 分钟未检测到活动，请确认老人是否安全",
-                    value=round(silent, 1), unit="s", source=motion.device,
+                    message=(
+                        "至今未检测到任何活动，请确认老人是否安全"
+                        if never_seen
+                        else f"已有 {format_duration_s(silent)}未检测到活动，请确认老人是否安全"
+                    ),
+                    value=None if never_seen else round(silent, 1),
+                    unit="" if never_seen else "s", source=motion.device,
                 )
             # 夜间起夜统计（只在夜间窗口内计数，窗口外的记录会被清理）
             self._prune_night_wakes(snap.ts)
@@ -401,4 +460,4 @@ class RuleEngine:
             self._last_emit.pop(code.value, None)
 
 
-__all__ = ["RuleEngine", "ReadingSnapshot"]
+__all__ = ["RuleEngine", "ReadingSnapshot", "finite_or_none", "format_duration_s"]

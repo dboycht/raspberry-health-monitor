@@ -43,8 +43,10 @@
     "T4": {
       "title": "HC-SR501 人体红外（久无活动）",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
-      "status": "planned",
-      "note": "演示时把 thresholds.no_motion_timeout_s 临时改小（默认 1800 秒）"
+      "status": "verified",
+      "verified_on": "2026-09-28",
+      "commit": "5ed5b50",
+      "note": "验收时板上代码 = 5ed5b50（开发副本与板上逐文件 md5 一致）。器件级 --only motion --interval 15 = PASS 5/0/0/1（4/15 次检测到人）；端到端 --set thresholds.no_motion_timeout_s=20 四轮闭环（no_motion_too_long → all_clear，含持续提醒 1~6 次），用户确认声/光/屏/语音。本级踩到 E47：PIR『从没检测到人』的 inf 让文案成了『已有 inf 分钟』、且 Infinity 是非法 JSON 被 OneNET 整包拒收（err_code 98）——已修（文案按秒/分钟/小时分档 + 出边界降级成 None + 上报前守卫），修复随本级收尾提交进入仓库"
     },
     "T5": {
       "title": "MCP3002 ADC 自证两个通道",

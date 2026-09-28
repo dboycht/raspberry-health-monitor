@@ -273,7 +273,7 @@ raspberry-health-monitor/
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 树莓派端全量检查 | `cd rpi; python scripts/validate.py` | **11 项全 PASS**（开发机默认环境，无需设任何环境变量） |
-| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **640 passed, 1 skipped, 296 subtests** |
+| 树莓派端单元测试 | `cd rpi; python -m pytest -q` | **741 passed, 2 skipped, 319 subtests** |
 | 同一套测试（不装 pytest） | `cd rpi; python -m unittest discover -s tests -v` | 全量通过 |
 | 端到端演示 | `cd rpi; python -m health_monitor demo` | 11 幕跑完，退出码 0（**GBK 控制台下也 0**） |
 | 驱动注册表 | `python -m health_monitor drivers` | 12 个驱动全部可构造 |
@@ -288,9 +288,12 @@ raspberry-health-monitor/
 
 > ⚠️ **除下面这条"真机实测"外，上表全部是 PC 上的"模拟/无硬件"验证**。
 > ✅ **真机实测过的**：树莓派 5 上的 **DHT11 温湿度读取**（2026-09-25 夜，111 个样本全成功，
-> 证据在 [`basic/evidence/`](basic/evidence/README.md)）、以及基础版动态曲线出图；
-> ❌ **仍未实测**：TMP36 / MAX30102 / HC-SR501 的真实读数、真实 I2C/SPI 时序、
-> 蓝牙音箱配对、手机与树莓派的真实局域网往返（树莓派当前离线，接回后按 `docs/13` 逐器件验）。
+> 证据在 [`basic/evidence/`](basic/evidence/README.md)）、基础版动态曲线出图，
+> 以及逐级验收推进到 **T4**：**LCD1602**（09-26）、**蜂鸣器 / 双色 LED / 实体按键**（09-26）、
+> **HC-SR501 人体红外"久无活动"报警**（2026-09-28，端到端 4 轮闭环，用户确认声/光/屏/语音）；
+> ❌ **仍未实测**：TMP36 / MAX30102 的真实读数、蓝牙音箱配对、手机与树莓派的真实局域网往返。
+> 逐器件现状以 [`docs/13`](docs/13-真机接线现状与逐器件实测.md) 为**唯一来源**；
+> 阶梯进度见 [`docs/14`](docs/14-分步实施路线图.md)。
 > 真机联调命令：`python -m health_monitor selfcheck --real`；
 > 基础版对应的真机验收记录见 [`basic/验收说明.md`](basic/验收说明.md)。
 

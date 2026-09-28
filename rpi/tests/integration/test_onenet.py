@@ -348,6 +348,21 @@ class TestDatapointPayload(unittest.TestCase):
                           "ambient_temp_c", "humidity_percent", "motion_state"):
             self.assertIn(local_key, DEFAULT_STREAM_MAP)
 
+    def test_非有限数必须跳过而不是发出去(self) -> None:
+        """★ 真机 T4 实测（ERROR.md **E47**）：``inf`` 经 ``json.dumps`` 变成裸 ``Infinity``，
+        平台**整包拒收**（``err_code 98 illegal data``）—— 同一条报文里正常的字段**一起丢**。
+        所以这不是"格式偏好"，是**真丢数据**：线上报文的最后一道守卫必须挡住非有限数。
+        """
+        payload = OneNetPublisher.build_datapoint(
+            1, {"hr": 72, "silent": float("inf"), "age": float("nan")}, ts=1
+        )
+        self.assertIn("hr", payload["dp"])
+        self.assertNotIn("silent", payload["dp"])
+        self.assertNotIn("age", payload["dp"])
+        text = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+        self.assertNotIn("Infinity", text)
+        self.assertNotIn("NaN", text)
+
     def test_报文可JSON序列化且无多余空白(self) -> None:
         payload = OneNetPublisher.build_datapoint(1, {"x": 1}, ts=1)
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

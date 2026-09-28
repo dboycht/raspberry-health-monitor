@@ -52,6 +52,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -456,12 +457,19 @@ class OneNetPublisher(MqttPublisher):
         格式 [文档]：``{"id": <int>, "dp": {"<流名>": [{"v": <值>, "t": <unix秒>}]}}``
 
         - 值为 ``None`` 的字段**整条跳过**（不上报"未知"为 0，与本项目"缺失不当正常"一致）；
+        - **非有限浮点数（``inf`` / ``nan``）同样跳过** —— 它们不是合法 JSON，
+          实测会让平台**整包拒收**（``err_code 98 illegal data``，见 ERROR.md E47）；
+          上游（``AlarmEvent.to_dict`` / ``health_summary``）已经换成 ``None``，
+          这里是**线上报文的最后一道守卫**（第三方平台的行为不归我们管，只能自己挡住）。
         - ``t`` 取整秒。
         """
         ts_int = int(ts if ts is not None else time.time())
         dp: Dict[str, List[Dict[str, Any]]] = {}
         for name, value in values.items():
             if value is None:
+                continue
+            if isinstance(value, float) and not math.isfinite(value):
+                _LOG.warning("OneNET 数据流 %s 的值不是有限数（%r），本条跳过", name, value)
                 continue
             dp[name] = [{"v": value, "t": ts_int}]
         return {"id": int(message_id), "dp": dp}
