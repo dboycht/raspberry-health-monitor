@@ -97,8 +97,21 @@ def diag_dht_line(pin: int = 4) -> None:
 
 
 def read_adc(spi, channel: int, times: int = 5) -> list[int]:
-    """读 MCP3002 某通道（单端模式）若干次。"""
-    cmd = [0x60 | (channel << 5), 0x00]
+    """读 MCP3002 某通道（单端模式）若干次。
+
+    ⚠️ **控制字必须与驱动一致**（`sensors/mcp3002.py::_build_command`，也等同 gpiozero 的
+    `MCP3xx2._send()`）：3 字节 ``[控制字, 0x00, 0x00]``，其中控制字位定义为
+    ``bit7=前置0 / bit6=START=1 / bit5=SGL-DIFF=1 / bit4=通道号 / bit3=MSBF=1``
+    ⇒ **CH0 = `0x68`、CH1 = `0x78`**。
+
+    2026-09-28 真机排查（`ERROR.md` **E48**）：本函数原先是
+    ``[0x60 | (channel << 5), 0x00]`` —— 两个错一起犯：
+    ① 只有 2 字节；② ``0x60`` 的 bit3(MSBF)=0，而且 ``0x60`` 的 bit5 已经是 1，
+    所以 ``0x60 | (channel << 5)`` 对**两个通道都算出 0x60**，通道号根本传不进去。
+    ⇒ 芯片收不到"启动转换"的有效命令，回读永远是悬空噪声（实测：读数随机乱跳、
+    或恒 0/恒 1023），**让人误以为是硬件坏了**。
+    """
+    cmd = [0x68 | (channel << 4), 0x00, 0x00]  # CH0=0x68、CH1=0x78
     out = []
     for _ in range(times):
         resp = spi.xfer2(cmd)

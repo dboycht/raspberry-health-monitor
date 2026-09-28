@@ -5,6 +5,9 @@
     "为什么只存『哪些器件 enabled』而不复制代码：阶梯的差别只在『接线 + 配置』，",
     "代码是同一份（rpi/health_monitor）；复制 13 份会让一次 bug 修复要改 13 处、并互相漂移。",
     "status=verified 的级 = 已在真机验收通过（verified_on/commit 指向当时的提交）。",
+    "★ 2026-09-28 新增 status=cancelled：用户决定不再做的级（当前是 T5/T6：MCP3002/TMP36 这一路）。",
+    "  取消的级要写 cancelled_on 与 note（为什么取消）；它的 devices 是**已验过的最大值**（T4），",
+    "  这样做是为了让『级别单调递增』这条守卫仍然成立；stage_run.py 会用 [取消] 标记并出提醒。",
     "★ 2026-09-28 用户下令补打**阶段 tag**：每级另有 `tag`（T0…T4），",
     "  要取回『那一级的完整代码』用 `git checkout T3` 即可 —— 阶段 tag 是快照，",
     "  与『发布版 tag = 版本号（如 1.0.1，须用户下令才打）』是两套语义，别混。"
@@ -59,13 +62,16 @@
     "T5": {
       "title": "MCP3002 ADC 自证两个通道",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
-      "status": "planned",
-      "note": "MCP3002 由 tmp36 组合使用、没有独立设备名；本级用 diag_pin_levels.py --adc 自证"
+      "status": "cancelled",
+      "cancelled_on": "2026-09-28",
+      "note": "❌ 用户决定取消（不做 ADC/TMP36 这一路）。2026-09-28 真机联调未验通：树莓派侧信号全部实测正常（CS/CLK/DIN），但回读线读数不稳定（三种读法互相矛盾）⇒ 判定为面包板/接线侧问题，排查成本超出该级价值。完整经过与教训见 ERROR.md E48。器件集合保留，是为了阶梯单调性与历史可读。"
     },
     "T6": {
       "title": "TMP36 精密体温（模拟量 → 温度）",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp"],
-      "status": "planned"
+      "status": "cancelled",
+      "cancelled_on": "2026-09-28",
+      "note": "❌ 随 T5 一并取消（它依赖 T5 的 ADC 自证）。⚠️ 代码与 71 项单测仍然保留（不依赖硬件、mock 可跑），报告里请如实写「已实现、未真机验证」。"
     },
     "T7": {
       "title": "MAX30102 心率血氧",

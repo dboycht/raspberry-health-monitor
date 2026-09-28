@@ -361,7 +361,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         safe_print("分级快照（config/stages.json）：")
         for name in sorted_stage_names(data["stages"]):
             info = data["stages"][name]
-            mark = "[已验]" if info.get("status") == "verified" else "[计划]"
+            mark = {"verified": "[已验]", "cancelled": "[取消]"}.get(info.get("status"), "[计划]")
             safe_print(f"  {mark} {name:<4} {info.get('title','')}")
             safe_print(f"          器件：{', '.join(info.get('devices') or []) or '（无，走 basic/）'}")
         return 0
@@ -393,6 +393,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         safe_print(f"[{args.stage}] {info.get('title','')}（{status}）")
         if info.get("note"):
             safe_print(f"    备注：{info['note']}")
+        if status == "cancelled":
+            # 2026-09-28：用户决定取消 T5/T6（见 ERROR.md E48）。快照保留是为了历史可读，
+            # 但**别让后来者误以为"这是还没做的计划级"** —— 所以这里明确提醒一次。
+            safe_print(f"[!] 注意：{args.stage} 已标记为「取消·不做」（用户决定，见 ERROR.md E48）")
+            safe_print("    真要用它起服务也可以，但请心里有数：这一级不再列入推进计划")
         if not only:
             safe_print(f"[X] {args.stage} 没有器件集合（T0 走 basic/，不在 rpi 的配置开关里）")
             return 1

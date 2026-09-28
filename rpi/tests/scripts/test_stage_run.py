@@ -155,7 +155,11 @@ class TestStageSnapshots(unittest.TestCase):
             with self.subTest(stage=name):
                 self.assertRegex(name, r"^T\d+$", "级名必须是 T<数字>")
                 self.assertTrue(info.get("title"), "缺 title")
-                self.assertIn(info.get("status"), ("verified", "planned"), "status 只能是 verified/planned")
+                self.assertIn(
+                    info.get("status"),
+                    ("verified", "planned", "cancelled"),
+                    "status 只能是 verified/planned/cancelled",
+                )
                 self.assertIsInstance(info.get("devices"), list, "devices 必须是列表")
 
     def test_器件名都真实存在(self) -> None:
@@ -171,6 +175,27 @@ class TestStageSnapshots(unittest.TestCase):
         for name, info in self.stages.items():
             if info.get("status") == "verified":
                 self.assertTrue(info.get("verified_on"), f"{name} 标了 verified 却没写 verified_on")
+
+    def test_取消的级必须写明原因与日期(self) -> None:
+        """★ 2026-09-28：T5/T6（MCP3002/TMP36）被用户决定取消 ⇒ 新增 `status=cancelled`。
+
+        判据：**取消不是"悄悄删掉"** —— 必须留 `cancelled_on` 与 `note`（为什么取消），
+        否则半年后没人知道"这一级去哪了"。规则写在 `config/stages.json` 的 note 里，
+        文档口径见 `docs/14` 与 `ERROR.md` E48。
+        """
+        cancelled = [n for n, i in self.stages.items() if i.get("status") == "cancelled"]
+        self.assertTrue(cancelled, "本项目应有已取消的级（T5/T6），没有说明快照被改坏了")
+        for name in cancelled:
+            info = self.stages[name]
+            with self.subTest(stage=name):
+                self.assertTrue(info.get("cancelled_on"), f"{name} 标了 cancelled 却没写 cancelled_on")
+                self.assertTrue(info.get("note"), f"{name} 标了 cancelled 却没写原因（note）")
+        # ★ 决策钉：这两级是**用户明确要求取消**的（2026-09-28），不要被谁顺手"复活"成 planned
+        for stage in ("T5", "T6"):
+            self.assertEqual(
+                self.stages[stage].get("status"), "cancelled",
+                f"{stage} 已于 2026-09-28 由用户决定取消（见 ERROR.md E48）；若要复活必须用户明确要求",
+            )
 
     def test_级别单调递增(self) -> None:
         """★ 后一级只能"多开"，不能"少开"——阶梯的本意就是一次只加一个元件。"""
