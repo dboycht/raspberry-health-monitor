@@ -18,11 +18,17 @@
 
 判据（可执行）
 --------------
-1. 报告里必须出现**配置里的每个设备名**（从 `DEFAULT_CONFIG` 取，不写死）；
+1. 报告里必须出现**本机配置里启用的每个设备名**（用 `load_config()` 读**同一份配置**，不写死）；
 2. 每个设备的**驱动名**列必须与配置一致（`ambient` 那行要写 `dht11`）；
 3. `mock` 模式下这些行必须是 `OK/OK`（驱动实现有问题才该红）；
 4. 实现了但没配置的驱动（`hc_sr04` / `mcp3002`）必须仍然以 `skip` 列出，
    否则"我没接线"和"驱动坏了"就又混在一起了。
+
+⚠️ **2026-09-29 踩到并修掉的一个"测试依赖本机配置"的坑**：这几条原先拿模块里的
+`DEFAULT_CONFIG`（**内置默认**）当期望值，而报告来自 `cmd_selfcheck()` 实际加载的
+**本机合并配置**（`config/devices.json` 覆盖默认值）。开发机上两者恰好一致，所以一直绿；
+**板子上把 `body_temp.enabled` 改成 false 之后，板上的真机校验立刻红了 2 项**
+（`没有 body_temp 这一行`）。⇒ 判据必须**从同一来源取**：现在统一用 `load_config()`。
 """
 
 from __future__ import annotations
@@ -31,9 +37,18 @@ import contextlib
 import io
 import unittest
 
-from health_monitor.core.config import DEFAULT_CONFIG
+from health_monitor.core.config import load_config
 from health_monitor.hal.registry import MANIFEST
 from health_monitor.main import cmd_selfcheck
+
+
+def _enabled_devices() -> dict:
+    """本机**实际生效**的配置里启用的设备：``{设备名: 驱动名}``。
+
+    ⚠️ 用 ``load_config()`` 而不是 ``DEFAULT_CONFIG``：报告是拿本机配置生成的，
+    期望值也必须来自本机配置 —— 否则"配置被现场改过"的机器上必然假红（见文件头说明）。
+    """
+    return {d.name: d.driver for d in load_config().enabled_devices()}
 
 
 class _Args:
@@ -52,23 +67,15 @@ class TestSelfcheckReport(unittest.TestCase):
 
     def test_报告按配置的设备名列出(self) -> None:
         text = self._run()
-        enabled = {
-            name: item["driver"]
-            for name, item in DEFAULT_CONFIG["devices"].items()
-            if item.get("enabled", True)
-        }
-        self.assertTrue(enabled, "默认配置里应当有启用的设备（否则本测试没意义）")
+        enabled = _enabled_devices()
+        self.assertTrue(enabled, "本机配置里应当有启用的设备（否则本测试没意义）")
         for name in enabled:
             self.assertIn(name, text, f"体检报告里缺少配置中的设备 {name}（按驱动名遍历就会这样）")
 
     def test_每个设备那一行写的是它的驱动名(self) -> None:
         text = self._run()
         lines = {line.split()[0]: line for line in text.splitlines() if line and not line.startswith(("=", "-"))}
-        enabled = {
-            name: item["driver"]
-            for name, item in DEFAULT_CONFIG["devices"].items()
-            if item.get("enabled", True)
-        }
+        enabled = _enabled_devices()
         for name, driver in enabled.items():
             line = lines.get(name)
             self.assertIsNotNone(line, f"没有 {name} 这一行")
@@ -77,11 +84,7 @@ class TestSelfcheckReport(unittest.TestCase):
 
     def test_没配置的驱动仍然以skip列出(self) -> None:
         text = self._run()
-        configured_drivers = {
-            item["driver"]
-            for item in DEFAULT_CONFIG["devices"].values()
-            if item.get("enabled", True)
-        }
+        configured_drivers = set(_enabled_devices().values())
         for driver in sorted(set(MANIFEST) - configured_drivers):
             self.assertIn(driver, text, f"没配置的驱动 {driver} 也应当以 skip 列出（信息行）")
 
