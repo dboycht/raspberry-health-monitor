@@ -43,6 +43,63 @@ _LOG = logging.getLogger(__name__)
 
 VERSION = "1.0.1"
 
+#: 彩屏信息页每隔多少秒翻一页（E57）。0 或负数 = 不轮播。
+DISPLAY_PAGE_INTERVAL_S = 6.0
+
+#: 发出报警后，信息页**至少**让位多少秒（E57）：报警文案是"要人立刻看到"的，
+#: 不能被信息页马上冲掉。规则引擎判出来的报警由 `active_alarms()` 一直挡着；
+#: 这个"保持时间"管的是**一次性事件**（如用户长按 SOS —— 它不进规则引擎的 active 表）。
+DISPLAY_PAGE_HOLD_AFTER_ALARM_S = 30.0
+
+
+def display_page_lines(
+    page: int,
+    snap: Any,
+    alarm_count: int = 0,
+    last_alarm: str = "",
+) -> Tuple[str, str]:
+    """四个信息页的文案（**纯函数，可单测**；每行 ≤16 字符、纯 ASCII）。
+
+    ⚠️ 两条纪律（都是本项目真机踩过的）：
+
+    * **只能 ASCII**：彩屏是 8×8 点阵字库，中文会变成 `?`（`ERROR.md` E53 一节）；
+    * **每行 ≤16 字符**：这是 LCD 与彩屏（1 倍字号）**共同的**字符上限 —— 超了就会被截断
+      （E53 的另一半：`WAKE UP TOO OFTEN` 17 字符连 LCD 都放不下）。
+
+    页序与 :data:`health_monitor.outputs.tft_spi.PAGE_NAMES` 一致：
+    0 监护总览 / 1 心率血氧 / 2 体温环境 / 3 报警记录。
+    """
+    vitals = getattr(snap, "vitals", None)
+    ambient = getattr(snap, "ambient", None)
+    failures = getattr(snap, "sensor_failures", None) or {}
+    page = int(page) % 4
+
+    if page == 0:      # 监护总览
+        state = "ALARM ACTIVE" if alarm_count else "STATUS NORMAL"
+        return ("HEALTH MONITOR", state[:16])
+    if page == 1:      # 心率血氧
+        if vitals is not None and getattr(vitals, "ok", False):
+            return (
+                "HR %3.0f BPM" % float(vitals.heart_rate_bpm),
+                "SPO2 %3.0f %%" % float(vitals.spo2_percent),
+            )
+        if vitals is not None and getattr(vitals, "finger_detected", False):
+            return ("VITALS MEASURING", "PLEASE WAIT")
+        return ("NO FINGER", "PLACE ON SENSOR")
+    if page == 2:      # 体温环境
+        if ambient is not None and getattr(ambient, "ok", False):
+            return (
+                "ROOM %4.1f C" % float(ambient.temperature_c),
+                "HUM  %3.0f %%" % float(ambient.humidity_percent),
+            )
+        return ("ROOM --", "HUM  --")
+    # 报警记录
+    tail = (last_alarm or "NONE")[:10].upper()
+    head = "ALARMS %d" % int(alarm_count)
+    if failures:
+        head = "FAULT %d" % len(failures)
+    return (head[:16], ("LAST " + tail)[:16])
+
 
 class Runtime:
     """系统运行时：把配置里的设备装配起来并跑起来。
@@ -80,6 +137,11 @@ class Runtime:
         self.version = VERSION
         self.started_at = clock()
         self._device_factory = device_factory or create_device
+        # 彩屏信息页轮播（E57）：当前页 / 上次翻页时刻。**只在没有活动报警时翻页**
+        self._page = 0
+        self._last_page_ts = 0.0
+        #: 上次"发出报警"的时刻（含一次性 SOS）：信息页要给它让够时间（E57）
+        self._last_alarm_ts = -float("inf")
 
         # ---- 1. 装配输入设备 ----
         self.devices: Dict[str, Device] = {}
@@ -268,11 +330,15 @@ class Runtime:
         if events:
             self._events.extend(events)
             self._events = self._events[-500:]
+            self._last_alarm_ts = now          # E57：信息页要给报警文案让时间
             for event in events:
                 _LOG.info("[报警] %s %s", event.code.value, event.message)
 
         # ---- 报警"持续提醒"（重发 + 灯持续闪 / 消音后常亮）----
         self._drive_persistent_alert(now)
+
+        # ---- 彩屏信息页轮播（只在**没有活动报警**时翻页，见 E57）----
+        self._rotate_display_page(now, snap)
 
         # 上云：按 interval_s 周期发布读数摘要（失败只计数，不影响本地）
         # ⚠️ 周期也**跑在假时钟下**：演示/单测推进时钟即可触发上报，不必真的等 30 秒。
@@ -352,6 +418,31 @@ class Runtime:
                 "[报警] 持续提醒：%s 仍在报警，每 %.0fs 重发一次（第 %d 次）",
                 getattr(code, "value", code), interval, self.dispatcher.realerts,
             )
+
+    def _rotate_display_page(self, now: float, snap: Any) -> None:
+        """彩屏信息页轮播（E57）。
+
+        规则（都有理由）：
+
+        * **只在没有活动报警时翻页**：报警文案是"要人立刻看到"的，不能被信息页冲掉
+          （LCD 与彩屏同属 ``DeviceKind.DISPLAY``，所以轮播**只发给彩屏驱动**，见
+          :meth:`AlarmDispatcher.show_page`）；
+        * 按 :data:`DISPLAY_PAGE_INTERVAL_S` 计时（<=0 表示关掉轮播）；
+        * 页序：0 监护总览 → 1 心率血氧 → 2 体温环境 → 3 报警记录 → 回到 0。
+        """
+        if DISPLAY_PAGE_INTERVAL_S <= 0:
+            return
+        if self.engine.active_alarms():        # 报警优先：有活动报警就不翻页
+            return
+        if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
+            return                             # 刚发过报警（含一次性 SOS）：先让报警文案待够时间
+        if (now - self._last_page_ts) < DISPLAY_PAGE_INTERVAL_S:
+            return
+        self._last_page_ts = now
+        self._page = (self._page + 1) % 4
+        last = self._events[-1].code.value if self._events else ""
+        lines = display_page_lines(self._page, snap, alarm_count=len(self._events), last_alarm=last)
+        self.dispatcher.show_page(lines, self._page, now)
 
     def _consume_button_events(self, now: float) -> List[AlarmEvent]:
         """把采集器攒下的实体按键事件变成动作：**短按消音 / 长按求助**。
@@ -438,6 +529,7 @@ class Runtime:
         if self.store is not None:
             self.store.save_alarm(event)
         self._events.append(event)
+        self._last_alarm_ts = event.ts       # E57：SOS 也要把彩屏"占住"一段时间
         return event
 
     def silence(self, ts: Optional[float] = None) -> None:

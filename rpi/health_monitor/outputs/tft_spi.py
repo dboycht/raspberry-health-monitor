@@ -356,6 +356,22 @@ CYAN: RGB = (0, 200, 200)
 GRAY: RGB = (120, 120, 120)
 PAGE_NAMES = ("监护总览", "心率血氧", "体温环境", "报警记录")
 
+#: 四个信息页的**英文短名**（屏上只能显示 ASCII —— 中文的 `PAGE_NAMES` 只给文档/日志用）
+PAGE_ASCII: Tuple[str, ...] = ("OVERVIEW", "VITALS", "ROOM", "ALARMS")
+
+
+def page_label(page: int, total: int = 4, width: int = 128) -> str:
+    """彩屏底部的页码标签（**纯函数，可单测**）。
+
+    为什么要它（2026-09-29，E57）：`PAGE_NAMES` 是中文名（给文档/日志看），而彩屏用的是
+    8×8 点阵字库、**只能显示 ASCII**（中文会变成 `?`）。所以屏上另有一套英文短名；
+    并且**长度要按屏宽算**（E53 的教训：算错就会画到屏幕外）。
+    """
+    index = int(page) % max(1, len(PAGE_ASCII))
+    text = "%d/%d %s" % (index + 1, max(1, int(total)), PAGE_ASCII[index])
+    limit = max(1, (int(width) - 2) // FONT_W)     # 左边距 2 px，其余按字宽算
+    return text[:limit]
+
 
 class TftSpi(OutputDevice):
     """SPI TFT 彩屏（HAL 输出器件）。
@@ -794,7 +810,9 @@ class TftSpi(OutputDevice):
         self.text(left, 2, lines[0][:limit], WHITE, bg=BLACK, scale=scale)
         self.text(left, 2 + line_height + 6, lines[1][:limit], CYAN, bg=BLACK, scale=scale)
         self.hline(0, self.height - 14, self.width, GRAY)
-        self.text(2, self.height - 12, f"PAGE {page}", GRAY, bg=BLACK, scale=1)
+        # 页码标签用**英文短名**（屏上只能显示 ASCII）并按屏宽截断（E53/E57）
+        self.text(2, self.height - 12, page_label(page, len(PAGE_ASCII), self.width),
+                  GRAY, bg=BLACK, scale=1)
 
     def _draw_boot_screen(self) -> None:
         """开机自检画面：三色条 + 文本 —— **这是判断"控制器对不对"的关键画面**。

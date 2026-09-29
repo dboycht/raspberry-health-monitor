@@ -148,5 +148,22 @@ class TestConventionIsEnforced(unittest.TestCase):
             self.assertNotIn("(5, 120)", source)
 
 
+class TestCliBeepNames(unittest.TestCase):
+    """命令行入口的暗号名映射（`--beep attention/done/fail/none`）。"""
+
+    def test_三个暗号名与常量对应(self) -> None:
+        self.assertEqual(sc.plan_for_name("attention"), sc.BEEP_ATTENTION)
+        self.assertEqual(sc.plan_for_name("done"), sc.BEEP_DONE)
+        self.assertEqual(sc.plan_for_name("fail"), sc.BEEP_FAIL)
+
+    def test_none表示不鸣(self) -> None:
+        self.assertIsNone(sc.plan_for_name("none"))
+        self.assertIsNone(sc.plan_for_name(""))
+
+    def test_未知暗号名要报错而不是静默(self) -> None:
+        with self.assertRaises(ValueError):
+            sc.plan_for_name("attentionn")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

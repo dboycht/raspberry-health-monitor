@@ -141,4 +141,82 @@ def open_cues(config: Any, names: Tuple[str, str] = ("display", "alarm_buzzer"))
     return Cues(lcd, buzzer)
 
 
-__all__ = ["Cues", "open_cues", "lcd_line", "BEEP_ATTENTION", "BEEP_DONE", "BEEP_FAIL", "LCD_WIDTH"]
+def plan_for_name(name: str) -> Optional[Tuple[int, int]]:
+    """把命令行里的暗号名翻成鸣叫方案（**纯函数，可单测**）。``none`` → 不鸣。"""
+    table = {"attention": BEEP_ATTENTION, "done": BEEP_DONE, "fail": BEEP_FAIL}
+    key = str(name or "").strip().lower()
+    if key in ("", "none", "off"):
+        return None
+    if key not in table:
+        raise ValueError(f"未知暗号 {name!r}；可用：{', '.join(sorted(table))}、none")
+    return table[key]
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """命令行入口：**在任何"要人看/听"的测试之前先叫人**。
+
+    用法::
+
+        cd ~/raspberry-health-monitor/rpi
+        python3 scripts/sense_cues.py --line1 "WATCH TFT" --line2 "40 SECONDS" --beep attention
+        python3 scripts/sense_cues.py --line1 "DONE" --beep done --seconds 3
+
+    为什么要它：用户 2026-09-29 明确要求"**每一次这种测试使用蜂鸣器提示我，还有 LCD 指示我**"，
+    而有些测试（例如"起服务后彩屏自己轮播四页"）的提示没法由被测程序自己发 —— 那就先跑它。
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="感官类测试的提示器（LCD 出字 + 蜂鸣器暗号）")
+    parser.add_argument("--line1", default="LOOK NOW", help="LCD 第一行（≤16 字符）")
+    parser.add_argument("--line2", default="", help="LCD 第二行（≤16 字符）")
+    parser.add_argument("--beep", default="attention", help="暗号：attention / done / fail / none")
+    parser.add_argument("--seconds", type=float, default=6.0, help="LCD 停留多少秒（默认 6）")
+    parser.add_argument("--config", default=None, help="配置文件路径（默认 config/devices.json）")
+    args = parser.parse_args(argv)
+
+    try:
+        plan = plan_for_name(args.beep)
+    except ValueError as exc:
+        safe_print(f"[X] {exc}")
+        return 2
+
+    from health_monitor.core.config import load_config
+
+    try:
+        config = load_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        safe_print(f"[X] 加载配置失败：{type(exc).__name__}: {exc}")
+        return 2
+
+    cues = open_cues(config)
+    try:
+        cues.show(args.line1, args.line2)
+        if plan is not None:
+            cues.beep(plan)
+            safe_print("🔔 已写 LCD 并鸣 %d 声：%s / %s" % (plan[0], args.line1, args.line2))
+        else:
+            safe_print("已写 LCD（未鸣叫）：%s / %s" % (args.line1, args.line2))
+        import time
+
+        time.sleep(max(0.0, float(args.seconds)))
+    finally:
+        cues.report()
+        cues.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+__all__ = [
+    "Cues",
+    "open_cues",
+    "lcd_line",
+    "plan_for_name",
+    "main",
+    "BEEP_ATTENTION",
+    "BEEP_DONE",
+    "BEEP_FAIL",
+    "LCD_WIDTH",
+]

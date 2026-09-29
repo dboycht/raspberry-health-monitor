@@ -312,6 +312,21 @@ class AlarmDispatcher:
         self._last_spoken[text] = now
         return True
 
+    def show_page(self, lines: Any, page: int = 0, now: Optional[float] = None) -> None:
+        """把"信息页"**只发给彩屏（TFT）**：不动 LCD、不进报警流水（2026-09-29，E57）。
+
+        为什么必须"只给 TFT"：LCD 与彩屏同属 ``DeviceKind.DISPLAY``，而 **LCD 是报警显示**
+        （`docs/07` H11、`docs/14` T1）—— 闲时轮播的信息页若广播出去，会把 LCD 上的报警文案
+        冲掉。这里复用 `_send_kind` 已有的 ``only_driver`` 过滤（彩屏驱动名 = ``tft_spi``），
+        **不必改协议、也不影响报警链路**（报警仍走 :meth:`dispatch` → 广播给所有显示器件）。
+        """
+        self._send_kind(
+            DeviceKind.DISPLAY,
+            DisplayCommand(lines=tuple(str(x) for x in (lines or ("", "")))[:2],
+                           page=int(page), ts=now or now_ts()),
+            only_driver="tft_spi",
+        )
+
     def _send_kind(self, kind: DeviceKind, command: Any, only_driver: Optional[str] = None) -> None:
         """把指令发给某一大类的所有输出器件。
 
