@@ -98,7 +98,10 @@ PRESENTATION_TABLE: Dict[AlarmCode, AlarmPresentation] = {
     ),
     AlarmCode.NIGHT_FREQUENT_WAKE: AlarmPresentation(
         speak="夜间起夜次数较多，请注意休息", beep_times=0, light="yellow", blink=False,
-        lcd_lines=("WAKE UP TOO OFTEN", ""),
+        # ⚠️ 必须 ≤16 字符：LCD1602 每行 16 字符、TFT 在 1 倍字号下也是 16 字符。
+        #    旧文案 "WAKE UP TOO OFTEN" 是 17 个字符 ⇒ 两块屏上都被截成 "WAKE UP TOO OFT"
+        #    （2026-09-29 查 TFT 显示时发现，见 ERROR.md E53）。这里缩短到 14 个字符。
+        lcd_lines=("WAKE TOO OFTEN", ""),
     ),
     AlarmCode.SENSOR_FAULT: AlarmPresentation(
         speak="设备异常，请检查传感器接线", beep_times=2, beep_on_ms=120, beep_off_ms=120,

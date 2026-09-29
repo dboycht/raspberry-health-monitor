@@ -23,9 +23,101 @@ from health_monitor.outputs.tft_spi import (
     AUTO_ORDER,
     CONTROLLERS,
     FONT_8X8,
+    FONT_W,
     TftSpi,
+    layout_for,
     rgb565,
 )
+
+
+class TestTftTextLayout(unittest.TestCase):
+    """E53 回归：字号与截断必须按 8×8 点阵的**实际字宽**算，**绝不许把字画到屏幕外**。
+
+    来历（2026-09-29 真机，用户反馈"**字被截断/显示不全**"）：
+    旧实现把每行截断到 ``width // 9``（128 px 屏 = 14 字符），却固定 ``scale=2`` 绘制；
+    而 ``text()`` 每字符前进 ``8 * scale = 16`` px ⇒ 128 px 屏**只放得下 8 个字符**
+    ⇒ ``SENSOR FAULT``（12 字符）的右半边被画到了屏幕外。
+    """
+
+    #: 本项目屏幕的真实分辨率（配置 `st7735_1.8_128x160`，rotate 0）
+    WIDTH = 128
+
+    def test_不会把字画到屏幕外_这是核心不变量(self) -> None:
+        cases = [
+            ("SENSOR FAULT", "CHECK WIRING"),
+            ("NO MOTION ALERT", "CHECK PLEASE"),
+            ("SOS! HELP NEEDED", "PLEASE CHECK NOW"),
+            ("ROOM TEMP HIGH", ""),
+            ("ALARM", "HR HIGH"),
+            ("X" * 40, "Y" * 40),
+            ("", ""),
+        ]
+        for lines in cases:
+            with self.subTest(lines=lines):
+                scale, left, limit = layout_for(self.WIDTH, lines)
+                self.assertLessEqual(
+                    left + limit * FONT_W * scale, self.WIDTH,
+                    f"{lines} ⇒ (scale={scale}, left={left}, limit={limit}) 会画到屏幕外",
+                )
+
+    def test_报警文案必须完整显示不被截断(self) -> None:
+        """★ 正题：**当前所有报警文案**在 128×160 上都必须整行显示出来。"""
+        from health_monitor.core.dispatcher import PRESENTATION_TABLE
+
+        for code, plan in PRESENTATION_TABLE.items():
+            with self.subTest(code=str(code)):
+                scale, left, limit = layout_for(self.WIDTH, plan.lcd_lines)
+                for line in plan.lcd_lines:
+                    if line:
+                        self.assertLessEqual(
+                            len(line), limit,
+                            f"{code} 的 {line!r}（{len(line)} 字符）超过该字号上限 {limit}，会被截断",
+                        )
+                        self.assertLessEqual(left + len(line) * FONT_W * scale, self.WIDTH)
+
+    def test_SENSOR_FAULT这种长文案会自动降到一倍字号(self) -> None:
+        scale, left, limit = layout_for(self.WIDTH, ("SENSOR FAULT", "CHECK WIRING"))
+        self.assertEqual(scale, 1, "12 字符在 2 倍字号下放不下，必须自动降档")
+        self.assertGreaterEqual(limit, 12)
+        self.assertEqual(left, 2, "降档后仍然保留左边距（能装下就不必贴边）")
+
+    def test_短文案仍然用大字(self) -> None:
+        scale, _left, limit = layout_for(self.WIDTH, ("SOS!", "OK"))
+        self.assertEqual(scale, 2, "短文案继续用 2 倍字号（好看）")
+        self.assertGreaterEqual(limit, 4)
+
+    def test_超长文案让出左边距多挤一个字符(self) -> None:
+        # 16 字符：2 倍字号不可能，1 倍字号 + 左边距 2 只放得下 15 ⇒ 应让出边距
+        scale, left, limit = layout_for(self.WIDTH, ("SOS! HELP NEEDED", ""))
+        self.assertEqual(scale, 1)
+        self.assertEqual(left, 0)
+        self.assertEqual(limit, 16)
+
+    def test_再长就截断但仍在屏内(self) -> None:
+        scale, left, limit = layout_for(self.WIDTH, ("A" * 100, ""))
+        self.assertEqual((scale, left, limit), (1, 0, 16))
+
+    def test_旧写法确实会越界_反向验证(self) -> None:
+        """把旧的算法写出来跑一遍：**它必然越界**，证明这条回归有区分力。"""
+        old_limit = self.WIDTH // 9            # 旧实现：14
+        old_scale = 2                          # 旧实现：固定 2 倍
+        old_right_edge = 2 + old_limit * FONT_W * old_scale
+        self.assertGreater(old_right_edge, self.WIDTH, "旧写法本来就会把字画到屏幕外")
+
+    def test_奇数宽度与极小宽度不崩(self) -> None:
+        """宽到 240、窄到 1 像素都不许崩，**也不许画出屏外**。
+
+        ⚠️ 宽度连一个 8 px 字符都放不下时（如 1 px），约定是 ``limit == 0``
+        ⇒ ``lines[0][:0]`` 是空串、**什么都不画**；"不画"永远比"画到屏外"好。
+        """
+        for width in (1, 4, 8, 17, 64, 129, 160, 240):
+            with self.subTest(width=width):
+                scale, left, limit = layout_for(width, ("SENSOR FAULT", "CHECK WIRING"))
+                if width >= FONT_W:
+                    self.assertGreaterEqual(limit, 1)
+                else:
+                    self.assertEqual(limit, 0, "连一个字符都放不下 ⇒ 应当什么都不画")
+                self.assertLessEqual(left + limit * FONT_W * scale, width)
 
 
 class TestColorConversion(unittest.TestCase):

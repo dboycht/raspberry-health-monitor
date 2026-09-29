@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<title>树莓派健康监护系统 · 接线总表</title><style>
+<title>树莓派接线总表</title><style>
     @page { size: A4; margin: 14mm 12mm 16mm 12mm; }
     * { box-sizing: border-box; }
     body {
@@ -245,16 +245,10 @@
 <tr><td>RESET</td><td>22</td><td>GPIO25</td></tr>
 <tr><td>LED</td><td>17</td><td>3.3V 背光常亮</td></tr>
 </tbody></table>
-<h3>4.1 必须先解决的撞脚问题</h3>
-<p>状态灯的<strong>红灯</strong>用 GPIO24（物理脚 18），而 TFT 的 <strong>A0</strong> 也是 GPIO24：<br><strong>两者不能同时接</strong>。三种取舍：</p>
-<table>
-<thead><tr><th>方案</th><th>做法</th><th>评价</th></tr></thead>
-<tbody>
-<tr><td>A</td><td>把 TFT 的 A0/RESET 改接空闲 GPIO 并改配置</td><td>需要改代码配置，最灵活</td></tr>
-<tr><td>B</td><td><strong>不接红灯</strong>，只保留绿/黄，把 GPIO24 让给 TFT</td><td><strong>推荐</strong>：现场最省事，报警状态仍由 LCD/TFT/蜂鸣器表达</td></tr>
-<tr><td>C</td><td>状态灯与 TFT 二选一</td><td>会丢掉 LED 指示</td></tr>
-</tbody></table>
-<p>若选方案 B，把 <code>rpi/config/devices.json</code> 里 <code>status_led.pins</code> 的 <code>red</code> 删掉即可。</p>
+<h3>4.1 撞脚问题：<strong>已于 2026-09-26 解决</strong>（红灯改接脚 32）</h3>
+<p>历史：早期<strong>红灯</strong>用 GPIO24（脚 18），而 TFT 的 <strong>A0</strong> 也是 GPIO24 ⇒ 两者不能同时接。<br><strong>2026-09-26 起红灯改接 GPIO12（物理脚 32）</strong>（<code>rpi/config/devices.json</code> 里<br><code>status_led.pins.red = 12</code>），所以<strong>现在 TFT（脚 18）与三色指示灯可以同时接</strong>。</p>
+<p>⚠️ 本节此前的版本写着"<strong>建议不接红灯</strong>"（方案 B）—— <strong>那条已作废</strong>，别再照它做。<br>（当初的方案 A/B/C 取舍保留在 <code>docs/14</code> 的分级记录里供追溯，见 T2 那一轮。）</p>
+<p>唯一还需要当心的"撞脚"是<strong>片选</strong>：<strong>TFT 的 CS 必须用脚 26（CE1）</strong>，<br>不要与 MCP3002 的 CE0（脚 24）混 —— SPI 是总线式，两个从机靠片选区分，配置里已经定好。</p>
 <h3>4.2 TFT 与 MCP3002 可以同时接</h3>
 <p>SPI 是总线式，支持多个从设备，前提是<strong>片选分开</strong>：MCP3002 用 CE0（脚 24）、<br>TFT 用 CE1（脚 26）。这一点本项目已配置好，不需要额外处理。</p>
 <hr>

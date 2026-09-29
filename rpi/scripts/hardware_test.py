@@ -450,6 +450,8 @@ def led_colors_to_check(led: Any) -> List[str]:
     去掉了红灯（GPIO24 让给了 TFT 的 DC 脚），而本脚本原来**硬写**"绿→黄→红"三色 ⇒
     点到红灯时驱动按设计抛 ``UnsupportedError``，检查被算成 FAIL：
     灯是好的、线也是对的，却报"没有全亮"。
+    ⚠️ 后续：红灯**当天晚些时候又接回来了**（改到 GPIO12/脚 32），所以现在配置里
+    三种颜色都在；但"**以器件自报为准**"这条判据不变 —— 颜色将来再增删都不该改这个脚本。
     """
     colors = [c for c in device_colors(led) if c != "off"]
     return colors or list(DEFAULT_LED_COLORS)
@@ -787,8 +789,9 @@ def main() -> int:
                     if ok else "用户报告没有全亮",
                     "每路 LED 都要串 220Ω~1kΩ 限流电阻，**长脚（阳极）接 GPIO、短脚接 GND**\n"
                     "共阳 LED 需要在配置里设 active_low=true\n"
-                    "⚠️ 引脚**以配置为准**：绿=GPIO22（脚15）、黄=GPIO23（脚16）；\n"
-                    "   红灯的 GPIO24 已让给 TFT 的 DC，所以默认不接红灯（本检查也只点配置里有的颜色）",
+                    "⚠️ 引脚**以配置为准**：绿=GPIO22（脚15）、黄=GPIO23（脚16）、"
+                    "红=GPIO12（脚32，2026-09-26 从 GPIO24 挪来，把脚 18 让给 TFT 的 DC）；\n"
+                    "   本检查只点**配置里真有**的颜色（没有的颜色不会点，免得把好灯判成坏灯）",
                 )
             except Exception as exc:  # noqa: BLE001
                 rep.add("LED 颜色指示", FAIL, f"{type(exc).__name__}: {exc}", "检查 GPIO 权限与引脚配置")

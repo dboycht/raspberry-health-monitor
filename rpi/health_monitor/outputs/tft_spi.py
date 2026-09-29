@@ -315,6 +315,36 @@ def _build_font() -> None:
 
 _build_font()
 
+#: 8×8 点阵的**字符宽度（像素）**。`text()` 每画一个字符就把光标前进 ``FONT_W * scale``，
+#: 所以"一行能放几个字符"必须用这个常数算 —— 见 :func:`layout_for`。
+FONT_W = 8
+
+
+def layout_for(width: int, lines: Tuple[str, str], gap: int = 2) -> Tuple[int, int, int]:
+    """算出"这两行该怎么画"：返回 ``(scale, 左边距, 每行最多字符数)``（**纯函数，可单测**）。
+
+    规则（2026-09-29 修 E53）：
+
+    1. 先试 **2 倍字号**（好看）：两行都装得下就用它；
+    2. 装不下就**降一档到 1 倍字号**（能多放一倍字符）；
+    3. 1 倍字号还超长时，把左边距也让出来（``gap=0``），再多挤一个字符；
+    4. 最后仍超长才截断 —— 但**永远满足** ``left + limit * FONT_W * scale <= width``，
+       也就是**不会把字画到屏幕外**（旧实现违反的正是这一条）。
+    """
+    width = max(1, int(width))
+    longest = max((len(lines[0]), len(lines[1])), default=0)
+    for scale in (2, 1):
+        for left in (gap, 0):
+            limit = max(0, (width - left) // (FONT_W * scale))
+            if longest <= limit:
+                return scale, left, limit
+    # 全都不行：用最小的字号 + 最小边距，剩下的交给截断
+    # ⚠️ 宽度连一个字符都放不下时 limit=0 ⇒ `lines[0][:0]` 是空串、**什么都不画**，
+    #    而不是硬画到屏幕外（`rpi/tests/outputs/test_tft_spi.py` 里对 1~240 px 都验了这条不变量）
+    limit = max(0, width // FONT_W)
+    return 1, 0, limit
+
+
 #: 颜色（RGB888，驱动内部按 bgr 转 565）
 BLACK: RGB = (0, 0, 0)
 WHITE: RGB = (255, 255, 255)
@@ -750,10 +780,19 @@ class TftSpi(OutputDevice):
         return DisplayStatus(device=self.name, lines=self.current_lines, page=self.page)
 
     def _render(self, lines: Tuple[str, str], page: int) -> None:
-        """把两行文本画到屏上：大字两行 + 底部页码。"""
+        """把两行文本画到屏上：按"装得下"自动选字号 + 底部横线 + 页码。
+
+        ⚠️ **2026-09-29 真机踩到（用户反馈"字被截断/显示不全"）**：旧实现把每行截断到
+        ``width // 9``（128 宽屏 = 14 字符），**却固定用 ``scale=2`` 绘制** ——
+        而 8×8 点阵每字符前进 ``8 * scale = 16`` 像素，128 px 的屏**只能放下 8 个字符**
+        ⇒ 多出来的部分被**画到屏幕外**（``SENSOR FAULT`` 12 字符，右半边直接没了）。
+        修法：字符上限必须按 ``(width - 左边距) // (8 * scale)`` 算，装不下就**降一档字号**。
+        """
         self.fill(BLACK)
-        self.text(2, 2, lines[0][: self.width // 9], WHITE, bg=BLACK, scale=2)
-        self.text(2, 24, lines[1][: self.width // 9], CYAN, bg=BLACK, scale=2)
+        scale, left, limit = layout_for(self.width, lines)
+        line_height = 8 * scale
+        self.text(left, 2, lines[0][:limit], WHITE, bg=BLACK, scale=scale)
+        self.text(left, 2 + line_height + 6, lines[1][:limit], CYAN, bg=BLACK, scale=scale)
         self.hline(0, self.height - 14, self.width, GRAY)
         self.text(2, self.height - 12, f"PAGE {page}", GRAY, bg=BLACK, scale=1)
 
@@ -816,4 +855,5 @@ class TftSpi(OutputDevice):
         }
 
 
-__all__ = ["TftSpi", "CONTROLLERS", "ControllerSpec", "AUTO_ORDER", "rgb565", "FONT_8X8"]
+__all__ = ["TftSpi", "CONTROLLERS", "ControllerSpec", "AUTO_ORDER", "rgb565", "FONT_8X8",
+           "FONT_W", "layout_for"]

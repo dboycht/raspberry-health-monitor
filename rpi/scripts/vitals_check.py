@@ -67,6 +67,12 @@ if str(RPI_DIR) not in sys.path:
 from health_monitor.core.config import load_config  # noqa: E402
 from health_monitor.hal import create_device  # noqa: E402
 from health_monitor.hal.models import BeepCommand, DisplayCommand  # noqa: E402
+from sense_cues import (  # noqa: E402
+    BEEP_ATTENTION,
+    BEEP_DONE,
+    BEEP_FAIL,
+    Cues as _Cues,          # 提示器统一在 scripts/sense_cues.py（LCD + 蜂鸣暗号一套）
+)
 
 #: T7 验收判据（`docs/14` T7：心率 55~100、血氧 95~100）
 T7_HR_RANGE: Tuple[float, float] = (55.0, 100.0)
@@ -75,10 +81,9 @@ T7_SPO2_RANGE: Tuple[float, float] = (95.0, 100.0)
 #: LCD 每行 16 字符（驱动会截断，但这里先自己收干净，免得显示成半句话）
 LCD_WIDTH = 16
 
-#: 蜂鸣方案：(响几声, 每声多长 ms)。**这是跟人约好的暗号，别随手改**
-BEEP_START = (1, 150)
-BEEP_DONE = (2, 150)
-BEEP_FAIL = (5, 120)
+#: 蜂鸣方案沿用**共享提示器**里的暗号：(响几声, 每声多长 ms)。
+#: **这是跟人约好的信号，别随手改**（定义在 `scripts/sense_cues.py`，全项目一套）
+BEEP_START = BEEP_ATTENTION
 
 
 # ==========================================================================
@@ -203,42 +208,6 @@ def result_lines(summary: Dict[str, Any], passed: bool) -> Tuple[str, str]:
 # ==========================================================================
 # 硬件部分（薄薄一层：打开器件 → 循环读数 → 写 LCD → 蜂鸣）
 # ==========================================================================
-
-
-class _Cues:
-    """LCD + 蜂鸣的"提示器"：**任何一个坏了都不许把采集搞崩**（只记一笔）。"""
-
-    def __init__(self, lcd: Any = None, buzzer: Any = None) -> None:
-        self.lcd = lcd
-        self.buzzer = buzzer
-        self.notes: List[str] = []
-
-    def show(self, line1: str, line2: str) -> None:
-        if self.lcd is None:
-            return
-        try:
-            self.lcd.send(DisplayCommand(lines=(line1, line2)))
-        except Exception as exc:  # noqa: BLE001 - 显示失败不该中断采集
-            self.notes.append(f"LCD 写入失败：{type(exc).__name__}: {exc}")
-            self.lcd = None
-
-    def beep(self, plan: Tuple[int, int]) -> None:
-        times, on_ms = plan
-        if self.buzzer is None:
-            return
-        try:
-            self.buzzer.send(BeepCommand(times=times, on_ms=on_ms, off_ms=150))
-        except Exception as exc:  # noqa: BLE001 - 蜂鸣失败不该中断采集
-            self.notes.append(f"蜂鸣失败：{type(exc).__name__}: {exc}")
-            self.buzzer = None
-
-    def close(self) -> None:
-        for dev in (self.buzzer, self.lcd):
-            if dev is not None:
-                try:
-                    dev.close()
-                except Exception:  # noqa: BLE001 - 收尾失败不影响结论
-                    pass
 
 
 def _open(config: Any, name: str) -> Any:

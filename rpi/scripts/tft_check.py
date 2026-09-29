@@ -58,8 +58,16 @@ RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
 
+from health_monitor.core.config import load_config  # noqa: E402
 from health_monitor.hal.exceptions import DeviceInitError  # noqa: E402
 from health_monitor.outputs.tft_spi import AUTO_ORDER, CONTROLLERS, TftSpi  # noqa: E402
+from sense_cues import (  # noqa: E402
+    BEEP_ATTENTION,
+    BEEP_DONE,
+    BEEP_FAIL,
+    Cues,
+    open_cues,
+)
 
 TIPS = {
     "st7735": "1.8\" 128x160 常见（Waveshare 1.8inch LCD Module 等）",
@@ -115,7 +123,7 @@ def preflight(device: int) -> int:
     return problems
 
 
-def try_one(name: str, args: argparse.Namespace, wait: bool) -> bool:
+def try_one(name: str, args: argparse.Namespace, wait: bool, cues: "Cues | None" = None) -> bool:
     """初始化一种控制器并画测试画面；返回是否成功（不代表颜色对）。"""
     print("-" * 78)
     print(f"尝试控制器：{name}　（{TIPS.get(name, '')}）")
@@ -146,7 +154,14 @@ def try_one(name: str, args: argparse.Namespace, wait: bool) -> bool:
     safe_print(f"✅ 初始化完成：{spec.name}　{screen_text(tft)}　后端 {tft._backend}")
     print(f"   已写入 SPI {tft.writes} 次")
     print()
-    safe_print("👉 请看屏幕，确认：")
+    if cues is not None:
+        # ★ 用户明确要求（2026-09-29）：凡是"要人看"的测试，先 LCD 写明看什么 + 蜂鸣叫人，
+        #   再开始画。树莓派离电脑远，不能指望人盯着终端。
+        cues.show("TFT TEST", f"SEE SCREEN {args.hold}s")
+        cues.beep(BEEP_ATTENTION)
+        safe_print(f"🔔 已鸣 1 声并写 LCD（{name}）—— 请现在看 TFT 屏")
+    else:
+        safe_print("👉 请看屏幕，确认：")
     print("   1) 三条横条是【上红、中绿、下蓝】且颜色纯正；")
     print("   2) 文字 'TFT OK'（白字红底）、'R G B TEST'（黑字绿底）、'CHECK COLORS'（白字蓝底）清晰；")
     print("   3) 文字方向正确、不镜像、不倒置。")
@@ -171,6 +186,8 @@ def try_one(name: str, args: argparse.Namespace, wait: bool) -> bool:
     else:
         for remaining in range(args.hold, 0, -1):
             print(f"\r   {remaining} 秒后试下一个…", end="", flush=True)
+            if cues is not None:
+                cues.show("TFT TEST", f"LOOK NOW  {remaining:2d}s")
             time.sleep(1)
         print("\r" + " " * 40 + "\r", end="")
     tft.close()
@@ -197,6 +214,8 @@ def main() -> int:
     parser.add_argument("--hold", type=int, default=6, help="auto 模式下每种显示几秒（默认 6）")
     parser.add_argument("--steps", action="store_true", help="逐屏等待回车确认（最省事，推荐）")
     parser.add_argument("--skip-preflight", action="store_true", help="跳过前置检查")
+    parser.add_argument("--no-cue", action="store_true",
+                        help="不写 LCD、不鸣蜂鸣器（默认**会**：用户要求这类测试必须用 LCD+蜂鸣叫人）")
     args = parser.parse_args()
 
     name_list = list(AUTO_ORDER) if args.controller == "auto" else [args.controller]
@@ -215,12 +234,34 @@ def main() -> int:
     if args.controller == "auto" and not args.steps:
         print("提示：加 --steps 可以每试一种就停下来问你，比定时切换更好判断。\n")
 
-    for name in name_list:
+    # ★ 提示器（LCD + 蜂鸣）：用户 2026-09-29 要求"每一次这种测试都用它叫我"
+    cues: "Cues | None" = None
+    if not args.no_cue:
         try:
-            if try_one(name, args, wait=args.steps):
+            cues = open_cues(load_config(None))
+            safe_print("🔔 提示器就绪：开始/结束都会用 LCD 写明 + 蜂鸣器叫人（1 声=开始、2 声=成功、5 声=失败）")
+        except Exception as exc:  # noqa: BLE001 - 提示器打不开也照跑
+            safe_print(f"[!] 提示器不可用（继续跑，只是没有声光提示）：{type(exc).__name__}: {exc}")
+            cues = None
+
+    try:
+        for name in name_list:
+            try:
+                if try_one(name, args, wait=args.steps, cues=cues):
+                    if cues is not None:
+                        cues.show("TFT TEST OK", name)
+                        cues.beep(BEEP_DONE)
+                    return 0
+            except SystemExit:
                 return 0
-        except SystemExit:
-            return 0
+
+        if cues is not None:
+            cues.show("TFT TEST DONE", "RERUN / CHECK")
+            cues.beep(BEEP_FAIL)
+    finally:
+        if cues is not None:
+            cues.report()
+            cues.close()
 
     print("=" * 78)
     safe_print("❌ 所有候选控制器都没有被确认。下一步：")
