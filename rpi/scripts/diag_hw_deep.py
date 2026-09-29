@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """精细诊断：为什么"能扫到地址"却"读不到数据"。
 
-两个具体问题（2026-09-24 真机）：
-  ① MAX30102：i2cdetect 能看到 0x57，但 Part ID 寄存器(0x21)读回 0x00（应为 0x15）；
+两个具体问题：
+  ① MAX3010x：i2cdetect 能看到 0x57，但"版本号"读不对；
   ② TMP36+MCP3002：SPI 能打开，但 ADC 读数全是 None。
 
-本脚本用**多种方式**反复试探，把"器件根本没应答"与"应答了但值不对"区分开，
-并给出针对性的接线检查点。只读，不写任何寄存器（除了 MAX30102 的模式复位会被跳过）。
+⚠️ **关于 ① 的重要更正（2026-09-29 真机，`ERROR.md` E49）**：
+早前把"0x21 读到 0x00"当成"器件可疑/假片"，**是误判**。MAX3010x 系有**两套已知布局**：
+
+    MAX30102/MAX30101：0x21 = PART_ID（应读回 0x15）
+    MAX30105（SparkFun 库口径）：0xFF = PART_ID（应读回 0x15），0x21 是 TEMP_CONFIG
+
+本机模块是后者。**有区分力的判据**：往 0x21 写 0x01 再读 0x1F/0x20 ——
+若立刻报出一个像室温的温度，说明 0x21 是 TEMP_EN（MAX30105 布局），版本号在 0xFF。
+所以本脚本**两个地址都读**，并且能区分"器件可疑"与"布局不同"。
+
+本脚本的 MAX3010x 部分会**写** 0x21（只为验 TEMP_EN，取证实用）与恢复原始值；
+TMP36/MCP3002 部分只读。
 """
 
 from __future__ import annotations
@@ -35,6 +45,10 @@ RPI_DIR = Path(__file__).resolve().parents[1]
 if str(RPI_DIR) not in sys.path:
     sys.path.insert(0, str(RPI_DIR))
 
+#: PART_ID 的两处已知地址（与 `health_monitor/sensors/max30102.py` 同源）
+PART_ID_REGISTERS = (0x21, 0xFF)
+PART_ID_VALUE = 0x15
+
 
 def section(t: str) -> None:
     print("\n" + "=" * 74)
@@ -43,7 +57,7 @@ def section(t: str) -> None:
 
 
 def diag_max30102() -> None:
-    section("① MAX30102（I2C 0x57）")
+    section("① MAX3010x（I2C 0x57）")
     try:
         from smbus2 import SMBus
     except ImportError:
@@ -52,13 +66,21 @@ def diag_max30102() -> None:
 
     bus = SMBus(1)
     candidates = [0x57, 0x56, 0x55, 0x58]
-    print("  逐个地址读 Part ID（0x21 寄存器；0x15 = MAX30102，0x11 = MAX30105）：")
+    print("  逐个地址读两处版本号寄存器（0x15 = MAX3010x 系；0x11 = MAX30105 早期批次）：")
+    safe_print("    [!] 0x21 读 0x00 **不等于**坏件：MAX30105 布局下 0x21 是 TEMP_CONFIG")
+    hits = []
     for addr in candidates:
         for attempt in range(1, 4):
             try:
-                value = bus.read_byte_data(addr, 0x21)
-                safe_print(f"    0x{addr:02X} 第{attempt}次：0x{value:02X}"
-                      + ("　✅ 正确" if value in (0x15, 0x11) else "　⚠️ 不是期望值"))
+                values = [(reg, bus.read_byte_data(addr, reg)) for reg in PART_ID_REGISTERS]
+                text = "、".join(f"0x{reg:02X}=0x{v:02X}" for reg, v in values)
+                hit = [reg for reg, v in values if v in (PART_ID_VALUE, 0x11)]
+                if hit:
+                    hits.append((addr, hit[0]))
+                    layout = "MAX30102/MAX30101 布局" if hit[0] == 0x21 else "MAX30105 布局"
+                    safe_print(f"    0x{addr:02X} 第{attempt}次：{text}　✅ 命中 {layout}")
+                else:
+                    safe_print(f"    0x{addr:02X} 第{attempt}次：{text}　⚠️ 两处都不是 0x15")
                 break
             except OSError as exc:
                 if attempt == 3:
@@ -73,17 +95,44 @@ def diag_max30102() -> None:
     except OSError as exc:
         safe_print(f"    0x27：❌ 也不应答（{exc}）→ 问题可能在总线本身")
 
-    print("\n  再试读几个已知寄存器（看是不是「只有 Part ID 读不到」）：")
-    for reg, name in ((0x00, "INTR_STATUS_1"), (0x04, "FIFO_WR_PTR"), (0x07, "FIFO_DATA")):
+    print("\n  再试读几个已知寄存器（看是不是「只有版本号读不到」）：")
+    for reg, name in (
+        (0x00, "INTR_STATUS_1（bit0=POWER_READY）"),
+        (0x04, "FIFO_WR_PTR"),
+        (0x07, "FIFO_DATA"),
+        (0xFE, "REV_ID（MAX3010x 实测 0x03）"),
+    ):
         try:
             value = bus.read_byte_data(0x57, reg)
             print(f"    reg 0x{reg:02X} ({name}) = 0x{value:02X}")
         except OSError as exc:
             print(f"    reg 0x{reg:02X} ({name}) 读失败：{exc}")
 
+    if not hits:
+        print("\n  两处版本号都没命中 —— 再做一次**有区分力**的实验：0x21 是 TEMP_EN 吗？")
+        safe_print("    （写 0x21=0x01 后若报出像室温的温度 -> 是 MAX30105 布局，版本号该去 0xFF 读）")
+        try:
+            original = bus.read_byte_data(0x57, 0x21)
+            bus.write_byte_data(0x57, 0x21, 0x01)
+            time.sleep(0.3)
+            raw_int = bus.read_byte_data(0x57, 0x1F)
+            raw_frac = bus.read_byte_data(0x57, 0x20)
+            celsius = raw_int + (raw_frac & 0x0F) * 0.0625
+            print("    写 0x21=0x01 后：0x1F=0x%02X、0x20=0x%02X -> %.2f C" % (raw_int, raw_frac, celsius))
+            if 5.0 <= celsius <= 45.0:
+                safe_print("    ✅ 落在室温区间 ⇒ **0x21 是 TEMP_CONFIG**，器件用的 MAX30105 布局")
+                safe_print("       （版本号在 0xFF；旧版脚本只查 0x21 会把它误判成『器件可疑』）")
+            else:
+                safe_print("    ⚠️ 不是室温 ⇒ 0x21 不像 TEMP_EN，需按『器件可疑』继续排查")
+            bus.write_byte_data(0x57, 0x21, original)  # 复原，不留下副作用
+            print(f"    已把 0x21 复原成 0x{original:02X}")
+        except OSError as exc:
+            print(f"    写/读 0x21 失败：{exc}")
+
     print("\n  结论提示：")
+    safe_print("    · 任一处读到 0x15 -> 器件是 MAX3010x 系，**可用**（布局不同不是故障）")
     print("    · 若 0x27 应答而 0x57 所有寄存器都读 0x00/无应答 → 器件供电或接触问题")
-    print("    · 若 Part ID 读 0x00 但别的寄存器有值 → 可能不是 MAX30102（兼容片/假片）")
+    print("    · 若两处都不是 0x15、且 0x21 写 1 也读不出室温 → 才怀疑兼容片/坏片")
     print("    · 若读值随机跳变 → 线太长/无上拉/电源噪声（I2C 建议 ≤30cm 且共用 4.7k 上拉）")
     bus.close()
 

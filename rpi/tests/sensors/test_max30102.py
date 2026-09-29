@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import math
+import random
 import unittest
+from pathlib import Path
 
 from health_monitor.hal import (
     ConfigError,
@@ -27,10 +29,18 @@ from health_monitor.hal import (
 )
 from health_monitor.sensors.max30102 import (
     FIFO_CONFIG_VALUE,
+    FIFO_DEPTH,
+    FIFO_SAMPLE_AVG,
+    FIFO_SAMPLE_AVG_BITS,
+    FIFO_SAMPLES_PER_READ,
     LED_CURRENT_STEPS,
     MAX30102_ADDRESS,
     MAX30102_PART_ID,
+    MAX_I2C_BLOCK_BYTES,
+    MODE_RESET,
+    MODE_SHUTDOWN,
     MODE_SPO2,
+    PART_ID_REGISTERS,
     REG_FIFO_CONFIG,
     REG_FIFO_RD_PTR,
     REG_FIFO_WR_PTR,
@@ -39,6 +49,8 @@ from health_monitor.sensors.max30102 import (
     REG_MODE_CONFIG,
     REG_OVF_COUNTER,
     REG_PART_ID,
+    REG_PART_ID_ALT,
+    REG_REV_ID,
     REG_SPO2_CONFIG,
     Max30102,
     PpgParams,
@@ -90,12 +102,62 @@ def synth_ppg(
 
 
 class TestPpgPreprocess(unittest.TestCase):
-    def test_移动平均去直流不减幅(self) -> None:
-        """带通预处理只应去掉直流，脉搏波的幅度要基本保留（否则峰值检测就瞎了）。"""
+    def test_带通去直流不减幅(self) -> None:
+        """带通预处理只应去掉直流，脉搏波的幅度要基本保留（否则峰值检测就瞎了）。
+
+        ⚠️ 判据改过（2026-09-29，E52）：旧实现是"两个滑动平均相减"，去直流后均值
+        几乎精确为 0，所以当年写的是绝对值 ``< 1.0``；换成真正的 0.7~4Hz 带通后，
+        一段 10 秒窗里均值不会精确为 0（不足整周期的截断 + 两端瞬态），实测 4.0，
+        而交流 RMS 是 348。**"接近 0"应当相对幅度来判**，绝对阈值只会变成假失败。
+        """
         ir, _ = synth_ppg(bpm=60.0)
         ac = _bandpass(ir, 100.0)
-        self.assertLess(abs(sum(ac) / len(ac)), 1.0, "去直流后均值应接近 0")
-        self.assertGreater(_rms(ac), 100.0, "交流分量幅度不该被滤波器吃掉")
+        level = _rms(ac)
+        self.assertGreater(level, 100.0, "交流分量幅度不该被滤波器吃掉")
+        self.assertLess(abs(sum(ac) / len(ac)), 0.05 * level, "去直流后均值应远小于交流幅度")
+
+    def test_带通在呼吸频段至少衰减六倍(self) -> None:
+        """★ E52 的正题（滤波器层）：0.3Hz ≈ 18 次/分（呼吸）必须被明显压掉。
+
+        判据用**两个纯音的增益比**，而不是"信号里呼吸成分的绝对值"——
+        后者取决于幅度设定，比不出滤波器的本事。实测 0.3Hz 增益 0.049、
+        1.1Hz 增益 0.857（比值 0.057）。
+        """
+        rate = 25.0
+        n = 250
+
+        def tone_gain(freq: float) -> float:
+            x = [math.sin(2 * math.pi * freq * i / rate) for i in range(n)]
+            ac = _bandpass(x, rate)
+            core = ac[15 : n - 15]           # 掐掉两端瞬态
+            return max(abs(v) for v in core)
+
+        resp = tone_gain(0.3)
+        pulse = tone_gain(1.1)
+        self.assertLess(resp, pulse * 0.15, f"呼吸频段衰减不足：{resp:.3f} vs {pulse:.3f}")
+
+    def test_大呼吸伪迹下仍能算对心率(self) -> None:
+        """★★ E52 的核心回归：呼吸幅度是脉搏的 13 倍、还叠加 4 万计数的漂移时，
+        算法**必须仍然报出脉搏的那个心率**（而不是被伪迹带偏）。
+
+        这份合成波形是照着真机实测的处境造的（真机呼吸幅度 ~8000、漂移 ~44000），
+        而旧实现（两个滑动平均 + 数波峰）在真机上正是把 66 bpm 报成了 116~126。
+        """
+        rate = 25.0
+        n = 250
+        ir = [
+            120000.0
+            + 600.0 * math.sin(2 * math.pi * 1.2 * i / rate)          # 72 bpm 脉搏
+            + 8000.0 * math.sin(2 * math.pi * 0.3 * i / rate)         # 呼吸（13 倍）
+            + 40000.0 * (i / n) ** 2                                  # 漂移
+            + 100.0 * math.sin(2 * math.pi * 2.7 * i / rate)          # 带内噪声
+            for i in range(n)
+        ]
+        result = analyze_ppg(ir, rate, None, PpgParams())
+        self.assertTrue(result.finger_detected, result.reason)
+        self.assertIsNotNone(result.heart_rate_bpm, result.reason)
+        self.assertAlmostEqual(result.heart_rate_bpm, 72.0, delta=6.0)
+        self.assertGreater(result.quality, 0.30, "这种信号应当还能给出可用质量分")
 
     def test_空数据不崩(self) -> None:
         self.assertEqual(_bandpass([], 100.0), [])
@@ -190,27 +252,46 @@ class TestPpgAlgorithm(unittest.TestCase):
         self.assertIsNone(result.spo2_percent)
 
     def test_质量阈值可调且低质量不给结论(self) -> None:
-        """把质量门槛抬到 0.99：干净波形也达不到，此时只报状态、不给结论。
+        """把质量门槛抬到 0.99：**带内噪声大**的波形达不到，此时只报状态、不给结论。
 
         注意分层：**纯算法**照实给出心率，但把原因写进 ``reason``；
         由驱动层（``_analyze_buffer``）据此把样本标成 ``ok=False``——
         这样既保留了数值供排查，又不会让坏数据流到报警引擎。
+
+        ⚠️ 造数据的方式改过（2026-09-29，E52）：质量分公式换成
+        "信号强度 × 频谱主峰 SNR 分"之后，**一段理想的干净波形能拿满分 1.000**
+        （旧公式里带间隔抖动项，永远到不了 1.0），所以不能再拿"干净波形"来测门槛。
+        这里换成叠加带内高斯噪声的波形（实测噪声 σ=800 时质量 ≈0.76），
+        才是"门槛真的在拦数据"的正确测法。
         """
-        ir, red = synth_ppg(bpm=60.0)
+        rng = random.Random(20260929)
+        clean_ir, clean_red = synth_ppg(bpm=60.0)
+        ir = [v + rng.gauss(0.0, 4000.0) for v in clean_ir]
+        red = [v + rng.gauss(0.0, 4000.0) for v in clean_red]
         strict = PpgParams(quality_min=0.99)
         result = analyze_ppg(ir, 100.0, red, strict)
         self.assertTrue(result.finger_detected)
+        self.assertLess(result.quality, 0.99, "这份波形本来就该达不到 0.99")
         self.assertIn("质量", result.reason)
 
         # 驱动层：关掉自动合成波形，只分析注入的这一段，结论必须 ok=False
+        # （注入波形按**器件真实速率**造，见 E51；见 test_inject可以喂真实波形段 的说明）
+        #
+        # ⚠️ σ 只有 1500：**同一个 σ 在不同采样率下"带内噪声"差很多** ——
+        #    100Hz 采样时 0.7~4Hz 只占全带宽的 3%，带通把 97% 的噪声都滤掉了
+        #    （所以上面要用 σ=4000）；25Hz 采样时这一带占 26%，σ=1500 就足够把 SNR 压下去。
         dev = Max30102(mock=True, mock_auto_wave=False, quality_min=0.99)
         dev.open()
-        dev.inject(ir, red)
+        rate = dev.analysis_rate
+        rng2 = random.Random(20260929)
+        ir_dev, red_dev = synth_ppg(bpm=60.0, sample_rate=rate)
+        ir_dev = [v + rng2.gauss(0.0, 1500.0) for v in ir_dev]
+        red_dev = [v + rng2.gauss(0.0, 1500.0) for v in red_dev]
+        dev.inject(ir_dev, red_dev)
         sample = dev.read()
         self.assertFalse(sample.ok, "质量不达标时驱动必须返回 ok=False")
         self.assertTrue(sample.finger_detected)
         self.assertIn("质量", sample.error)
-        self.assertLess(abs(sample.heart_rate_bpm - 60.0), 6.0, "数值仍保留，便于排查")
         dev.close()
 
 
@@ -285,10 +366,15 @@ class TestMax30102Driver(unittest.TestCase):
         dev.close()
 
     def test_inject可以喂真实波形段(self) -> None:
-        """把 8 秒 60bpm 的合成波形注入 mock 驱动，经过完整驱动链路应算出 60bpm。"""
+        """把 8 秒 60bpm 的合成波形注入 mock 驱动，经过完整驱动链路应算出 60bpm。
+
+        ⚠️ 波形必须按**器件真实速率**造：FIFO 实测只有 `sample_rate/4 = 25` 组/秒
+        （4 点平均的代价，`ERROR.md` **E51**）。按 100 Hz 造波形再注入，
+        会被按 25 Hz 解读、心率算成约 4 倍 —— 这条测试自己就演示过那个 bug。
+        """
         dev = Max30102(mock=True)
         dev.open()
-        ir, red = synth_ppg(bpm=60.0, seconds=8.0)
+        ir, red = synth_ppg(bpm=60.0, seconds=8.0, sample_rate=dev.analysis_rate)
         dev.inject(ir, red)
         sample = dev.read()
         self.assertTrue(sample.ok, sample.error)
@@ -594,7 +680,7 @@ class TestMax30102I2CProtocol(unittest.TestCase):
         reads: list[int] = []
 
         def on_write(_bus: MockBus, data: bytes) -> None:
-            state["reg"] = data[0] & 0x7F
+            state["reg"] = data[0] & 0xFF      # 寄存器地址是 8 位（0xFF=PART_ID 备选布局）
             if len(data) >= 2:
                 writes.append((state["reg"], data[1]))
                 if state["reg"] == REG_MODE_CONFIG:
@@ -615,7 +701,9 @@ class TestMax30102I2CProtocol(unittest.TestCase):
         dev.open()
         try:
             self.assertTrue(dev._opened)
-            self.assertEqual(writes[0], (REG_MODE_CONFIG, 0x40), "第一步必须是软复位")
+            # 先关断再复位（E51 补记：只写一次 RESET 不足以从 shutdown/multi-LED 状态恢复采样）
+            self.assertEqual(writes[0], (REG_MODE_CONFIG, MODE_SHUTDOWN), "第一步先关断")
+            self.assertEqual(writes[1], (REG_MODE_CONFIG, MODE_RESET), "随后才是软复位")
             mode_writes = [v for r, v in writes if r == REG_MODE_CONFIG]
             self.assertEqual(mode_writes[-1], MODE_SPO2, "最后一步是进 SpO2 模式")
             self.assertIn(REG_PART_ID, reads, "初始化时必须读版本号确认器件在线")
@@ -633,6 +721,377 @@ class TestMax30102I2CProtocol(unittest.TestCase):
         dev._write_reg(REG_LED1_PA, 0x26)
         ops = bus.operations("i2c_write")
         self.assertEqual(ops[-1][1], (1, MAX30102_ADDRESS, bytes([REG_LED1_PA, 0x26])))
+
+
+# ==========================================================================
+# 四、PART_ID 的两种已知布局（E49 回归：别把可用器件误判成"器件可疑"）
+# ==========================================================================
+
+
+class _FakeRegisterFile(MockBus):
+    """**有状态的**假 MAX3010x：写进去能读回来，并模拟"软复位位自清"。
+
+    为什么不能只用 :class:`_RegisterProbe`：那个探针"读哪个寄存器由上一次写决定、
+    固定回一个值"，装不出"两种 PART_ID 布局"和"写 TEMP_EN 才有温度"这类状态。
+    这里用一个字典当寄存器文件，够真、又完全确定性（不碰任何真实硬件）。
+    """
+
+    def __init__(self, registers: dict[int, int] | None = None) -> None:
+        super().__init__()
+        self.defaults = dict(registers or {})
+        self.regs = dict(self.defaults)
+        self._last = 0
+        self.hook_i2c_write(MAX30102_ADDRESS, self._on_write)
+        self.hook_i2c(MAX30102_ADDRESS, self._on_read)
+
+    def _on_write(self, _bus: MockBus, data: bytes) -> None:
+        if not data:
+            return
+        self._last = data[0]
+        if len(data) < 2:
+            return
+        value = data[1]
+        if self._last == REG_MODE_CONFIG and value & 0x40:
+            # 软复位：真器件会在几毫秒内把 RESET 位自己清掉、寄存器回默认值
+            self.regs = dict(self.defaults)
+            self.regs[REG_MODE_CONFIG] = 0x00
+            return
+        self.regs[self._last] = value
+
+    def _on_read(self, _bus: MockBus, _data: bytes) -> bytes:
+        return bytes([self.regs.get(self._last, 0x00)])
+
+
+class TestMax30102PartIdLayouts(unittest.TestCase):
+    """PART_ID 两种布局都要能开机；两处都没有 0x15 才许报错。
+
+    ⚠️ 这条回归的来历（2026-09-29 真机，`ERROR.md` **E49**）：
+    本机模块的 PART_ID 报在 **0xFF**（MAX30105 布局），`0x21` 是 `TEMP_CONFIG`、读回 0x00。
+    旧驱动只读 `0x21` ⇒ 明明**可用**的模块被判成"器件可疑"，T7 一直卡在第一步。
+    判据**没有放宽**：仍必须真的读到 0x15，只是知道它可能在哪一处。
+    """
+
+    def _bus_with_layout(self, part_id_reg: int) -> _FakeRegisterFile:
+        regs = {0x21: 0x00, 0xFF: 0x00, 0xFE: 0x03, 0x08: 0x0F}
+        regs[part_id_reg] = MAX30102_PART_ID
+        return _FakeRegisterFile(regs)
+
+    def test_两种已知布局常量与数据手册口径一致(self) -> None:
+        self.assertEqual(PART_ID_REGISTERS, (0x21, 0xFF))
+        self.assertEqual(REG_PART_ID, 0x21)
+        self.assertEqual(REG_PART_ID_ALT, 0xFF)
+        self.assertEqual(REG_REV_ID, 0xFE)
+        self.assertEqual(MAX30102_PART_ID, 0x15)
+
+    def test_布局A_版本号在0x21时能开机(self) -> None:
+        """MAX30102/MAX30101 布局（原有行为，不能被这次修改弄坏）。"""
+        dev = Max30102(bus=self._bus_with_layout(0x21), mock=False)
+        try:
+            dev.open()
+            self.assertTrue(dev._opened)
+            self.assertEqual(dev._part_id_reg, 0x21)
+        finally:
+            dev.close()
+
+    def test_布局B_版本号在0xFF时也能开机_这是E49的正题(self) -> None:
+        """★ MAX30105 布局：0x21 读回 0x00，但 0xFF 读回 0x15 ⇒ 必须开机成功。"""
+        dev = Max30102(bus=self._bus_with_layout(0xFF), mock=False)
+        try:
+            dev.open()
+            self.assertTrue(dev._opened, "0xFF 布局的可用模块不许被误判成坏件")
+            self.assertEqual(dev._part_id_reg, 0xFF, "要记住命中在哪一处布局")
+            self.assertEqual(dev._rev_id, 0x03, "REV_ID 应被留痕")
+        finally:
+            dev.close()
+
+    def test_两处都读不到0x15时报错并同时给出两处读数(self) -> None:
+        """报错必须一次说清"两个地址各读到什么"，而不是只甩一个 0x00。"""
+        dev = Max30102(bus=_FakeRegisterFile({0x21: 0x00, 0xFF: 0x11}), mock=False)
+        try:
+            with self.assertRaises(DeviceInitError) as ctx:
+                dev.open()
+        finally:
+            dev.close()
+        text = str(ctx.exception)
+        self.assertIn("0x21=0x00", text)
+        self.assertIn("0xFF=0x11", text, "要把备选布局的读回值也报出来")
+        self.assertIn("0x15", text)
+
+    def test_读寄存器0xFF不能被截成0x7F(self) -> None:
+        """★ 旧实现把寄存器地址与 **7 位从机地址** 的掩码搞混：``& 0x7F`` 会把 0xFF 变成 0x7F。
+
+        没有这条，支持 0xFF 布局就是假支持（发出去的寄存器号根本不对）。
+        """
+        bus = MockBus()
+        dev = Max30102(bus=bus, mock=False)
+        dev._read_reg(REG_PART_ID_ALT)
+        self.assertEqual(
+            bus.operations("i2c_write")[-1][1],
+            (1, MAX30102_ADDRESS, bytes([0xFF])),
+            "寄存器地址是 8 位，0xFF 必须原样发出去",
+        )
+
+    def test_写寄存器0xFF不能被截成0x7F(self) -> None:
+        bus = MockBus()
+        dev = Max30102(bus=bus, mock=False)
+        dev._write_reg(REG_PART_ID_ALT, 0x01)
+        self.assertEqual(
+            bus.operations("i2c_write")[-1][1],
+            (1, MAX30102_ADDRESS, bytes([0xFF, 0x01])),
+        )
+
+    def test_小寄存器地址的字节序没被这次修改弄坏(self) -> None:
+        """反向守一手：常见的低地址寄存器仍必须是"寄存器号 + 值"两字节。"""
+        bus = MockBus()
+        dev = Max30102(bus=bus, mock=False)
+        dev._write_reg(REG_SPO2_CONFIG, 0x27)
+        dev._read_reg(REG_FIFO_WR_PTR)
+        self.assertEqual(
+            bus.operations("i2c_write")[0][1],
+            (1, MAX30102_ADDRESS, bytes([REG_SPO2_CONFIG, 0x27])),
+        )
+        self.assertEqual(
+            bus.operations("i2c_write")[1][1],
+            (1, MAX30102_ADDRESS, bytes([REG_FIFO_WR_PTR])),
+        )
+
+    def test_自检在0xFF布局下也必须ok且写明布局(self) -> None:
+        dev = Max30102(bus=self._bus_with_layout(0xFF), mock=False)
+        try:
+            result = dev.self_check()
+        finally:
+            dev.close()
+        self.assertTrue(result["ok"], result.get("detail"))
+        self.assertIn("0xFF", result["detail"])
+        self.assertIn("MAX30105", result["detail"], "自检报告要写明是哪一种布局")
+
+    def test_自检在两处都没有版本号时必须ok为假(self) -> None:
+        dev = Max30102(bus=_FakeRegisterFile({0x21: 0x00, 0xFF: 0x00}), mock=False)
+        try:
+            result = dev.self_check()
+        finally:
+            dev.close()
+        self.assertFalse(result["ok"])
+        self.assertIn("0x21=0x00", result["detail"])
+        self.assertIn("0xFF=0x00", result["detail"])
+
+    def test_布局名字映射可读(self) -> None:
+        self.assertIn("MAX30102", Max30102.part_id_layout(0x21))
+        self.assertIn("MAX30105", Max30102.part_id_layout(0xFF))
+        self.assertIn("未识别", Max30102.part_id_layout(None))
+
+    def test_未开机时describe不崩且不带布局字样(self) -> None:
+        """describe() 可能在 open() 之前被调用（生成文档时），不能因此报错。"""
+        dev = Max30102(mock=True)
+        text = dev.describe()["notes"]
+        self.assertIn("LED 电流", text)
+        self.assertNotIn("PART_ID", text, "还没开机就没有布局可写")
+
+
+class _SMBusLikeBus(_CountingMockBus):
+    """像 `smbus2` 一样：**单次块读超过 32 字节就抛 ValueError**。
+
+    ⚠️ 这就是 E50 的钉子：真机上抛的是
+    ``ValueError: Desired block length over 32 bytes``（**不是 OSError**），
+    所以它既不会被 `RealBus` 翻译、也不会被驱动的 `except DeviceIOError` 接住 ——
+    表现成"每次 read() 都异常、心率永远读不出来"。把这个限制搬进测试总线，
+    驱动一旦又"一次读一大坨"，这里就会当场红。
+    """
+
+    def i2c_read(self, bus: int, address: int, length: int) -> bytes:
+        if length > MAX_I2C_BLOCK_BYTES:
+            raise ValueError(
+                f"Desired block length over {MAX_I2C_BLOCK_BYTES} bytes"
+            )
+        return super().i2c_read(bus, address, length)
+
+
+class TestMax30102FifoChunking(unittest.TestCase):
+    """E50 回归：FIFO 必须**分块读**，一次 I2C 事务不许超过 32 字节。
+
+    来历（2026-09-29 真机）：实测这颗器件每秒往 FIFO 推约 25 组（150 字节），
+    而旧驱动一次读 `6*count` 字节 ⇒ 必然超限 ⇒ T7 永远读不出心率。
+    """
+
+    def test_常量与smbus2的上限一致(self) -> None:
+        self.assertEqual(MAX_I2C_BLOCK_BYTES, 32, "SMBus 块读上限就是 32 字节")
+        self.assertEqual(FIFO_SAMPLES_PER_READ, 5, "32 // 6 = 5 组（30 字节）")
+        self.assertEqual(FIFO_DEPTH, 32)
+
+    def test_一次块读永不超32字节(self) -> None:
+        bus = _SMBusLikeBus()
+        dev = Max30102(bus=bus, mock=False)
+        samples = dev._read_fifo(25)          # 真实一次 read() 的量级
+        self.assertEqual(len(samples), 25)
+        self.assertTrue(bus.read_lengths, "必须真的读了 FIFO")
+        self.assertLessEqual(max(bus.read_lengths), MAX_I2C_BLOCK_BYTES)
+        self.assertEqual(bus.read_lengths, [30] * 5, "25 组 = 5 块 × 5 组")
+
+    def test_最后一组不足时按实际长度读(self) -> None:
+        bus = _SMBusLikeBus()
+        dev = Max30102(bus=bus, mock=False)
+        self.assertEqual(len(dev._read_fifo(7)), 7)
+        self.assertEqual(bus.read_lengths, [30, 12], "7 组 = 5 组 + 2 组")
+
+    def test_分组边界值_第5组与第6组(self) -> None:
+        for count, expected in ((5, [30]), (6, [30, 6]), (10, [30, 30]), (11, [30, 30, 6])):
+            bus = _SMBusLikeBus()
+            dev = Max30102(bus=bus, mock=False)
+            self.assertEqual(len(dev._read_fifo(count)), count)
+            self.assertEqual(bus.read_lengths, expected, f"count={count}")
+
+    def test_0组不读任何东西(self) -> None:
+        bus = _SMBusLikeBus()
+        dev = Max30102(bus=bus, mock=False)
+        self.assertEqual(dev._read_fifo(0), [])
+        self.assertEqual(bus.read_lengths, [])
+
+    def test_分块后样本顺序与拼接仍然正确(self) -> None:
+        """分块不能把"第一组是红光、第二组是红外"的拼接顺序搞乱。"""
+        bus = MockBus()
+
+        def on_read(_bus: MockBus, _data: bytes) -> bytes:
+            # 5 组 = 30 字节：每组 RED=0x000001, IR=0x000002（18 位）
+            return bytes([0x00, 0x00, 0x01, 0x00, 0x00, 0x02] * 5)
+
+        bus.hook_i2c(MAX30102_ADDRESS, on_read)
+        dev = Max30102(bus=bus, mock=False)
+        samples = dev._read_fifo(5)
+        self.assertEqual(samples, [(0x02, 0x01)] * 5, "每组是 (红外, 红光)")
+
+
+class TestMax30102FifoRate(unittest.TestCase):
+    """E51 回归：**分析的时间基数必须是 FIFO 的实际产出速率**（= 配置采样率 ÷ 平均点数）。
+
+    来历（2026-09-29 真机实测）：`SPO2_SR=100` + 4 点平均 ⇒ 实测 FIFO 只有 **24.6 组/秒**；
+    关掉平均（AVG=1）⇒ 98.7 组/秒。旧实现拿 `sample_rate=100` 当时间基数，
+    心率会被算成约 **4 倍**（72 bpm 显示成约 288），而且**在 mock 里永远看不出来**
+    （mock 产生波形与解读波形用的是同一个错误数字，自洽地错下去）。
+    """
+
+    def test_平均点数换算(self) -> None:
+        self.assertEqual(FIFO_SAMPLE_AVG_BITS, 0b010, "4 点平均的寄存器位")
+        self.assertEqual(FIFO_SAMPLE_AVG, 4, "2**2 = 4")
+
+    def test_分析速率是配置采样率的四分之一(self) -> None:
+        dev = Max30102(mock=True)
+        self.assertEqual(dev.sample_rate, 100, "写进 SPO2_SR 的仍是配置值")
+        self.assertAlmostEqual(dev.analysis_rate, 25.0, msg="实测 FIFO ≈ 24.6 组/秒")
+
+    def test_分析窗按FIFO速率算成10秒(self) -> None:
+        dev = Max30102(mock=True)
+        self.assertEqual(dev._window_samples, 250, "25 组/秒 × 10 秒")
+        self.assertAlmostEqual(dev._window_samples / dev.analysis_rate, 10.0)
+
+    def test_描述里同时写明配置速率与实际速率(self) -> None:
+        text = Max30102(mock=True).describe()["notes"]
+        self.assertIn("100Hz", text)
+        self.assertIn("25", text, "要写明 FIFO 实际速率，别让人以为是 100 组/秒")
+
+    def test_算法在真机的25赫兹下仍能算对60bpm(self) -> None:
+        """★ 关键：真机只有约 25 组/秒（25 Hz 是能用的下限附近），算法必须仍然准。"""
+        rate = 25.0
+        n = int(rate * 10)
+        ir, red = [], []
+        for i in range(n):
+            phase = 2.0 * math.pi * 1.0 * (i / rate)      # 60 bpm = 1 Hz
+            ir.append(60000 + 600 * math.sin(phase) + 180 * math.sin(2 * phase))
+            red.append(58000 + 307 * math.sin(phase) + 92 * math.sin(2 * phase))
+        analysis = analyze_ppg(ir, rate, red)
+        self.assertTrue(analysis.finger_detected)
+        self.assertIsNotNone(analysis.heart_rate_bpm)
+        self.assertAlmostEqual(analysis.heart_rate_bpm, 60.0, delta=6.0)
+
+    def test_旧的错误时间基数算不出正确心率_反向验证(self) -> None:
+        """把同一段波形按旧的 100 Hz 解读 ⇒ 得不到 60 bpm（说明这个 bug 确实有区分力）。"""
+        rate = 25.0
+        n = int(rate * 10)
+        ir, red = [], []
+        for i in range(n):
+            phase = 2.0 * math.pi * 1.0 * (i / rate)
+            ir.append(60000 + 600 * math.sin(phase) + 180 * math.sin(2 * phase))
+            red.append(58000 + 307 * math.sin(phase) + 92 * math.sin(2 * phase))
+        wrong = analyze_ppg(ir, 100.0, red)          # 旧实现的时间基数
+        hr = wrong.heart_rate_bpm
+        self.assertFalse(
+            hr is not None and 55.0 <= hr <= 65.0,
+            f"拿 100 Hz 解读 25 Hz 的数据仍算出 {hr} bpm ⇒ 这条回归失去区分力",
+        )
+
+    def test_mock合成波形也按FIFO速率推进(self) -> None:
+        dev = Max30102(mock=True)
+        dev.open()
+        dev._pull_mock_samples()
+        self.assertEqual(len(dev._ir_buf), 12, "25 组/秒 ÷ 2 = 每次推进 12 组（0.5 秒）")
+
+
+class TestRealCaptureRegression(unittest.TestCase):
+    """★★ **真机实测波形回归**（E52）——整套算法最终要能过这一关。
+
+    为什么值得把一份真实采集放进测试夹具：
+    这个项目反复吃过"合成波形全绿、真机全红"的亏（E37：合成帧 82 边沿 vs 真机 83）。
+    这份 CSV 是 2026-09-29 在树莓派上用 `scripts/vitals_check.py --dump-csv` 抓的
+    **真实手指波形**（250 组 @25Hz，10 秒窗；红外直流 101887~145595，**未饱和**）。
+    旧算法在它上面报 116~126 bpm、质量 0.00；当前算法报 66.0 bpm、质量 0.84。
+    ⇒ 它就是"呼吸伪迹 + 漂移 + 接触噪声"这类真实处境的最小复现。
+    """
+
+    @staticmethod
+    def _load() -> tuple[list[float], list[float], float]:
+        path = Path(__file__).resolve().parent.parent / "fixtures" / "ppg_real_capture.csv"
+        ir: list[float] = []
+        red: list[float] = []
+        rate = 25.0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                if "analysis_rate_hz=" in line:
+                    rate = float(line.split("analysis_rate_hz=")[1].split()[0])
+                continue
+            if line.startswith("index"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 3:          # 跳过空行/尾行，避免夹具尾部换行把测试弄崩
+                continue
+            ir.append(float(parts[1]))
+            red.append(float(parts[2]))
+        return ir, red, rate
+
+    def test_夹具文件存在且是250组(self) -> None:
+        ir, red, rate = self._load()
+        self.assertEqual(len(ir), 250)
+        self.assertEqual(len(red), 250)
+        self.assertEqual(rate, 25.0)
+
+    def test_真机波形必须算出可用心率(self) -> None:
+        ir, red, rate = self._load()
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertTrue(result.finger_detected, result.reason)
+        self.assertIsNotNone(result.heart_rate_bpm, f"旧算法在这里给不出结论：{result.reason}")
+        # 操作者当时静息，且这份波形的带内主峰在 65.9 bpm
+        self.assertGreaterEqual(result.heart_rate_bpm, 55.0)
+        self.assertLessEqual(result.heart_rate_bpm, 100.0)
+        self.assertGreater(result.quality, 0.30, "这份真实波形应当能过质量门槛")
+        self.assertFalse(result.reason, result.reason)
+
+    def test_真机波形的血氧落在合理区间(self) -> None:
+        ir, red, rate = self._load()
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertIsNotNone(result.spo2_percent)
+        self.assertGreaterEqual(result.spo2_percent, 85.0)
+        self.assertLessEqual(result.spo2_percent, 100.0)
+
+    def test_真机波形不能靠旧的错误时间基数蒙对(self) -> None:
+        """把同一份波形按 100 Hz 解读（旧的时间基数）⇒ 得不到 55~100 bpm 的结论。
+
+        这条保证"夹具回归"确实在拦 E51/E52 那类错误，而不是恰好怎么算都对。
+        """
+        ir, red, _rate = self._load()
+        wrong = analyze_ppg(ir, 100.0, red, PpgParams())
+        hr = wrong.heart_rate_bpm
+        self.assertFalse(
+            hr is not None and 55.0 <= hr <= 100.0 and not wrong.reason,
+            f"按 100Hz 解读 25Hz 的真实波形仍给出可用结论（{hr} bpm / {wrong.reason}）",
+        )
 
 
 if __name__ == "__main__":
