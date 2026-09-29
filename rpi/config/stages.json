@@ -78,7 +78,7 @@
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals"],
       "status": "verified",
       "verified_on": "2026-09-29",
-      "commit": "PENDING",
+      "commit": "47bbb21",
       "note": "验收方式：`scripts/vitals_check.py --seconds 30 --dump-csv /tmp/ppg_final.csv`（**LCD 出提示 + 蜂鸣器叫人**，适合作者远离树莓派时远程验收）= **通过：心率 70.0 bpm、血氧 96.0 %**（判据 55~100 / 95~100）；30 次采样里 29 次检测到手指、19 个有效样本，用户确认 LCD 显示 `HR 70 bpm`/`SPO2 96 %`、蜂鸣「1 声开始 + 2 声结束」。⚠️ 本级一次暴露**四个真 bug（全都不是器件坏）**：E49 PART_ID 有两种布局（本模块报在 0xFF，0x21 是 TEMP_CONFIG）、E50 smbus2 单次块读上限 32 字节必须分块、E51 4 点平均让有效采样率降为 SR/4（时间基数错 4 倍 + FIFO 结构实测）、E52 呼吸伪迹 0.15~0.5Hz 滤不掉 + 滤波器直流瞬态 + 心率估计器改以频谱主峰为主（并留下真机波形回归夹具）"
     },
     "T8": {
