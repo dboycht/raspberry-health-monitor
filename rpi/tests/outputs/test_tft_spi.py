@@ -261,6 +261,55 @@ class TestTftMock(unittest.TestCase):
         self.assertTrue(status["opened"])
 
 
+class TestDisplayStatusSymmetry(unittest.TestCase):
+    """★ 两块屏的 `status()` 必须**对称**（E57 收尾）。
+
+    来历：T9 验收时我用 `status()` 读彩屏，得到**空的 lines**，一度以为"彩屏没画出来" ——
+    其实是 `Lcd1602` 覆写了 `status()`（带 `lines`/`page`）而 `TftSpi` 没有。
+    两台显示器"屏幕上现在是什么"必须能从**同名字段**读到，否则每次都要先猜该用哪个接口。
+    """
+
+    #: 所有显示类驱动都必须暴露的字段（新增显示驱动时自动被这条判据要求）
+    REQUIRED = ("lines", "page")
+
+    def test_彩屏与LCD的status都带当前屏幕内容(self) -> None:
+        from health_monitor.outputs.lcd1602 import Lcd1602
+
+        lcd = Lcd1602(mock=True)
+        tft = TftSpi(controller="st7735", mock=True)
+        for device in (lcd, tft):
+            with self.subTest(driver=type(device).__name__):
+                device.open()
+                device.send(DisplayCommand(lines=("SENSOR FAULT", "CHECK WIRING"), page=2))
+                status = device.status()
+                for field in self.REQUIRED:
+                    self.assertIn(field, status, f"{type(device).__name__}.status() 缺少 {field}")
+                # ⚠️ 比**内容**而不是原始字节：LCD 会把每行补空格到 16 字符（它按列写屏），
+                #    彩屏不补 —— 这是两块屏各自的排版语义，不是"内容不同"
+                #    （T9 验收时就是这么比对的：`[ln.strip() for ln in lines]`）。
+                self.assertEqual(
+                    tuple(str(ln).strip() for ln in status["lines"])[:2],
+                    ("SENSOR FAULT", "CHECK WIRING"),
+                    "status() 必须如实反映刚下发的两行",
+                )
+                self.assertEqual(status["page"], 2, "页码也要如实")
+                device.close()
+
+    def test_每个显示驱动都得守这条规矩(self) -> None:
+        """从注册表里**枚举**所有 DISPLAY 类驱动 ⇒ 将来新加屏也逃不掉。"""
+        for name, spec in MANIFEST.items():
+            if spec.kind is not DeviceKind.DISPLAY:
+                continue
+            with self.subTest(driver=name):
+                device = create_device(name, mock=True)
+                device.open()
+                device.send(DisplayCommand(lines=("A", "B")))
+                status = device.status()
+                for field in self.REQUIRED:
+                    self.assertIn(field, status, f"{name}.status() 缺少 {field}")
+                device.close()
+
+
 class TestControllers(unittest.TestCase):
     def test_三种控制器都在表里且分辨率合理(self) -> None:
         for name in ("st7735", "st7789", "ili9341"):

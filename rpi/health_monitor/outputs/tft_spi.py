@@ -830,6 +830,31 @@ class TftSpi(OutputDevice):
         self.current_lines = ("TFT OK", "RGB TEST")
         self.page = 0
 
+    def status(self) -> Dict[str, Any]:
+        """扩展基类状态：SPI 位置、控制器/分辨率、**当前屏幕内容**。
+
+        ⚠️ **与 `Lcd1602.status()` 保持对称**（2026-09-29，E57 收尾）：两块屏同属
+        ``DeviceKind.DISPLAY``，"屏幕上现在是什么"必须能从**同名字段**读到
+        （``lines`` / ``page``）—— 否则拿 ``status()`` 读彩屏只会得到空，
+        而读 LCD 却有内容（我在 T9 验收时就踩过这个坑：以为彩屏没画，其实是读错了接口）。
+        """
+        info = super().status()
+        info.update(
+            {
+                "spi_bus": self.spi_bus,
+                "spi_device": self.spi_device,
+                "controller": self.spec.name if self.spec else "未初始化",
+                "width": self.width,
+                "height": self.height,
+                "rotate": self.rotate,
+                "backend": self._backend,
+                "writes": self.writes,
+                "lines": list(self.current_lines),
+                "page": self.page,
+            }
+        )
+        return info
+
     def describe(self) -> Dict[str, Any]:
         from ..hal.pins import describe_pin
 
