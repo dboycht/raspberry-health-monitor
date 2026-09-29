@@ -153,6 +153,42 @@ class TestCollectorSnapshot(unittest.TestCase):
         snap = self.collector.snapshot()
         self.assertNotIn("vitals", snap.sensor_failures)
 
+    def test_没贴手指不算设备故障_E54(self) -> None:
+        """★★ E54：`awaiting_data`（器件正常、这次没测出东西）**不许**计成读取失败。
+
+        真机实测的后果：没人贴手指时服务每轮返回 ok=False（文案"未检测到手指"），
+        采集器把它当失败 ⇒ 3 轮后触发 `SENSOR_FAULT` **持续报警**
+        （黄灯闪 + 蜂鸣 + 两块屏刷报警），一个正常状态被报成"设备坏了"。
+        """
+        self.vitals.finger = False
+        for _ in range(5):
+            self.collector.collect_due()
+            self.clock.advance(1.0)
+        snap = self.collector.snapshot()
+        self.assertNotIn("vitals", snap.sensor_failures, "没贴手指不是故障，不该计失败")
+        self.assertGreaterEqual(self.collector.read_counts.get("vitals", 0), 5, "但仍在正常轮询")
+
+    def test_没贴手指的设备仍然算活着_不被判陈旧_E54(self) -> None:
+        """器件**应答了**（只是没有有效结论）⇒ 不该被判成"设备静默/陈旧"。
+
+        否则状态页/接口会长期显示 `stale=true`，把"没人正在测"误报成"设备掉线"。
+        """
+        self.vitals.finger = False
+        self.collector.collect_due()
+        self.clock.advance(60.0)
+        self.collector.collect_due()
+        snap = self.collector.snapshot()
+        self.assertFalse(snap.data_stale, "器件一直在应答，不该判陈旧")
+        self.assertIsNone(snap.health_summary()["heart_rate_bpm"], "但仍如实不给心率")
+
+    def test_真故障仍然要计失败_E54_反向(self) -> None:
+        """反向守一手：真正的 IO 故障**必须**照旧计数（别把这条修法用过头）。"""
+        self.vitals.fail_with = DeviceIOError("SDA 掉了")
+        for _ in range(3):
+            self.collector.collect_due()
+            self.clock.advance(1.0)
+        self.assertGreaterEqual(self.collector.snapshot().sensor_failures.get("vitals", 0), 3)
+
     def test_PIR运动静默秒数来自驱动(self) -> None:
         self.motion.silent_s = 900.0
         self.clock.advance(0.5)

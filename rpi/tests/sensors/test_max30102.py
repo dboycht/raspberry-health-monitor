@@ -365,6 +365,60 @@ class TestMax30102Driver(unittest.TestCase):
         self.assertIsNotNone(sample.error)
         dev.close()
 
+    def test_没贴手指的样本必须带awaiting_data标志_E54(self) -> None:
+        """★ E54：`ok=False` 有两种含义，必须能区分。
+
+        * "器件坏了"（I2C 异常/超时）⇒ 驱动**抛异常**，采集器计失败；
+        * "器件正常、只是这次没测出东西"（没贴手指 / 窗没攒够 / 质量不足）⇒ ``ok=False``
+          + **``awaiting_data=True``**，采集器**不许**计失败 —— 否则没人贴手指时
+          服务会持续误报 `SENSOR_FAULT`（真机实测：3 轮后黄灯闪 + 蜂鸣 + 两块屏刷报警）。
+        """
+        dev = Max30102(mock=True, mock_auto_wave=False)
+        dev.open()
+        try:
+            dev.inject([100.0] * 400, [100.0] * 400)      # 直流远低于阈值 ⇒ 没贴手指
+            sample = dev.read()
+        finally:
+            dev.close()
+        self.assertFalse(sample.ok)
+        self.assertFalse(sample.finger_detected)
+        self.assertTrue(sample.awaiting_data, "没贴手指是「器件正常」，不是设备故障")
+
+    def test_质量不足的样本也带awaiting_data标志_E54(self) -> None:
+        """质量不足同样是「没有有效结论」，不是故障。
+
+        ⚠️ 波形要**叠带内噪声**：质量分改成"频谱 SNR × 强度"之后，干净的合成波形能拿满分
+        （见 `test_质量阈值可调且低质量不给结论` 的说明），不加噪就测不出这条路径。
+        """
+        dev = Max30102(mock=True, mock_auto_wave=False, quality_min=0.99)
+        dev.open()
+        try:
+            rate = dev.analysis_rate
+            rng = random.Random(20260929)
+            ir, red = synth_ppg(bpm=60.0, sample_rate=rate)
+            ir = [v + rng.gauss(0.0, 1500.0) for v in ir]
+            red = [v + rng.gauss(0.0, 1500.0) for v in red]
+            dev.inject(ir, red)
+            sample = dev.read()
+        finally:
+            dev.close()
+        self.assertFalse(sample.ok)
+        self.assertTrue(sample.awaiting_data)
+
+    def test_正常读数的样本不带awaiting_data标志_E54_反向(self) -> None:
+        dev = Max30102(mock=True)
+        dev.open()
+        try:
+            sample = dev.read()
+            for _ in range(40):          # mock 每次推进 0.5 秒，攒够分析窗（5 秒起）
+                if sample.ok:
+                    break
+                sample = dev.read()
+        finally:
+            dev.close()
+        self.assertTrue(sample.ok, sample.error)
+        self.assertFalse(sample.awaiting_data, "正常读数不该被标成「等数据」")
+
     def test_inject可以喂真实波形段(self) -> None:
         """把 8 秒 60bpm 的合成波形注入 mock 驱动，经过完整驱动链路应算出 60bpm。
 

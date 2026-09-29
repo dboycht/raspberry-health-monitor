@@ -213,6 +213,57 @@ class TestMotionRules(unittest.TestCase):
         )
         self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, [e.code for e in engine.evaluate(snap)])
 
+    def test_从未检测到人不会一启动就报警_E55(self) -> None:
+        """★★ E55（2026-09-29 真机）：PIR 报 `inf`（从未检测到人）时，服务**刚起来就报**
+        CRITICAL「久无活动」—— 实测起服务 3 秒就开始黄灯闪 + 报警刷屏，是**误报**。
+
+        根因：`inf >= no_motion_timeout_s` 恒成立。正确语义 = **从"开始监护"的时刻起算**，
+        满阈值才报警（这段时间本来也可能真的没人动，但那是"还没到计时"而不是"已经超时"）。
+        """
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=1800))
+        first = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        )
+        codes = [e.code for e in engine.evaluate(first)]
+        self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, codes, "刚启动不该报久无活动")
+
+        # 监护跑了 10 分钟（还没到 30 分钟阈值）⇒ 仍然不报
+        mid = ReadingSnapshot(
+            ts=1000.0 + 600.0,
+            motion=MotionSample(ts=1000.0 + 600.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        )
+        self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, [e.code for e in engine.evaluate(mid)])
+
+        # 满阈值之后 ⇒ 必须报（否则真出事就不报警了）
+        late = ReadingSnapshot(
+            ts=1000.0 + 1801.0,
+            motion=MotionSample(ts=1000.0 + 1801.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        )
+        ev = [e for e in engine.evaluate(late) if e.code is AlarmCode.NO_MOTION_TOO_LONG]
+        self.assertEqual(len(ev), 1, "满阈值后必须报警")
+        self.assertIn("至今未检测到", ev[0].message)
+
+    def test_检测到人之后再静默满阈值仍然报警_E55反向(self) -> None:
+        """反向守一手：真的"先动过、然后长时间不动"必须照旧报警。"""
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=60, repeat_cooldown_s=0))
+        seen = ReadingSnapshot(
+            ts=1000.0,
+            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.DETECTED),
+            motion_silent_s=0.0,
+        )
+        engine.evaluate(seen)
+        quiet = ReadingSnapshot(
+            ts=1000.0 + 61.0,
+            motion=MotionSample(ts=1000.0 + 61.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=61.0,
+        )
+        codes = [e.code for e in engine.evaluate(quiet)]
+        self.assertIn(AlarmCode.NO_MOTION_TOO_LONG, codes)
+
     def test_从没检测到人时文案与数值都必须是合法JSON(self) -> None:
         """★ 真机 T4 验收踩到（ERROR.md **E47**）。
 
@@ -228,7 +279,15 @@ class TestMotionRules(unittest.TestCase):
             motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=math.inf,
         )
-        ev = next(e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
+        # ⚠️ E55 之后，"从未检测到人"从**开始监护**起算 ⇒ 先要跑满阈值才会报警。
+        #    所以这里先推时间到阈值之后，再检查文案与数值（E47 的保证不变）。
+        engine.evaluate(snap)                                   # t=1000：开始监护
+        later = ReadingSnapshot(
+            ts=1000.0 + 1801.0,
+            motion=MotionSample(ts=1000.0 + 1801.0, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        )
+        ev = next(e for e in engine.evaluate(later) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
         # ① 文案如实说"至今未检测到"，不许出现 "inf"
         self.assertIn("至今未检测到", ev.message)
         self.assertNotIn("inf", ev.message)

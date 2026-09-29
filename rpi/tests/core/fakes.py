@@ -74,6 +74,15 @@ class FakeVitalSensor(_FakeBase):
     def read(self) -> VitalSignsSample:
         self._require_open()
         self._maybe_fail()
+        if not self.finger:
+            # 没贴手指 = **器件正常、只是这次没有有效结论**（与真实驱动一致，见 ERROR.md E54）：
+            # 必须带 awaiting_data=True，否则采集器会把它记成"设备故障"、服务就持续误报。
+            return VitalSignsSample(
+                device=self.name, ok=False, awaiting_data=True,
+                error="未检测到手指（红外直流分量过低），请把指腹完全覆盖传感器窗口",
+                heart_rate_bpm=None, spo2_percent=None,
+                finger_detected=False, quality=0.0,
+            )
         return VitalSignsSample(
             device=self.name, heart_rate_bpm=self.hr, spo2_percent=self.spo2,
             finger_detected=self.finger, quality=1.0,

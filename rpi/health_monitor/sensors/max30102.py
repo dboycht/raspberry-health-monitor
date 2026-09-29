@@ -1250,7 +1250,14 @@ class Max30102(Device):
     # ------------------------------------------------------------------
 
     def _analyze_buffer(self) -> VitalSignsSample:
-        """调用纯算法 :func:`analyze_ppg` 并包装成样本。"""
+        """调用纯算法 :func:`analyze_ppg` 并包装成样本。
+
+        ⚠️ 这里所有 ``ok=False`` 的出口都带 ``awaiting_data=True``（`ERROR.md` **E54**）：
+        "没贴手指 / 采样窗没攒够 / 质量不足"都是**器件正常、只是这次没有有效结论**，
+        **不是设备故障** —— 采集器若把它记成读取失败，服务会在"没人正在测"时
+        持续误报 `SENSOR_FAULT`（真机实测踩到：3 轮后开始黄灯闪 + 蜂鸣 + 两块屏刷报警）。
+        真正的故障（I2C 异常/超时）由 :meth:`read` 里的异常路径表达，不走这里。
+        """
         analysis = analyze_ppg(
             self._ir_buf, self.analysis_rate, self._red_buf, self._params
         )
@@ -1261,7 +1268,7 @@ class Max30102(Device):
             if self.mock:
                 self._mock_index = 0
             return VitalSignsSample(
-                ts=now_ts(), device=self.name, ok=False,
+                ts=now_ts(), device=self.name, ok=False, awaiting_data=True,
                 error="未检测到手指（红外直流分量过低），请把指腹完全覆盖传感器窗口",
                 heart_rate_bpm=None, spo2_percent=None,
                 finger_detected=False, quality=0.0,
@@ -1276,6 +1283,7 @@ class Max30102(Device):
             ts=now_ts(),
             device=self.name,
             ok=enough,
+            awaiting_data=not enough,
             error=None if enough else _reason_to_error(analysis.reason),
             heart_rate_bpm=analysis.heart_rate_bpm,
             spo2_percent=analysis.spo2_percent,

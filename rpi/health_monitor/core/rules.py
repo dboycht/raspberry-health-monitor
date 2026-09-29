@@ -161,6 +161,9 @@ class RuleEngine:
         self._last_emit: Dict[AlarmCode, float] = {}  # 报警码 -> 上次发出时间
         self._night_wakes: List[float] = []          # 夜间起夜时间戳
         self._last_motion_seen: Optional[float] = None
+        #: 本次"开始监护"的时刻（第一次 evaluate 的时间）—— E55 用它给"从未检测到人"计时，
+        #: 否则 `motion_silent_s=inf` 会让服务一启动就报"久无活动"。
+        self._watching_since: Optional[float] = None
 
     # ------------------------------------------------------------------
     # 对外主入口
@@ -176,6 +179,8 @@ class RuleEngine:
         """
         events: List[AlarmEvent] = []
         triggered: Dict[AlarmCode, AlarmEvent] = {}
+        if self._watching_since is None:
+            self._watching_since = snap.ts      # 开始监护的时刻（E55：给"从未检测到人"计时）
 
         # ---- 1. 生理指标（只有真的读到值才判定） ----
         v = snap.vitals
@@ -242,13 +247,19 @@ class RuleEngine:
             silent = snap.motion_silent_s
             if silent is None and self._last_motion_seen is not None:
                 silent = snap.ts - self._last_motion_seen
+            # ⚠️ E55：`silent` 为 inf = **本次监护开始到现在一次都没检测到人**。
+            #    旧实现直接拿 inf 跟阈值比 ⇒ 恒成立 ⇒ **服务一启动就报 CRITICAL「久无活动」**
+            #    （真机实测：起来 3 秒就黄灯闪 + 报警刷屏，是误报）。
+            #    正确语义：**从"开始监护"的时刻起算**，满阈值才报警。
+            never_seen = silent is not None and math.isinf(silent)
+            if never_seen:
+                silent = max(0.0, snap.ts - self._watching_since)
             if silent is not None and silent >= self.th.no_motion_timeout_s:
                 # ⚠️ `silent` 为 inf = **从开机到现在一次都没检测到人**（不是"刚动过"）。
                 #    这种情况必须如实说"至今未检测到任何活动"：
                 #    ① 旧写法 `f"{silent / 60:.0f} 分钟"` 会印出"已有 inf 分钟未检测到活动"；
                 #    ② `value=round(inf, 1)` 会变成非法 JSON 的 `Infinity`，
                 #       实测被 OneNET 拒收（ERROR.md E47）。
-                never_seen = math.isinf(silent)
                 triggered[AlarmCode.NO_MOTION_TOO_LONG] = AlarmEvent(
                     ts=snap.ts, code=AlarmCode.NO_MOTION_TOO_LONG, severity=Severity.CRITICAL,
                     message=(

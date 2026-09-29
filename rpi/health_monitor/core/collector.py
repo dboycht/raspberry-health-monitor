@@ -99,6 +99,7 @@ class Collector:
         self.stale_factor = float(stale_factor)
         self.entries: Dict[str, _Entry] = {}
         self._faulted: set = set()          # 已经报过"故障"的设备名（防止重复记录）
+        self._awaiting: set = set()         # 已经报过"暂无有效读数（非故障）"的设备名（同上）
         for name, device in devices.items():
             cfg = config.device(name)
             if cfg is None:
@@ -163,7 +164,10 @@ class Collector:
         # 缓存**不算读取失败**（那是器件的正常行为），但也不刷新 ``last_ok_ts``，
         # 因此"连续多轮只拿到缓存"最终仍会被 stale 保护判成陈旧。
         cached = _is_cached_sample(sample)
-        if not sample.ok and not cached:
+        # "器件正常、只是这次没有有效结论"（如 MAX30102 没贴手指）**不是故障**：
+        # 不能计失败，否则服务会在"没人正在测"时持续误报 SENSOR_FAULT（见 ERROR.md E54）。
+        awaiting = bool(getattr(sample, "awaiting_data", False))
+        if not sample.ok and not cached and not awaiting:
             return self._mark_failure(entry, now, sample.error or "样本标记为无效", None)
 
         entry.failures = 0
@@ -172,8 +176,19 @@ class Collector:
             self._faulted.discard(entry.name)
             _LOG.info("设备 %s 已恢复正常读取", entry.name)
         entry.last_sample = sample
-        if not cached:
+        if awaiting:
+            # 器件**应答了**（只是没测出东西）⇒ 刷新活性时间戳，避免被误判成"设备静默/陈旧"。
+            # 只记一次日志：否则没有手指时会每秒刷一行。
             entry.last_ok_ts = now
+            if entry.name not in self._awaiting:
+                self._awaiting.add(entry.name)
+                _LOG.info(
+                    "设备 %s 本次没有有效读数（器件正常，不是故障）：%s",
+                    entry.name, sample.error or "",
+                )
+        elif not cached:
+            entry.last_ok_ts = now
+            self._awaiting.discard(entry.name)
         else:
             _LOG.debug("设备 %s 返回缓存值（器件正常行为，非故障）：%s", entry.name, sample.error or "")
         self._remember_button_event(entry, sample)
