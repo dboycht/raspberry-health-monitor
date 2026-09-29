@@ -91,7 +91,7 @@
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
       "status": "verified",
       "verified_on": "2026-09-29",
-      "commit": "PENDING",
+      "commit": "7b1958f",
       "note": "验收方式：`scripts/tft_check.py --controller st7735_1.8_128x160`（横屏 --rotate 90 与**竖屏 --rotate 0（与配置一致）**各跑一次，脚本默认先鸣 1 声 + 在 LCD 写「请看屏」）= 三色条纯正、文字清晰、方向不镜像不倒置，**一次命中控制器不用试选**；端到端用 `stage_run.py --only ... --set thresholds.sensor_fault_after=2` 触发 sensor_fault ⇒ **LCD 与 TFT 同显一条报警文案**（客观比对 read()：LCD 补空格到 16 字符、TFT 内容一致），用户确认两行完整。⚠️ 本级抓到 E53：TFT 字符上限按 9px 算却按 scale=2（16px/字符）绘制 ⇒ 12 字符的 SENSOR FAULT 被画到屏幕外（用户一眼看出「字被截断」）；另有一条 17 字符的报警文案连 LCD 都放不下，已缩短为 WAKE TOO OFTEN。⚠️ 尚未接线的部分：CommandType.DISPLAY_PAGE 已定义但无处发送 ⇒ 4 页轮播只是驱动能力，服务只推第 0 页"
     },
     "T10": {
