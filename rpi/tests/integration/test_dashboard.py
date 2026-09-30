@@ -459,15 +459,19 @@ class TestLastKnownBeyondWindow(_Base):
     def test_脏时间戳不许把整页打崩(self) -> None:
         """★ 库里只要有一行离谱时间戳，也不该让数据面板 500。
 
-        `time.localtime()` 对负数会抛 `OSError`（Windows 实测 `-800` 就抛），
-        而 `_time_text` 是**逐行渲染历史**时调的 —— 一个格式化函数不该成为
-        "历史库出问题不该让整页打不开"这条立场的例外。
+        ⚠️ 这条**两个平台必须给出同一结果**（2026-10-01，ERROR.md **E72**）：
+        `time.localtime(-800)` 在 Windows 上抛 `OSError` 而在 Linux/glibc 上**正常返回
+        1969-12-31 23:46:40** ⇒ 如果实现只靠 try/except 兜底，这条测试就会
+        "**CI（Linux）红、本机（Windows）绿**"。所以实现**自己判范围**（1970~2100），
+        本条断言正是在钉这个"平台无关"的判据。
         """
         from health_monitor.net.webui import _time_text
 
         self.assertEqual(_time_text(-800.0), "--:--:--")
         self.assertEqual(_time_text(1e30), "--:--:--")
+        self.assertEqual(_time_text(4102444800.0), "--:--:--", "2100-01-01 本身已在范围外")
         self.assertRegex(_time_text(1_700_000_000.0), r"^\d\d:\d\d:\d\d$")
+        self.assertRegex(_time_text(0.0), r"^\d\d:\d\d:\d\d$", "1970-01-01 是范围内")
 
     def test_读数类查询也不限窗口(self) -> None:
         self.rt.store.save_sample(AmbientSample(

@@ -1238,12 +1238,25 @@ def _time_text(ts: float) -> str:
     `OSError`（Windows 上实测 `-800` 就抛）⇒ 库里只要有一行脏时间戳，
     **整张数据面板就 500**。而这一段代码的既定立场是"历史库出问题不该让整页打不开"
     （见上面读历史的那圈 try/except）—— 一个格式化函数不该成为那个例外。
+
+    ⚠️⚠️ **而且范围要自己判，不能靠"平台会不会抛异常"**（2026-10-01，ERROR.md **E72**）：
+    同一个 `time.localtime(-800)`，**Windows 抛 `OSError`、Linux/glibc 正常返回
+    `1969-12-31 23:46:40`** ⇒ 只靠 try/except 的话，同一份代码在两个平台上**显示不同结果**，
+    测试也会"CI（Linux）红、本机（Windows）绿"。
+    所以这里先自己把范围卡在 **1970-01-01 ~ 2100-01-01**（对本项目足够宽），
+    超出就显示 `--:--:--` —— **两个平台结果一致**。
     """
     import time as _time
 
     try:
-        return _time.strftime("%H:%M:%S", _time.localtime(float(ts)))
-    except (OSError, OverflowError, ValueError):
+        value = float(ts)
+    except (TypeError, ValueError):
+        return "--:--:--"
+    if not (0.0 <= value < 4102444800.0):        # 1970-01-01 ~ 2100-01-01
+        return "--:--:--"
+    try:
+        return _time.strftime("%H:%M:%S", _time.localtime(value))
+    except (OSError, OverflowError, ValueError, TypeError):
         return "--:--:--"
 
 
