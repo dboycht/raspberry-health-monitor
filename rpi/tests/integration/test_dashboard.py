@@ -478,5 +478,25 @@ class TestLastKnownBeyondWindow(_Base):
         self.assertIsNone(self.rt.store.last_reading("从来没有过的指标"))
 
 
+    def test_别名路由下导航仍然高亮正确那一页(self) -> None:
+        """★ 2026-10-01：数据页有 `/`、`/index.html`、`/status` 三个 URL，功能页还有 `/control.html`
+        ⇒ 导航高亮必须**按页面**算，否则从别名进来时"数据"标签不亮，用户会以为导航坏了。"""
+        from health_monitor.net.webui import _NAV_ALIASES, _nav
+
+        for alias, canonical in _NAV_ALIASES.items():
+            with self.subTest(alias=alias):
+                html = _nav(alias)
+                self.assertIn(f'class="tab on" href="{canonical}"', html,
+                              f"{alias} 应当高亮 {canonical}")
+                self.assertEqual(html.count('class="tab on"'), 1, "只许有一个高亮")
+
+    def test_导航别名表必须与路由别名一致(self) -> None:
+        """钉住这张表不会与 `net/web.py` 的真实路由悄悄脱节。"""
+        from health_monitor.net.webui import _NAV_ALIASES
+
+        expected = {"/index.html": "/", "/status": "/", "/control.html": "/control"}
+        self.assertEqual(dict(_NAV_ALIASES), expected)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

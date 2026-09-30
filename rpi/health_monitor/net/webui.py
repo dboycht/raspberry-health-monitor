@@ -193,6 +193,17 @@ _NAV_ITEMS: Tuple[Tuple[str, str], ...] = (
     ("配置", "/panel"),
 )
 
+#: 别名 URL → 规范 URL（2026-10-01 修）。
+#: ⚠️ 一个页面可能有多个 URL（数据页就有 `/`、`/index.html`、`/status` 三个；
+#: 功能页还有 `/control.html`）。导航高亮必须**按页面**算，而不是按 URL 字符串算 ——
+#: 否则从别名进来时"数据"标签不亮，用户会以为**导航坏了**（比多写一行映射糟得多）。
+#: 这张表必须与 `net/web.py` 的路由别名保持一致（有测试钉住）。
+_NAV_ALIASES: Dict[str, str] = {
+    "/index.html": "/",
+    "/status": "/",
+    "/control.html": "/control",
+}
+
 
 def _nav(current: str) -> str:
     """统一的三标签导航（三页共用；当前页高亮）。
@@ -200,8 +211,9 @@ def _nav(current: str) -> str:
     为什么放 header 里而不是页面底部：手机上一屏就一屏，底部链接得先滚到底才看得到 ——
     那等于没有。放在抬头，任何一页都能一步跳到另外两页。
     """
+    here = _NAV_ALIASES.get(current, current)          # 别名归一化，见上
     tabs = "".join(
-        f'<a class="tab{" on" if path == current else ""}" href="{path}">{_esc(label)}</a>'
+        f'<a class="tab{" on" if path == here else ""}" href="{path}">{_esc(label)}</a>'
         for label, path in _NAV_ITEMS
     )
     return f'<nav class="tabs">{tabs}</nav>'
