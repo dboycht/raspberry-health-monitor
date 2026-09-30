@@ -91,6 +91,11 @@ ALLOW_MISSING = {
     #    教训：开发副本里"多出来的东西"会让**本机通过、推送后失败** —— 见 ERROR.md E70。
     "_scratch/preview_tft_frames.py",     # TFT 帧预览器（docs/14 引用；不随仓库发布）
     "preview_tft_frames.py",
+    # ⚠️ **已删除**的驱动/测试文件名：文档必须能讨论"它们被删掉了、为什么删"
+    #    （docs/07 的 T3 行与 ERROR.md 的 E73 都要点名这两个文件），
+    #    否则"删除"这件事在文档里反而没法留痕（与上面 probe_* 同一个理由）。
+    "mcp3002.py",                         # 2026-10-01 废止
+    "tmp36.py",                           # 同上
     # ⚠️ 本机覆盖配置：**按设计不入库**（含 OneNET 密钥等凭据，.gitignore 已忽略），
     #    所以仓库里永远找不到它 —— 文档里必须能讨论它，检查器不该报悬空。
     "config/devices.local.json",
