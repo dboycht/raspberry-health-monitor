@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 _RPI_DIR = Path(__file__).resolve().parents[2]
@@ -239,6 +240,71 @@ class TestPageRotation(unittest.TestCase):
             self._advance_and_tick(DISPLAY_PAGE_INTERVAL_S + 1.0)
         self.assertEqual(frozen, self._tft_lines(), "报警期间不许被信息页冲掉")
         self.assertIn("SOS", " ".join(self._lcd_lines() + self._tft_lines()), "报警文案要显示出来")
+
+
+class TestFrameReachesTft(unittest.TestCase):
+    """★ 端到端：轮播时发给彩屏的命令**必须带着富帧**（2026-10-01）。
+
+    为什么值得单独钉：`DisplayCommand.frame` 是**可选**字段 ⇒ 只要有人漏传，
+    彩屏就**悄悄退回**"两行字"的老样子，而**单测全绿、日志也没有任何异常**
+    （用户看到的现象就是"TFT 上平时显示的内容还是好少"）。这种"静默降级"
+    只能靠"断言它**真的**带着帧"来防。
+    """
+
+    def setUp(self) -> None:
+        self.clock = _Clock()
+        self.rt = make_runtime(self.clock)
+        self.rt.open()
+        self.rt.set_ambient(temperature_c=23.4, humidity_percent=57.0)
+        self.rt.set_motion(MotionState.DETECTED, silent_s=0.0)
+        self.rt.tick()
+
+    def tearDown(self) -> None:
+        self.rt.close()
+
+    def _captured_commands(self, seconds: float):
+        tft = self.rt.devices["tft"]
+        with mock.patch.object(tft, "send", wraps=tft.send) as spy:
+            self.clock.advance(seconds)
+            self.rt.tick()
+        return [call.args[0] for call in spy.call_args_list]
+
+    def test_轮播时发给彩屏的命令带富帧(self) -> None:
+        # ⚠️ 必须推进**超过当前页的停留时间**才会真的翻页。
+        #    环境页（页 0）的停留是 `DISPLAY_PAGE_INTERVAL_S × 2 = 12 秒`
+        #    （`PAGE_DWELL_UNITS` 刻意让环境页停得久），只推进一个周期是不够的 ——
+        #    第一版就是这么写的，结果一条命令都没截到（**测试自己先踩了这个坑**）。
+        commands = self._captured_commands(DISPLAY_PAGE_INTERVAL_S * 2 + 1.0)
+        frames = [getattr(c, "frame", None) for c in commands]
+        frames = [f for f in frames if f]
+        self.assertTrue(frames, "轮播必须送富帧，否则屏上还是老的两行字（静默降级）")
+        frame = frames[-1]
+        for key in ("label", "value", "rows", "clock", "trend", "footer", "stale", "lines"):
+            self.assertIn(key, frame, f"富帧缺少 {key}")
+
+    def test_富帧与两行摘要同时送(self) -> None:
+        """E57：`lines` 是"这块屏现在显示什么"的**两行摘要**，加了富帧也不许丢。"""
+        commands = self._captured_commands(DISPLAY_PAGE_INTERVAL_S * 2 + 1.0)
+        self.assertTrue(commands, "这一轮应当有翻页命令")
+        for command in commands:
+            self.assertEqual(len(command.lines), 2)
+            self.assertTrue(all(isinstance(x, str) for x in command.lines))
+            self.assertEqual(tuple(command.frame["lines"]), tuple(command.lines))
+
+    def test_环境页的富帧带着大字室温与趋势(self) -> None:
+        # 先把页翻到环境页（页 0）再断言内容 —— 轮播是递增的，起点不确定
+        for _ in range(4):
+            commands = self._captured_commands(DISPLAY_PAGE_INTERVAL_S * 2 + 1.0)
+            frame = next((getattr(c, "frame", None) for c in commands
+                          if getattr(c, "frame", None)), None)
+            if frame and frame.get("label") == "ROOM":
+                # 不断言精确值：回放器每次 tick 会让环境值小幅漂移（实测 23.3~23.4）
+                self.assertEqual(frame["unit"], "C")
+                self.assertNotEqual(frame["value"], "--", "有环境读数时不该画横线")
+                float(frame["value"])          # 必须是能解析的数字，而不是糊弄的占位
+                self.assertIn("trend", frame)
+                return
+        self.fail("翻了几轮都没看到环境页的富帧")
 
 
 class TestDebugPanel(unittest.TestCase):

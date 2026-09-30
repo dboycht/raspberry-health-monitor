@@ -26,7 +26,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .core.collector import Collector
 from .core.config import AppConfig, DeviceConfig, default_config_path, load_config
@@ -57,6 +57,10 @@ DISPLAY_PAGE_HOLD_AFTER_ALARM_S = 30.0
 #: 其余页各 1 倍。**页数 = len(PAGE_DWELL_UNITS)**，改这里要同步改
 #: :data:`health_monitor.outputs.tft_spi.PAGE_ASCII`（两者长度必须一致）。
 PAGE_DWELL_UNITS: Tuple[int, ...] = (2, 1, 1)
+
+#: 彩屏迷你趋势线保留多少个采样点（2026-10-01）。
+#: 128 px 宽的屏上一条趋势线几十个点就够看出走向；取 32 也避免每帧的列表操作变重。
+TFT_TREND_POINTS = 32
 
 #: LCD **调试面板**的刷新周期（秒）。0 或负数 = 不刷（LCD 就只当报警屏用）。
 DEBUG_PANEL_INTERVAL_S = 2.0
@@ -184,6 +188,122 @@ def display_page_lines(
         return ("FAULT %d" % len(failures), "CHECK DEVICE")
     tail = (last_alarm or "NONE")[:10].upper()
     return (("ALARMS %d" % int(alarm_count))[:16], ("LAST " + tail)[:16])
+
+
+def display_page_frame(
+    page: int,
+    snap: Any,
+    *,
+    now: float,
+    alarm_count: int = 0,
+    last_alarm: str = "",
+    temp_trend: Sequence[Optional[float]] = (),
+    spo2_last: Optional[Mapping[str, Any]] = None,
+    spo2_stale_after_s: float = 600.0,
+) -> Dict[str, Any]:
+    """彩屏的"**富帧**"（**纯函数，可单测**）：给 :meth:`TftSpi._render_frame` 用的结构化内容。
+
+    为什么要它（用户 2026-10-01 原话：「那个 TFT 屏幕平时就不显示东西，你应该多多使用他」，
+    澄清后是「**上面平时显示的内容好少**」）：
+
+    老版只把 :func:`display_page_lines` 的**两行字**送给彩屏 ⇒ 128×160 的屏上，
+    两行字只占顶部约 40 px，**中间约 100 px 全是黑的** —— 彩色屏的大字、颜色、图形
+    一点没用上。这个函数把"该显示什么"补全，真正的绘制在驱动里。
+
+    ⚠️ 它与 :func:`display_page_lines` **并存**，不是替代：
+
+    * `lines` 仍是"这块屏现在显示什么"的**两行文字摘要**（LCD 用同一份口径，
+      `status()/read()` 也要靠它 —— E57 的两块屏对称性）；
+    * `frame` 只给**认得它的驱动**（目前是彩屏）用，其它驱动安全忽略。
+
+    帧里的每个字段都是**已经格式化好的字符串/数值**（驱动不做业务判断），
+    且**全部可选**（驱动缺了就跳过那一块）。
+    """
+    lines = display_page_lines(page, snap, alarm_count=alarm_count, last_alarm=last_alarm)
+    ambient = getattr(snap, "ambient", None)
+    motion = getattr(snap, "motion", None)
+    failures = getattr(snap, "sensor_failures", None) or {}
+    try:
+        clock_text = time.strftime("%H:%M", time.localtime(float(now)))
+    except (OSError, OverflowError, ValueError):     # 夸张/脏时间戳不许把渲染打崩
+        clock_text = ""
+
+    frame: Dict[str, Any] = {
+        "label": "",
+        "value": "--",
+        "unit": "",
+        "rows": [],
+        "clock": clock_text,
+        "trend": [],
+        "footer": "",
+        "stale": False,
+        "lines": lines,
+    }
+
+    if int(page) % len(PAGE_DWELL_UNITS) == 0:       # 环境页（主页面）
+        ok = ambient is not None and bool(getattr(ambient, "ok", False))
+        if ok and getattr(ambient, "temperature_c", None) is not None:
+            frame["label"] = "ROOM"
+            frame["value"] = "%.1f" % float(ambient.temperature_c)
+            frame["unit"] = "C"
+        else:
+            frame["label"] = "ROOM"
+            frame["value"] = "--"
+            frame["stale"] = True                    # 读不到 ⇒ 明确标出来，而不是画个 0
+        hum = "HUM --"
+        if ok and getattr(ambient, "humidity_percent", None) is not None:
+            hum = "HUM %3.0f%%" % float(ambient.humidity_percent)
+        frame["rows"] = [hum, "MOTION " + _pir_tag(motion).replace("PIR ", "")]
+        # ⚠️ 趋势线只画**真实读数**：缺口用 None 传下去，驱动会**断线**而不是跨过去连
+        frame["trend"] = [v for v in temp_trend][-32:]
+        age = getattr(snap, "data_age_s", None)
+        frame["footer"] = ("ALARMS %d" % int(alarm_count) if age is None
+                           else "ALARMS %d  %ds" % (int(alarm_count), int(age)))
+        return frame
+
+    if int(page) % len(PAGE_DWELL_UNITS) == 1:       # 心率血氧（**按需测量**）
+        frame["label"] = "SPO2"
+        last_ok = bool(spo2_last) and bool(spo2_last.get("ok"))
+        value = (spo2_last or {}).get("spo2_percent")
+        if last_ok and value is not None:
+            frame["value"] = "%.0f" % float(value)
+            frame["unit"] = "%"
+        else:
+            frame["value"] = "--"
+            frame["stale"] = True
+        ts = (spo2_last or {}).get("ts")
+        if ts is not None:
+            try:
+                when = time.strftime("%H:%M", time.localtime(float(ts)))
+            except (OSError, OverflowError, ValueError):
+                when = ""
+            mins = max(0.0, (float(now) - float(ts)) / 60.0)
+            frame["rows"] = ["HR %3.0f BPM" % float((spo2_last or {}).get("heart_rate_bpm") or 0)
+                             if last_ok and (spo2_last or {}).get("heart_rate_bpm") is not None
+                             else "HR --",
+                             ("%s MEASURED" % when) if when else "MEASURED"]
+            frame["footer"] = ("LAST %.0fm AGO" % mins) if mins >= 1 else "JUST MEASURED"
+            # 十分钟前的测量算"过期"：屏上也就该把它当旧值看（与网页同一条约定）
+            if mins * 60.0 > float(spo2_stale_after_s):
+                frame["stale"] = True
+        else:
+            frame["rows"] = ["NO MEASURE YET", "PRESS BUTTON"]
+            frame["footer"] = "BY DEMAND ONLY"
+        return frame
+
+    # 状态 / 报警记录
+    frame["label"] = "STATUS"
+    frame["value"] = str(int(alarm_count))
+    # ⚠️ 状态页**刻意不画时钟**：这一页要说清"哪个器件坏了"，第一行得给设备名让位。
+    #    画上时钟后 `FAULT ambient` 会被截成 `FAULT ambi`（2026-10-01 预览图发现的），
+    #    而这一页的时钟本来就是多余的（故障名比"几点"重要）。
+    frame["clock"] = ""
+    fault_names = sorted(failures)[:2]
+    frame["rows"] = (["FAULT " + n for n in fault_names] if fault_names
+                     else ["ALL OK", ("LAST " + (last_alarm or "NONE")).upper()[:15]])
+    frame["footer"] = "CHECK DEVICE" if fault_names else "ALL CLEAR"
+    frame["stale"] = bool(fault_names)
+    return frame
 
 
 def _has_usable_vitals(sample: Any) -> bool:
@@ -336,6 +456,10 @@ class Runtime:
         self._spo2_declined_total = 0
         #: 最近一次测量的结果（成功/失败**都记**，给面板显示"上次结果"）
         self._spo2_last_result: Optional[Dict[str, Any]] = None
+        #: 彩屏迷你趋势用的最近若干次室温（``None`` = 那一次没读到 ⇒ 屏上**断线**）。
+        #: 刻意用**内存环形缓冲**而不是查历史库：每 6 秒的翻页不该去碰 SQLite，
+        #: 而且历史库可能没启用 —— 屏上的趋势不该依赖它。
+        self._temp_trend: List[Optional[float]] = []
         #: 测量窗口内**所有**有效读数（结尾取中位数报结果，见 :func:`_median`）
         self._spo2_samples: List[Any] = []
         #: 上次喂提示的时刻（提示要周期性重发）
@@ -634,6 +758,16 @@ class Runtime:
         self.collector.collect_due()
         snap = self.collector.snapshot()
 
+        # 彩屏迷你趋势：每帧记一个室温（读不到就记 None ⇒ 屏上断线，不跨缺口连线）
+        ambient_now = getattr(snap, "ambient", None)
+        if ambient_now is not None and getattr(ambient_now, "ok", False) \
+                and getattr(ambient_now, "temperature_c", None) is not None:
+            self._temp_trend.append(float(ambient_now.temperature_c))
+        else:
+            self._temp_trend.append(None)
+        if len(self._temp_trend) > TFT_TREND_POINTS:
+            del self._temp_trend[:-TFT_TREND_POINTS]
+
         # ---- 实体按键：先处理（"按下去"应当立刻生效，而不是等下一帧判定）----
         # ⚠️ 2026-09-26 之前这条链是断的：驱动能报 CLICK / LONG_PRESS，但业务层没人消费
         #    ⇒ 真机上按实体键毫无反应（`docs/14` 的 T3）。这里把它接上，
@@ -784,7 +918,13 @@ class Runtime:
         self._page = (int(self._page) + 1) % total
         last = self._events[-1].code.value if self._events else ""
         lines = display_page_lines(self._page, snap, alarm_count=len(self._events), last_alarm=last)
-        self.dispatcher.show_page(lines, self._page, now)
+        # 富帧给彩屏画大字/时钟/迷你趋势（LCD 与老驱动仍只用上面的两行 lines）
+        frame = display_page_frame(
+            self._page, snap, now=now,
+            alarm_count=len(self._events), last_alarm=last,
+            temp_trend=self._temp_trend, spo2_last=self._spo2_last_result,
+        )
+        self.dispatcher.show_page(lines, self._page, now, frame=frame)
 
     def _refresh_debug_panel(self, now: float, snap: Any) -> None:
         """LCD 调试面板刷新（2026-09-30：**LCD 专职当开发/调试面板**）。
@@ -1086,12 +1226,20 @@ class Runtime:
         else:
             index = 0 if page == "env" else 2      # 页 2 = 状态/报警记录页
             last = self._events[-1].code.value if self._events else ""
+            alarm_count = len(self.engine.active_alarms())
             lines = display_page_lines(
                 index, snap,
-                alarm_count=len(self.engine.active_alarms()),
+                alarm_count=alarm_count,
                 last_alarm=last,
             )
-            self.dispatcher.show_page(lines, index, now)
+            # ⚠️ 手动屏显**也要送富帧**：否则"手动切到彩屏"看起来比自动轮播还简陋
+            #    （大字/时钟/迷你趋势全没有），用户会以为这个按钮坏了。
+            frame = display_page_frame(
+                index, snap, now=now,
+                alarm_count=alarm_count, last_alarm=last,
+                temp_trend=self._temp_trend, spo2_last=self._spo2_last_result,
+            )
+            self.dispatcher.show_page(lines, index, now, frame=frame)
             self._page = index                     # 轮播从这里接着走，而不是跳回旧页
             self._last_page_ts = now
 

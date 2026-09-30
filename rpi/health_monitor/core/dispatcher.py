@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from ..hal.device import OutputDevice
 from ..hal.exceptions import AlarmDispatchError
@@ -323,20 +323,26 @@ class AlarmDispatcher:
         self._last_spoken[text] = now
         return True
 
-    def show_page(self, lines: Any, page: int = 0, now: Optional[float] = None) -> None:
+    def show_page(self, lines: Any, page: int = 0, now: Optional[float] = None,
+                  frame: Optional[Mapping[str, Any]] = None) -> None:
         """把"信息页"**只发给彩屏（TFT）**：不动 LCD、不进报警流水（2026-09-29，E57）。
 
         为什么必须"只给 TFT"：LCD 与彩屏同属 ``DeviceKind.DISPLAY``，而 **LCD 是报警显示**
         （`docs/07` H11、`docs/14` T1）—— 闲时轮播的信息页若广播出去，会把 LCD 上的报警文案
         冲掉。这里复用 `_send_kind` 已有的 ``only_driver`` 过滤（彩屏驱动名 = ``tft_spi``），
         **不必改协议、也不影响报警链路**（报警仍走 :meth:`dispatch` → 广播给所有显示器件）。
+
+        ``frame``（2026-10-01 加）：可选的**富帧**，给彩屏画大字/时钟/迷你趋势用；
+        ``lines`` 仍照发（老驱动与 `status()` 的"两行摘要"口径不变）。
         """
-        self._send_kind(
-            DeviceKind.DISPLAY,
-            DisplayCommand(lines=tuple(str(x) for x in (lines or ("", "")))[:2],
-                           page=int(page), ts=now or now_ts()),
-            only_driver="tft_spi",
-        )
+        command: Dict[str, Any] = {
+            "lines": tuple(str(x) for x in (lines or ("", "")))[:2],
+            "page": int(page),
+            "ts": now or now_ts(),
+        }
+        if frame:
+            command["frame"] = dict(frame)
+        self._send_kind(DeviceKind.DISPLAY, DisplayCommand(**command), only_driver="tft_spi")
 
     def show_debug(self, lines: Any, now: Optional[float] = None,
                    page: int = LCD_DEBUG_PAGE) -> None:
