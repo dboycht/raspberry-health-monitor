@@ -51,6 +51,26 @@ DISPLAY_PAGE_INTERVAL_S = 6.0
 #: 这个"保持时间"管的是**一次性事件**（如用户长按 SOS —— 它不进规则引擎的 active 表）。
 DISPLAY_PAGE_HOLD_AFTER_ALARM_S = 30.0
 
+#: 各信息页停留多少个"基本周期"（2026-09-30 用户要求"TFT 主要显示环境条件"）。
+#: 页 0 = **环境页**，停 2 倍时间 ⇒ 主人大部分时候看到的是室温/湿度/有没有人；
+#: 其余页各 1 倍。**页数 = len(PAGE_DWELL_UNITS)**，改这里要同步改
+#: :data:`health_monitor.outputs.tft_spi.PAGE_ASCII`（两者长度必须一致）。
+PAGE_DWELL_UNITS: Tuple[int, ...] = (2, 1, 1)
+
+#: LCD **调试面板**的刷新周期（秒）。0 或负数 = 不刷（LCD 就只当报警屏用）。
+DEBUG_PANEL_INTERVAL_S = 2.0
+
+def _pir_tag(motion: Any) -> str:
+    """人体活动标记：``PIR Y``（检测到人）/ ``PIR N``（没人）/ ``PIR -``（没数据）。
+
+    放在**环境页**上，是因为"家里有没有人"属于环境状态，而且它比心率血氧"长驻"
+    （心率血氧要人主动伸手去测，没人测的时候屏上是空窗的）。
+    """
+    state = getattr(getattr(motion, "state", None), "value", None)
+    if state is None:
+        return "PIR -"
+    return "PIR Y" if state == "detected" else "PIR N"
+
 
 def display_page_lines(
     page: int,
@@ -66,17 +86,26 @@ def display_page_lines(
     * **每行 ≤16 字符**：这是 LCD 与彩屏（1 倍字号）**共同的**字符上限 —— 超了就会被截断
       （E53 的另一半：`WAKE UP TOO OFTEN` 17 字符连 LCD 都放不下）。
 
-    页序与 :data:`health_monitor.outputs.tft_spi.PAGE_NAMES` 一致：
-    0 监护总览 / 1 心率血氧 / 2 体温环境 / 3 报警记录。
+    页序（**2026-09-30 调整**：用户要求"TFT 主要显示环境条件"）：
+
+    0 **环境**（室温/湿度/有没有人，**主页面**，停留时间是其他页的 2 倍）/
+    1 心率血氧 / 2 状态与报警记录。
+
+    页数必须与 :data:`PAGE_DWELL_UNITS` 一致（轮播按它取模）。
     """
     vitals = getattr(snap, "vitals", None)
     ambient = getattr(snap, "ambient", None)
+    motion = getattr(snap, "motion", None)
     failures = getattr(snap, "sensor_failures", None) or {}
-    page = int(page) % 4
+    page = int(page) % len(PAGE_DWELL_UNITS)
 
-    if page == 0:      # 监护总览
-        state = "ALARM ACTIVE" if alarm_count else "STATUS NORMAL"
-        return ("HEALTH MONITOR", state[:16])
+    if page == 0:      # 环境页（主页面）
+        if ambient is not None and getattr(ambient, "ok", False):
+            line1 = "ROOM %4.1f C" % float(ambient.temperature_c)
+            head = "HUM %3.0f%%" % float(ambient.humidity_percent)
+        else:
+            line1, head = "ROOM --", "HUM  --"
+        return (line1, (head + " " + _pir_tag(motion))[:16])
     if page == 1:      # 心率血氧
         if vitals is not None and getattr(vitals, "ok", False):
             return (
@@ -86,19 +115,40 @@ def display_page_lines(
         if vitals is not None and getattr(vitals, "finger_detected", False):
             return ("VITALS MEASURING", "PLEASE WAIT")
         return ("NO FINGER", "PLACE ON SENSOR")
-    if page == 2:      # 体温环境
-        if ambient is not None and getattr(ambient, "ok", False):
-            return (
-                "ROOM %4.1f C" % float(ambient.temperature_c),
-                "HUM  %3.0f %%" % float(ambient.humidity_percent),
-            )
-        return ("ROOM --", "HUM  --")
-    # 报警记录
-    tail = (last_alarm or "NONE")[:10].upper()
-    head = "ALARMS %d" % int(alarm_count)
+    # 状态 / 报警记录
     if failures:
-        head = "FAULT %d" % len(failures)
-    return (head[:16], ("LAST " + tail)[:16])
+        return ("FAULT %d" % len(failures), "CHECK DEVICE")
+    tail = (last_alarm or "NONE")[:10].upper()
+    return (("ALARMS %d" % int(alarm_count))[:16], ("LAST " + tail)[:16])
+
+
+def debug_lines(
+    snap: Any,
+    ticks: int = 0,
+    failures: int = 0,
+    alarm_count: int = 0,
+) -> Tuple[str, str]:
+    """LCD **调试面板**的两行文案（**纯函数，可单测**；每行 ≤16 字符、纯 ASCII）。
+
+    为什么有它（2026-09-30 用户定调）：**TFT 彩屏是给主人看的信息面板，LCD 是开发/调试面板**。
+    所以这里放"开发时要盯的量"，不是给人看的友好文案：
+
+    * 第 1 行 ``T=23.4 H=57%`` —— 环境读数（判断 DHT11 活没活、值合不合理）；
+    * 第 2 行 ``N=1234 F=0 A=0`` —— **帧数 / 故障器件数 / 活动报警数**
+      （帧数在涨 = 主循环活着；``F>0`` = 有器件读不到；``A>0`` = 正在报警）。
+
+    没有读数时用 ``--`` 而**不是 0**（E58 的同一课：**"没有读数" 与 "读数是 0" 必须能分开**）。
+    """
+    ambient = getattr(snap, "ambient", None)
+    if ambient is not None and getattr(ambient, "ok", False):
+        line1 = "T=%.1f H=%.0f%%" % (
+            float(ambient.temperature_c),
+            float(ambient.humidity_percent),
+        )
+    else:
+        line1 = "T=-- H=--"
+    line2 = "N=%d F=%d A=%d" % (int(ticks), int(failures), int(alarm_count))
+    return (line1[:16], line2[:16])
 
 
 class Runtime:
@@ -138,8 +188,12 @@ class Runtime:
         self.started_at = clock()
         self._device_factory = device_factory or create_device
         # 彩屏信息页轮播（E57）：当前页 / 上次翻页时刻。**只在没有活动报警时翻页**
-        self._page = 0
+        #: ``-1`` = "还一页都没显示过"：第一次轮播会落到**页 0（环境页）**，
+        #: 这样服务一起来，彩屏第一眼就是环境条件，而不是先闪一下别的页。
+        self._page = -1
         self._last_page_ts = 0.0
+        #: LCD 调试面板的上次刷新时刻（2026-09-30；**只发 LCD**，不碰彩屏）
+        self._last_debug_ts = 0.0
         #: 上次"发出报警"的时刻（含一次性 SOS）：信息页要给它让够时间（E57）
         self._last_alarm_ts = -float("inf")
 
@@ -340,6 +394,9 @@ class Runtime:
         # ---- 彩屏信息页轮播（只在**没有活动报警**时翻页，见 E57）----
         self._rotate_display_page(now, snap)
 
+        # ---- LCD 调试面板刷新（同样是"报警优先"；**只发 LCD**，绝不碰彩屏）----
+        self._refresh_debug_panel(now, snap)
+
         # 上云：按 interval_s 周期发布读数摘要（失败只计数，不影响本地）
         # ⚠️ 周期也**跑在假时钟下**：演示/单测推进时钟即可触发上报，不必真的等 30 秒。
         if self.mqtt is not None and self.mqtt_started:
@@ -427,8 +484,10 @@ class Runtime:
         * **只在没有活动报警时翻页**：报警文案是"要人立刻看到"的，不能被信息页冲掉
           （LCD 与彩屏同属 ``DeviceKind.DISPLAY``，所以轮播**只发给彩屏驱动**，见
           :meth:`AlarmDispatcher.show_page`）；
-        * 按 :data:`DISPLAY_PAGE_INTERVAL_S` 计时（<=0 表示关掉轮播）；
-        * 页序：0 监护总览 → 1 心率血氧 → 2 体温环境 → 3 报警记录 → 回到 0。
+        * 按 :data:`DISPLAY_PAGE_INTERVAL_S` × **当前页的停留倍数**计时
+          （:data:`PAGE_DWELL_UNITS`；页 0 = 环境页停 2 倍，让"环境条件"成为主人
+          最常看到的一页 —— 2026-09-30 用户要求）；
+        * 页序：0 环境 → 1 心率血氧 → 2 状态/报警 → 回到 0。
         """
         if DISPLAY_PAGE_INTERVAL_S <= 0:
             return
@@ -436,13 +495,45 @@ class Runtime:
             return
         if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
             return                             # 刚发过报警（含一次性 SOS）：先让报警文案待够时间
-        if (now - self._last_page_ts) < DISPLAY_PAGE_INTERVAL_S:
-            return
+        total = len(PAGE_DWELL_UNITS)
+        if self._page >= 0:
+            dwell = DISPLAY_PAGE_INTERVAL_S * PAGE_DWELL_UNITS[int(self._page) % total]
+            if (now - self._last_page_ts) < dwell:
+                return                         # 当前页还没停够（环境页停得更久）
         self._last_page_ts = now
-        self._page = (self._page + 1) % 4
+        self._page = (int(self._page) + 1) % total
         last = self._events[-1].code.value if self._events else ""
         lines = display_page_lines(self._page, snap, alarm_count=len(self._events), last_alarm=last)
         self.dispatcher.show_page(lines, self._page, now)
+
+    def _refresh_debug_panel(self, now: float, snap: Any) -> None:
+        """LCD 调试面板刷新（2026-09-30：**LCD 专职当开发/调试面板**）。
+
+        与信息页轮播**共用同一套"让位"规则**（刻意对称，好记也好测）：
+
+        * 有活动报警 ⇒ 不刷 —— 报警文案要留在屏上；
+        * 刚发过报警 ⇒ :data:`DISPLAY_PAGE_HOLD_AFTER_ALARM_S` 秒内不刷（同上）；
+        * 否则每 :data:`DEBUG_PANEL_INTERVAL_S` 秒刷一次。
+
+        ⚠️ **只发给 LCD**（见 :meth:`AlarmDispatcher.show_debug`）：调试信息若广播出去，
+        会把彩屏正在显示的信息页冲掉 —— 那正是 E57 的镜像问题。
+        """
+        if DEBUG_PANEL_INTERVAL_S <= 0:
+            return
+        if self.engine.active_alarms():
+            return
+        if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
+            return
+        if (now - self._last_debug_ts) < DEBUG_PANEL_INTERVAL_S:
+            return
+        self._last_debug_ts = now
+        lines = debug_lines(
+            snap,
+            ticks=self.ticks,
+            failures=len(getattr(snap, "sensor_failures", None) or {}),
+            alarm_count=len(self.engine.active_alarms()),
+        )
+        self.dispatcher.show_debug(lines, now)
 
     def _consume_button_events(self, now: float) -> List[AlarmEvent]:
         """把采集器攒下的实体按键事件变成动作：**短按消音 / 长按求助**。

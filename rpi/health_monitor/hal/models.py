@@ -353,6 +353,12 @@ class LightCommand(Command):
     blink: bool = False
 
 
+#: ``DisplayCommand.page`` 的哨兵值：**负数 = 这不是信息页**（2026-09-30）。
+#: 用途：LCD 专职当**调试面板**（`service.debug_lines`），它刷的内容不属于彩屏那套
+#: "信息页"；用负数就能在 `status()["page"]` 里把两者区分开，不会互相冒充。
+LCD_DEBUG_PAGE = -1
+
+
 @dataclass(frozen=True)
 class DisplayCommand(Command):
     """LCD 显示内容。``lines`` 最多两行，每行最多 16 字符（驱动负责截断）。"""
@@ -363,6 +369,7 @@ class DisplayCommand(Command):
 
 __all__ = [
     "now_ts",
+    "LCD_DEBUG_PAGE",
     "DeviceKind",
     "Severity",
     "AlarmCode",

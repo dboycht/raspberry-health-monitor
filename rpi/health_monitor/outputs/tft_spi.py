@@ -354,13 +354,15 @@ BLUE: RGB = (0, 0, 255)
 YELLOW: RGB = (255, 200, 0)
 CYAN: RGB = (0, 200, 200)
 GRAY: RGB = (120, 120, 120)
-PAGE_NAMES = ("监护总览", "心率血氧", "体温环境", "报警记录")
+PAGE_NAMES = ("体温环境", "心率血氧", "状态与报警")
 
-#: 四个信息页的**英文短名**（屏上只能显示 ASCII —— 中文的 `PAGE_NAMES` 只给文档/日志用）
-PAGE_ASCII: Tuple[str, ...] = ("OVERVIEW", "VITALS", "ROOM", "ALARMS")
+#: 信息页的**英文短名**（屏上只能显示 ASCII —— 中文的 `PAGE_NAMES` 只给文档/日志用）。
+#: ⚠️ **长度必须与 `service.PAGE_DWELL_UNITS` 一致**（轮播按它取模），
+#: 2026-09-30 把"环境"挪到页 0 并去掉重复的"总览"页 ⇒ 从 4 页变 3 页。
+PAGE_ASCII: Tuple[str, ...] = ("ROOM", "VITALS", "ALARMS")
 
 
-def page_label(page: int, total: int = 4, width: int = 128) -> str:
+def page_label(page: int, total: int = len(PAGE_ASCII), width: int = 128) -> str:
     """彩屏底部的页码标签（**纯函数，可单测**）。
 
     为什么要它（2026-09-29，E57）：`PAGE_NAMES` 是中文名（给文档/日志看），而彩屏用的是

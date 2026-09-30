@@ -29,6 +29,7 @@ from ..hal.models import (
     BeepCommand,
     DeviceKind,
     DisplayCommand,
+    LCD_DEBUG_PAGE,
     LightCommand,
     Severity,
     SpeakCommand,
@@ -325,6 +326,25 @@ class AlarmDispatcher:
             DisplayCommand(lines=tuple(str(x) for x in (lines or ("", "")))[:2],
                            page=int(page), ts=now or now_ts()),
             only_driver="tft_spi",
+        )
+
+    def show_debug(self, lines: Any, now: Optional[float] = None,
+                   page: int = LCD_DEBUG_PAGE) -> None:
+        """把"调试面板"文案**只发给 LCD（``lcd1602``）**：不动彩屏（2026-09-30）。
+
+        这是 :meth:`show_page` 的**镜像**，两边理由完全对称：
+
+        * ``show_page`` 只给彩屏 —— 信息页不能冲掉 LCD 上的报警文案（E57）；
+        * ``show_debug`` 只给 LCD —— 调试信息不能冲掉彩屏上的信息页（同一个坑的另一半）。
+
+        ``page`` 默认 :data:`~health_monitor.hal.models.LCD_DEBUG_PAGE`（负数），
+        这样读 ``status()["page"]`` 时能一眼区分"这是调试面板"还是"这是第 n 个信息页"。
+        """
+        self._send_kind(
+            DeviceKind.DISPLAY,
+            DisplayCommand(lines=tuple(str(x) for x in (lines or ("", "")))[:2],
+                           page=int(page), ts=now or now_ts()),
+            only_driver="lcd1602",
         )
 
     def _send_kind(self, kind: DeviceKind, command: Any, only_driver: Optional[str] = None) -> None:
