@@ -481,6 +481,78 @@ class TestSwitch(_Base):
         self.assertIsNone(dev, "未启用的器件不该被装配出来")
 
 
+class TestDefaultIsEnvironmentOnly(_Base):
+    """★ 把用户 2026-10-01 的要求钉成**可执行的保证**（不改行为，只锁住它）。
+
+    用户原话：「**默认情况下我们只进行环境的测量以及监控**，只有**用户点击后台**
+    或者是**系统内部弹出**时才进行测量血氧之类的行为」。
+
+    ⇒ "允许开始测量"的入口**只有三个**：
+    ① **物理按键**；② **后台/接口**（`POST /api/v1/spo2/measure`）；
+    ③ **先叫过人**（`prompt` 状态）—— 那正是用户说的"系统内部弹出"。
+
+    这里断言**不存在第四个入口**：放着不管，服务永远只做"环境监控 + 到点问一句"，
+    **绝不会自己开测量窗口**。这条比"某个函数被调用过"更有价值 ——
+    它锁的是**用户看得见的行为**，将来谁加了"自动测一次"都会被它挡住。
+
+    ⚠️ 口径（`DEVELOPMENT.md` 待办第 3 条）：本测试钉的是**行为** ——
+    "没有人参与就不会产生一次测量"。至于"底层 MAX30102 要不要仍按 1 Hz 被动采样"，
+    属**产品判断**，需用户拍板；本测试**不改变它、也不替它做主**。
+    """
+
+    def _status(self):
+        return self.rt.spo2_status(self.clock())
+
+    def _measured_records(self) -> list:
+        return [e for e in self.rt.recent_events(limit=100)
+                if getattr(e, "code", None) is not None
+                and getattr(e.code, "value", "") == "spo2_measured"]
+
+    def test_放着不管不会自己开测量(self) -> None:
+        """默认只有环境监控：不到叫人的点，什么都不该发生。"""
+        for _ in range(5):
+            self._tick(advance=10.0)                 # 共 50 秒，远不到 REMIND_S
+        status = self._status()
+        self.assertEqual(status["state"], "idle", "没人参与时不许离开待机")
+        self.assertEqual(status["accepted_total"], 0, "没有人同意过，就不该有测量")
+        self.assertEqual(self._measured_records(), [], "更不该凭空产生一条测量记录")
+
+    def test_到点只问一句_绝不许自己开测(self) -> None:
+        """"系统内部弹出"= 叫人（`prompt`），**不是**自动测量 —— 这是本题最关键的一条。"""
+        self._reach_prompt()                         # 到点，停在"叫人"
+        # ⚠️ 用夹具常量算，别写死秒数：夹具的超时是 30 秒（生产值 60），
+        #    第一版我写了 `advance(30.0)` ⇒ 正好撞上超时、状态已经回到 idle，
+        #    于是断言在"状态不对"上失败 —— 而真因是我的测试算错了时间。
+        self._tick(advance=TIMEOUT_S * 0.5)          # 仍在等人按键
+        self.assertEqual(self._status()["state"], "prompt",
+                         "叫人阶段只许等人，绝不许自己进测量")
+        self.assertEqual(self._status()["accepted_total"], 0)
+
+    def test_叫人超时也不会自己补测一次(self) -> None:
+        """没人搭理 ⇒ 放弃本轮、回到待机；**不许"既然叫了就顺手测一下"**。"""
+        self._reach_prompt()
+        self._tick(advance=TIMEOUT_S + 5.0)
+        status = self._status()
+        self.assertEqual(status["state"], "idle", "超时应当放弃本轮")
+        self.assertEqual(status["accepted_total"], 0, "超时不等于有人同意")
+        self.assertEqual(self._measured_records(), [], "超时不许留下测量记录")
+
+    def test_按键才真的开始测量_对照组(self) -> None:
+        """反向钉子：证明上面几条不是"永远不测"（功能是好的，只是要人触发）。"""
+        self._reach_prompt()
+        # ⚠️ 必须用 `_press_and_tick`：采集器按 `read_interval_s` 节流，
+        #    注入了按键事件却不推进时钟，按键永远不会被重读（本项目踩过的老坑）。
+        self._press_and_tick(advance=0.3)
+        self.assertEqual(self._status()["state"], "measure", "按了键就该开始测")
+        self.assertEqual(self._status()["accepted_total"], 1)
+
+    def test_环境监控照常跑(self) -> None:
+        """"默认只做**环境的测量以及监控**" —— 环境侧必须一直在跑，这是默认职责。"""
+        self._tick(advance=10.0)
+        lcd = " ".join(self._lcd())
+        self.assertIn("T=", lcd, "LCD 调试面板应当一直在刷新环境读数")
+
+
 class TestIntervalReschedule(_Base):
     """★ `ERROR.md` **E67**：改了"叫人间隔"必须**重排已排定的下一轮**。
 
