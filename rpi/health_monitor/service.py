@@ -587,7 +587,59 @@ class Runtime:
             self.dispatcher.dispatch(startup, startup.ts)
         except Exception as exc:  # noqa: BLE001 - 启动提示失败绝不该影响服务启动
             _LOG.debug("启动提示下发失败（已忽略）：%s", exc)
+        self._hydrate_from_store()
         return errors
+
+    def _hydrate_from_store(self) -> None:
+        """启动时把"上一次测量结果"与"室温趋势"从**历史库**补进内存（2026-10-01）。
+
+        为什么必须有它（**实测确认过的真缺陷，不是猜的**）：
+        `_spo2_last_result` 与 `_temp_trend` 都是**内存态**，进程一重启就空；
+        而网页那边的"最后一次记录"是**直接查历史库**的 ⇒ 不补的话，
+        **同一时刻同一块板子上，两边说法相反**：
+
+            彩屏：`--` / `NO MEASURE YET` / `PRESS BUTTON`
+            网页：`最后一次 97 %（3 小时前）· 数据已过期`
+
+        用户的要求是"血氧测量后，**屏上**和**后台**都能看到" —— 重启一次就不算数显然不对。
+        （同一类问题也让彩屏的趋势线在重启后空一段，一并补上。）
+
+        刻意**只在启动时查一次**，而不是每次翻页都查：翻页每 6 秒一次，
+        而"上一次测量结果"是个很少变的值，没必要反复读库。
+        """
+        if self.store is None:
+            return
+        try:
+            newest_ts = 0.0
+            hr: Optional[float] = None
+            spo2: Optional[float] = None
+            for column in self.store.VITALS_VALUE_COLUMNS:
+                row = self.store.last_vitals_value(column)
+                if not row or row.get("value") is None:
+                    continue
+                if column == "heart_rate_bpm":
+                    hr = row["value"]
+                else:
+                    spo2 = row["value"]
+                newest_ts = max(newest_ts, float(row["ts"]))
+            if newest_ts > 0.0 and (hr is not None or spo2 is not None):
+                self._spo2_last_result = {
+                    "ok": True,
+                    "heart_rate_bpm": hr,
+                    "spo2_percent": spo2,
+                    "ts": newest_ts,
+                    # 标记来源：这条**不是本次运行测出来的**，是启动时从库补的。
+                    # 排查时能一眼区分"刚测的"与"补出来的"（对"数据已过期"的显示也有意义）。
+                    "hydrated": True,
+                }
+                _LOG.info("启动时从历史库补上最后一次测量：HR %s / SpO2 %s（%.0f 分钟前）",
+                          hr, spo2, max(0.0, (self.clock() - newest_ts)) / 60.0)
+            trend_rows = self.store.recent_readings("ambient_temp_c", limit=TFT_TREND_POINTS)
+            values = [r["value"] for r in trend_rows if r.get("value") is not None]
+            if values:
+                self._temp_trend = values
+        except Exception as exc:  # noqa: BLE001 - 补历史失败绝不该让服务起不来
+            _LOG.warning("启动时补历史数据失败（已忽略，不影响监护）：%s", exc)
 
     def close(self) -> None:
         """停止服务并释放资源（幂等）。"""
