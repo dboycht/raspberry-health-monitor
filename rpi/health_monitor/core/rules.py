@@ -427,7 +427,21 @@ class RuleEngine:
             )
         if code in (AlarmCode.HR_TOO_HIGH, AlarmCode.HR_TOO_LOW, AlarmCode.SPO2_TOO_LOW):
             v = snap.vitals
-            return v is None or not v.ok or not v.finger_detected
+            if v is None:
+                return True          # 器件根本没装配 / 没数据 ⇒ 不敢解除
+            if v.ok:
+                return False         # 有有效读数 ⇒ 数据没缺（解不解除交给触发判定）
+            # ⚠️ ``ok=False`` 有**两种完全不同的含义**，必须分开（`ERROR.md` **E66**）：
+            #   ``awaiting_data=True``  ⇒ 器件**正常**，只是这次没测出东西
+            #                            （没贴手指 / 分析窗还没攒够，见 E54）
+            #                            ⇒ **不算"数据缺失"**！
+            #   ``awaiting_data=False`` ⇒ 真的读失败（I2C 出错 / 器件掉线）
+            #                            ⇒ 算缺失，不解除
+            # 为什么这条判据要命：血氧改"按需测量"之后，**"没贴手指"是常态**。
+            # 若把"没手指"当成"数据缺失"，`_recoveries()` 会拒绝解除，
+            # 于是**一次低血氧读数会让报警永久卡住**、每 5 秒重发到天荒地老
+            # （2026-09-30 真机实测到第 32 次，红灯一直闪 + 4 声蜂鸣）。
+            return not bool(getattr(v, "awaiting_data", False))
         if code in (AlarmCode.BODY_TEMP_HIGH, AlarmCode.BODY_TEMP_LOW):
             b = snap.body_temp
             return b is None or not b.ok or b.temperature_c is None

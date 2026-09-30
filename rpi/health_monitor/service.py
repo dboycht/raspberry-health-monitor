@@ -490,6 +490,14 @@ class Runtime:
         if old.thresholds != config.thresholds:
             applied.append("报警阈值已更新（规则引擎下一帧起按新值判定）")
         self.engine.th = config.thresholds
+        # ⚠️ 改了"叫人间隔"必须**顺带重排**已经排定的下一轮（`ERROR.md` **E67**）：
+        #    `_spo2_next_remind_ts` 是**绝对时刻**，它是在"上一轮结束时"按**当时的**间隔
+        #    算出来的。只换阈值对象**不会**重排 ⇒ 用户把间隔从 600 秒改成 15 秒，
+        #    蜂鸣器**仍要等到原来那个 10 分钟后的时刻**才叫 ——
+        #    现场看起来就是"改了没用 / 坏了"（2026-09-30 用户实测撞到，还以为是面板没生效）。
+        if old.thresholds.spo2_remind_interval_s != config.thresholds.spo2_remind_interval_s:
+            self._spo2_reschedule(now, float(config.thresholds.spo2_remind_interval_s))
+            applied.append("测血氧叫人间隔已重排")
 
         # ---- ② 读取周期 ----
         for cfg in config.devices:
@@ -805,6 +813,24 @@ class Runtime:
         """排下一轮"叫人"。``spo2_remind_interval_s <= 0`` ⇒ 不再定期叫人（只留主动测）。"""
         interval = float(self.config.thresholds.spo2_remind_interval_s)
         self._spo2_next_remind_ts = (now + interval) if interval > 0 else float("inf")
+
+    def _spo2_reschedule(self, now: float, interval: float) -> None:
+        """**配置里改了叫人间隔**时重排下一轮（`ERROR.md` **E67**）。
+
+        两条规矩，都是为了"不让人意外"：
+
+        * **只提前、不推后**（``min(原值, now + 新间隔)``）—— 与 `apply_config` 里
+          "改读取周期"的处理完全一致。反例：把间隔从 15 秒调成 600 秒时若无条件重排，
+          本该 5 秒后就到的那一轮会被推到 10 分钟后，现场像"卡死"；
+        * **只在待机时重排** —— 正在叫人/测量/出结果的那一轮**不许被打断**
+          （用户正看着屏，改了配置不该把它搅掉）。
+        """
+        if self._spo2_state != "idle":
+            return
+        if interval <= 0:
+            self._spo2_next_remind_ts = float("inf")
+            return
+        self._spo2_next_remind_ts = min(self._spo2_next_remind_ts, now + float(interval))
 
     def _spo2_begin_prompt(self, now: float) -> None:
         """叫人"该测血氧了"（蜂鸣 + 屏上提示），然后等他按键。"""

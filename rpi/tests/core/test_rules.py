@@ -34,11 +34,17 @@ from health_monitor.hal.models import (
 )
 
 
-def vitals(hr=None, spo2=None, finger=True, ok=True, ts=1000.0) -> VitalSignsSample:
+def vitals(hr=None, spo2=None, finger=True, ok=True, ts=1000.0,
+           awaiting=False) -> VitalSignsSample:
+    """造一个心率血氧样本。
+
+    ``awaiting=True`` 表示"器件正常、只是这次没测出东西"（没贴手指 / 窗没攒够），
+    与"真的读失败"（``ok=False, awaiting=False``）是**两回事**（`ERROR.md` **E66**）。
+    """
     return VitalSignsSample(
         ts=ts, device="max30102", ok=ok,
         heart_rate_bpm=hr, spo2_percent=spo2,
-        finger_detected=finger, quality=0.9,
+        finger_detected=finger, quality=0.9, awaiting_data=awaiting,
     )
 
 
@@ -170,15 +176,52 @@ class TestCooldownAndHysteresis(unittest.TestCase):
         self.assertEqual(clear.detail.get("recovered_code"), "hr_too_high")
         self.assertEqual(clear.severity, Severity.NORMAL)
 
-    def test_数据缺失不解除报警(self) -> None:
-        """读数读不到 = 未知，**绝不等于恢复正常**（否则手机端会误以为安全）。"""
+    def test_没人正在测时报警要能自己解除(self) -> None:
+        """★ `ERROR.md` **E66**：器件**正常**、只是"这次没测出东西"（没贴手指）
+        ⇒ 必须**算数据不缺**、报警要能**自己解除**。
+
+        真机事故（2026-09-30 晚）：血氧改成"按需测量"之后，**"没贴手指"是常态**；
+        而原来 `_is_missing()` 把 `finger_detected=False` 也算成"数据缺失" ⇒
+        **一次低血氧读数会让报警永久卡住**，每 5 秒重发一次 ——
+        实测到**第 32 次**还在响（红灯一直闪 + 4 声蜂鸣 + 两块屏刷 `ALARM: SPO2 LOW`）。
+
+        触发与解除原来是两套判据：**触发**只在"有手指且有值"时判，
+        **解除**却把"没手指"当成数据缺失而拒绝 ⇒ 两边一撞就锁死。
+        """
+        engine = RuleEngine(Thresholds(repeat_cooldown_s=0))
+        engine.evaluate(ReadingSnapshot(ts=1000.0, vitals=vitals(hr=70, spo2=88)))
+        self.assertIn("spo2_too_low", engine.active_alarms(), "前置条件：先真的报过警")
+
+        # 手指拿开 —— 真驱动给的就是这个形状（ok=False + awaiting_data=True，见 E54）
+        no_finger = vitals(hr=None, spo2=None, finger=False, ok=False, awaiting=True)
+        events = engine.evaluate(ReadingSnapshot(ts=1001.0, vitals=no_finger))
+
+        self.assertIn(AlarmCode.ALL_CLEAR, [e.code for e in events],
+                      "拿开手指后报警必须自己解除（否则会永远卡在报警态）")
+        self.assertNotIn("spo2_too_low", engine.active_alarms())
+
+    def test_真的读失败时仍然不解除报警(self) -> None:
+        """反向钉子：**器件真的读不到**（I2C 出错 / 掉线）⇒ 仍是"数据缺失"，**不许**解除。
+
+        `ok=False` 有两种含义，必须分开（E66）：
+        ``awaiting_data=True`` = 器件正常只是没测出东西（可以解除）；
+        ``awaiting_data=False`` = 真失败（不解除，否则手机端会误以为安全）。
+        """
         engine = RuleEngine(Thresholds(repeat_cooldown_s=0))
         engine.evaluate(ReadingSnapshot(ts=1000.0, vitals=vitals(hr=125, spo2=97)))
-        events = engine.evaluate(
-            ReadingSnapshot(ts=1001.0, vitals=vitals(hr=None, spo2=None, finger=False))
-        )
+        broken = vitals(hr=None, spo2=None, finger=False, ok=False, awaiting=False)
+        events = engine.evaluate(ReadingSnapshot(ts=1001.0, vitals=broken))
         self.assertNotIn(AlarmCode.ALL_CLEAR, [e.code for e in events])
         self.assertIn("hr_too_high", engine.active_alarms())
+
+    def test_心率报警同样会随手指拿开而解除(self) -> None:
+        """E66 对心率一视同仁（两者共用同一条 `_is_missing` 分支）。"""
+        engine = RuleEngine(Thresholds(repeat_cooldown_s=0))
+        engine.evaluate(ReadingSnapshot(ts=1000.0, vitals=vitals(hr=125, spo2=97)))
+        no_finger = vitals(hr=None, spo2=None, finger=False, ok=False, awaiting=True)
+        events = engine.evaluate(ReadingSnapshot(ts=1001.0, vitals=no_finger))
+        self.assertIn(AlarmCode.ALL_CLEAR, [e.code for e in events])
+        self.assertNotIn("hr_too_high", engine.active_alarms())
 
 
 class TestMotionRules(unittest.TestCase):

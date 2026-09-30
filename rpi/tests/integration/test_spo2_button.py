@@ -465,6 +465,56 @@ class TestSwitch(_Base):
         self.assertIsNone(dev, "未启用的器件不该被装配出来")
 
 
+class TestIntervalReschedule(_Base):
+    """★ `ERROR.md` **E67**：改了"叫人间隔"必须**重排已排定的下一轮**。
+
+    真机撞到的场景（2026-09-30 晚）：用户在面板上把间隔从 600 秒改成 15 秒，
+    然后**坐在那儿等蜂鸣器叫** —— 可蜂鸣器要等到原来那个"10 分钟后"的时刻才叫
+    （`_spo2_next_remind_ts` 是**绝对时刻**，只换阈值对象不会重排）。
+    用户的原话是「没叫人啊？这个玩意需要我手动去点吗」——
+    **一个"改了没反应"的热应用，比不提供这个配置项更糟**。
+    """
+
+    def _config_with_interval(self, seconds: float) -> AppConfig:
+        return AppConfig.from_dict({
+            "thresholds": dict(DEMO["thresholds"], spo2_remind_interval_s=seconds),
+            "devices": {name: dict(cfg) for name, cfg in DEMO["devices"].items()},
+        })
+
+    def test_把间隔调小会立刻提前下一轮(self) -> None:
+        self.rt.tick()                       # t=1000，下一轮排在 1000+120=1120
+        applied, _ = self.rt.apply_config(self._config_with_interval(15.0))
+        self.assertIn("测血氧叫人间隔已重排", applied)
+        self._tick(advance=16.0)             # t=1016：没重排的话要等到 1120
+        self.assertIn(SPO2_PROMPT_LINES[0], self._lcd()[0],
+                      "把间隔调小之后应当很快叫人（而不是等原来那个时刻）")
+
+    def test_把间隔调大不会把已排的推后(self) -> None:
+        """反向钉子：**只提前、不推后**。
+
+        若无条件重排，把 15 秒调成 600 秒会把"5 秒后就该到"的那一轮推到 10 分钟后，
+        现场看起来像卡死 —— 与 `apply_config` 里"改读取周期"的处理必须一致。
+        """
+        self.rt.tick()                       # 下一轮 = 1120
+        self.clock.advance(100.0)            # t=1100，已经快到了
+        self.rt.apply_config(self._config_with_interval(600.0))
+        self._tick(advance=25.0)             # t=1125 > 1120
+        self.assertIn(SPO2_PROMPT_LINES[0], self._lcd()[0],
+                      "调大间隔不该把已经快到的这一轮推到 600 秒后")
+
+    def test_正在叫人时改间隔不打断本轮(self) -> None:
+        self._reach_prompt()
+        self.rt.apply_config(self._config_with_interval(600.0))
+        self.assertIn(SPO2_PROMPT_LINES[0], self._lcd()[0],
+                      "正在叫人的这一轮不许被配置变更打断（用户正看着屏）")
+
+    def test_间隔设为0就不再定期叫人(self) -> None:
+        self.rt.tick()
+        self.rt.apply_config(self._config_with_interval(0.0))
+        self._tick(advance=100000.0)
+        self.assertNotIn("SPO2", " ".join(self._lcd()))
+
+
 class TestTwoButtonsDoNotConfuse(unittest.TestCase):
     """★ E61：两个按键必须分得清"谁按的"。"""
 
