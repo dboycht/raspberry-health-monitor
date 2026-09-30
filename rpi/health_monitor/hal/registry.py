@@ -88,11 +88,6 @@ MANIFEST: Dict[str, DriverSpec] = {
         "温湿度传感器 DHT11", ("pin", "retries"), "核心",
         notes="单总线；两次读取间隔必须 >= 2s（DHT11 硬件限制）",
     ),
-    "tmp36": DriverSpec(
-        "tmp36", "health_monitor.sensors.tmp36:Tmp36", DeviceKind.PRECISION,
-        "精密温度传感器 TMP36 + MCP3002", ("spi_bus", "spi_device", "channel", "vref"), "核心",
-        notes="模拟量必须经 MCP3002 ADC；10mV/°C，25°C 时 750mV",
-    ),
     "hc_sr501": DriverSpec(
         "hc_sr501", "health_monitor.sensors.hc_sr501:HcSr501", DeviceKind.MOTION,
         "人体红外传感器 HC-SR501", ("pin",), "核心",
@@ -103,11 +98,6 @@ MANIFEST: Dict[str, DriverSpec] = {
         "hc_sr04", "health_monitor.sensors.hc_sr04:HcSr04", DeviceKind.RANGE,
         "超声波测距 HC-SR04", ("trig_pin", "echo_pin", "timeout_us"), "拓展",
         notes="ECHO 为 5V，须经 TXS0102 或分压后再接 GPIO",
-    ),
-    "mcp3002": DriverSpec(
-        "mcp3002", "health_monitor.sensors.mcp3002:Mcp3002", DeviceKind.PRECISION,
-        "ADC MCP3002（SPI 模拟输入）", ("spi_bus", "spi_device", "vref"), "拓展",
-        notes="被 tmp36 复用；单独使用可接电位器/光敏电阻等模拟器件",
     ),
     # ---- 输出 / 交互 ----
     "lcd1602": DriverSpec(
@@ -136,7 +126,7 @@ MANIFEST: Dict[str, DriverSpec] = {
         ("controller", "spi_bus", "spi_device", "dc_pin", "reset_pin", "rotate", "bgr", "invert"),
         "核心",
         notes="课程清单里的『显示屏』；controller=auto 依次尝试三种控制器并画三色条供肉眼确认；"
-              "⚠️ CS 不要与 MCP3002 抢片选（本项目 MCP3002=CE0 / TFT 默认 CE1=脚 26）",
+              "本项目固定用 **CE1（脚 26）**，CE0（脚 24）空着不用",
     ),
     "button": DriverSpec(
         "button", "health_monitor.sensors.button:Button", DeviceKind.BUTTON,

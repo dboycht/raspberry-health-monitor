@@ -1077,7 +1077,7 @@ class Runtime:
     def _has_any_reading(snap: Any) -> bool:
         return any(
             sample is not None
-            for sample in (snap.vitals, snap.body_temp, snap.ambient, snap.motion)
+            for sample in (snap.vitals, snap.ambient, snap.motion)
         )
 
     def run_forever(self) -> None:

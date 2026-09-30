@@ -36,9 +36,7 @@ class Thresholds:
     hr_max: float = 110.0
     # 血氧（%）
     spo2_min: float = 93.0
-    # 精密体温 / 环境温度（摄氏度）
-    body_temp_min: float = 35.5
-    body_temp_max: float = 37.5
+    # 环境温度（摄氏度）
     ambient_temp_min: float = 16.0
     ambient_temp_max: float = 30.0
     humidity_max: float = 80.0
@@ -73,7 +71,6 @@ class Thresholds:
         """检查阈值自洽性。**启动期必须调用**，错误直接抛 ``ConfigError``。"""
         pairs = [
             ("hr_min", "hr_max"),
-            ("body_temp_min", "body_temp_max"),
             ("ambient_temp_min", "ambient_temp_max"),
         ]
         for lo, hi in pairs:
@@ -367,8 +364,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "hr_min": 50,
         "hr_max": 110,
         "spo2_min": 93,
-        "body_temp_min": 35.5,
-        "body_temp_max": 37.5,
         "ambient_temp_min": 16,
         "ambient_temp_max": 30,
         "humidity_max": 80,
@@ -392,18 +387,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": True,
             "read_interval_s": 1.0,
             "params": {"bus": 1, "address": 87, "led_current": "7.6mA"},
-        },
-        "body_temp": {
-            "driver": "tmp36",
-            "enabled": True,
-            "read_interval_s": 2.0,
-            "params": {
-                "spi_bus": 0,
-                "spi_device": 0,
-                "channel": 0,
-                "vref": 3.3,
-                "calibration_offset_c": 0.0,
-            },
         },
         "ambient": {
             "driver": "dht11",

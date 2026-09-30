@@ -10,8 +10,8 @@
 
 用法（在树莓派上）::
 
-    # 让物理脚 24（MCP3002 的 CS）每秒翻转一次，持续 60 秒
-    python3 scripts/pin_probe.py --pulse 24 --seconds 60
+    # 让物理脚 26（TFT 的 CS）每秒翻转一次，持续 60 秒
+    python3 scripts/pin_probe.py --pulse 26 --seconds 60
 
     # 让物理脚 7（DHT11 的 DATA）翻转
     python3 scripts/pin_probe.py --pulse 7 --seconds 30
@@ -126,12 +126,12 @@ def wiring_walkthrough(seconds_each: float) -> None:
         15: "LED 绿 的阳极（经电阻）",
         16: "LED 黄 的阳极（经电阻）",
         18: "TFT 的 A0/DC 脚（红灯没接的话）",
-        19: "MCP3002 的 DIN ＋ TFT 的 SDA",
-        21: "MCP3002 的 DOUT",
+        19: "TFT 的 SDA（SPI0 MOSI）",
+        21: "SPI0 MISO（本项目未使用）",
         22: "TFT 的 RESET 脚",
-        23: "MCP3002 的 CLK ＋ TFT 的 SCK",
-        24: "MCP3002 的 CS 脚 ← 你今天要查的就是它",
-        26: "TFT 的 CS 脚",
+        23: "TFT 的 SCK（SPI0 SCLK）",
+        24: "SPI0 CE0（本项目空着不用）",
+        26: "TFT 的 CS 脚 ← SPI0 CE1",
     }
     print("=" * 74)
     print("接线逐脚验证（每步：脚本翻转 → 你用万用表量 → 回车继续）")
@@ -174,7 +174,7 @@ def main() -> int:
         return 0
 
     print("用法示例：")
-    print("  python3 scripts/pin_probe.py --pulse 24 --seconds 60     # 验证 MCP3002 的 CS")
+    print("  python3 scripts/pin_probe.py --pulse 26 --seconds 60     # 验证 TFT 的 CS")
     print("  python3 scripts/pin_probe.py --pulse 7 --seconds 30      # 验证 DHT11 的 DATA")
     print("  python3 scripts/pin_probe.py --wiring                    # 逐脚走一遍")
     safe_print("\n物理脚 ↔ BCM 对照（本项目用到的）：")

@@ -18,7 +18,6 @@ from health_monitor.hal import (
     DeviceKind,
     MotionSample,
     MotionState,
-    PrecisionTempSample,
     RangeSample,
     VitalSignsSample,
 )
@@ -108,25 +107,6 @@ class FakeAmbientSensor(_FakeBase):
         )
 
 
-class FakeBodyTempSensor(_FakeBase):
-    """假精密体温（TMP36 + MCP3002）。"""
-
-    KIND = DeviceKind.PRECISION
-    NAME = "tmp36"
-
-    def __init__(self, temperature_c: float = 36.5, **kw: Any) -> None:
-        super().__init__(**kw)
-        self.temperature_c = temperature_c
-
-    def read(self) -> PrecisionTempSample:
-        self._require_open()
-        self._maybe_fail()
-        raw = int(round(self.temperature_c * 20.48 + 341.3))  # 仅用于让 raw 看起来合理
-        return PrecisionTempSample(
-            device=self.name, temperature_c=self.temperature_c, raw_adc=raw, voltage_v=0.75
-        )
-
-
 class FakeMotionSensor(_FakeBase):
     """假人体红外。"""
 
@@ -167,7 +147,6 @@ class FakeRangeSensor(_FakeBase):
 def build_all(mock: bool = True) -> Dict[str, Device]:
     return {
         "vitals": FakeVitalSensor(mock=mock),
-        "body_temp": FakeBodyTempSensor(mock=mock),
         "ambient": FakeAmbientSensor(mock=mock),
         "motion": FakeMotionSensor(mock=mock),
     }

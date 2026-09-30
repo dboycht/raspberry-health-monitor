@@ -344,9 +344,11 @@ class TestDatapointPayload(unittest.TestCase):
         self.assertEqual(payload["dp"]["extra"][0]["v"], {"a": 1})
 
     def test_默认数据流映射覆盖本地量(self) -> None:
-        for local_key in ("heart_rate_bpm", "spo2_percent", "body_temp_c",
+        for local_key in ("heart_rate_bpm", "spo2_percent",
                           "ambient_temp_c", "humidity_percent", "motion_state"):
             self.assertIn(local_key, DEFAULT_STREAM_MAP)
+        # 2026-10-01：TMP36/MCP3002 彻底删除 ⇒ 数据流映射里**不该再有**体温
+        self.assertNotIn("body_temp_c", DEFAULT_STREAM_MAP)
 
     def test_非有限数必须跳过而不是发出去(self) -> None:
         """★ 真机 T4 实测（ERROR.md **E47**）：``inf`` 经 ``json.dumps`` 变成裸 ``Infinity``，
@@ -450,7 +452,7 @@ class TestOneNetPublisher(unittest.TestCase):
     def test_上报读数走数据点topic(self) -> None:
         summary = {
             "ts": 1700000000.0, "heart_rate_bpm": 72.4, "spo2_percent": 97.9,
-            "finger_detected": True, "body_temp_c": 36.5, "ambient_temp_c": 24.5,
+            "finger_detected": True, "ambient_temp_c": 24.5,
             "humidity_percent": 55.0, "motion_state": "detected",
             "data_age_s": 1.5, "data_stale": False, "sensor_failures": {},
         }

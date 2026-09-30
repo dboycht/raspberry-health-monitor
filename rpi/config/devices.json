@@ -3,8 +3,6 @@
     "hr_min": 50,
     "hr_max": 110,
     "spo2_min": 93,
-    "body_temp_min": 35.5,
-    "body_temp_max": 37.5,
     "ambient_temp_min": 16,
     "ambient_temp_max": 30,
     "humidity_max": 80,
@@ -29,18 +27,6 @@
         "bus": 1,
         "address": 87,
         "led_current": "7.6mA"
-      }
-    },
-    "body_temp": {
-      "driver": "tmp36",
-      "enabled": true,
-      "read_interval_s": 2,
-      "params": {
-        "spi_bus": 0,
-        "spi_device": 0,
-        "channel": 0,
-        "vref": 3.3,
-        "calibration_offset_c": 0
       }
     },
     "ambient": {

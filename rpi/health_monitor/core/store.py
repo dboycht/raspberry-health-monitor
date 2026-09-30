@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from ..hal.models import AlarmEvent, AmbientSample, MotionSample, PrecisionTempSample, VitalSignsSample
+from ..hal.models import AlarmEvent, AmbientSample, MotionSample, VitalSignsSample
 
 _LOG = logging.getLogger(__name__)
 
@@ -138,13 +138,6 @@ class Store:
                     rows += self._save_reading(sample.ts, sample.device, "ambient_temp_c", sample.temperature_c, "°C", sample.ok)
                 if sample.humidity_percent is not None:
                     rows += self._save_reading(sample.ts, sample.device, "humidity_percent", sample.humidity_percent, "%", sample.ok)
-                return rows
-            if isinstance(sample, PrecisionTempSample):
-                rows = 0
-                if sample.temperature_c is not None:
-                    rows += self._save_reading(sample.ts, sample.device, "body_temp_c", sample.temperature_c, "°C", sample.ok)
-                if sample.voltage_v is not None:
-                    rows += self._save_reading(sample.ts, sample.device, "tmp36_voltage_v", sample.voltage_v, "V", sample.ok)
                 return rows
             if isinstance(sample, MotionSample):
                 return self._save_reading(

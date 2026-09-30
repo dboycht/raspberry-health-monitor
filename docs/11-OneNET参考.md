@@ -87,7 +87,7 @@ StringForSignature = et + "\n" + method + "\n" + res + "\n" + version
   "id": 123,
   "dp": {
     "heart_rate": [{ "v": 72, "t": 1552289676 }],
-    "body_temp":  [{ "v": 36.5, "t": 1552289676 }],
+    "spo2":       [{ "v": 98, "t": 1552289676 }],
     "motion":     [{ "v": "detected", "t": 1552289677 }]
   }
 }
@@ -108,7 +108,6 @@ StringForSignature = et + "\n" + method + "\n" + res + "\n" + version
 | --- | --- | --- |
 | `heart_rate` | `heart_rate_bpm` | 心率 bpm |
 | `spo2` | `spo2_percent` | 血氧 % |
-| `body_temp` | `body_temp_c` | 精密体温 ℃ |
 | `ambient_temp` | `ambient_temp_c` | 室温 ℃ |
 | `humidity` | `humidity_percent` | 湿度 % |
 | `motion` | `motion_state` | `detected`/`idle`/`unknown` |

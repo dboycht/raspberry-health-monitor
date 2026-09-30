@@ -25,7 +25,6 @@ from ..hal.models import (
     ButtonEvent,
     MotionSample,
     MotionState,
-    PrecisionTempSample,
     RangeSample,
     Sample,
     VitalSignsSample,
@@ -269,8 +268,6 @@ class Collector:
             return
         if isinstance(sample, VitalSignsSample):
             snap.vitals = sample
-        elif isinstance(sample, PrecisionTempSample):
-            snap.body_temp = sample
         elif isinstance(sample, AmbientSample):
             snap.ambient = sample
         elif isinstance(sample, MotionSample):
@@ -431,8 +428,6 @@ def _failed_sample(entry: _Entry, now: float, error: str) -> Sample:
     kwargs = {"ts": now, "device": entry.name, "ok": False, "error": error}
     if isinstance(prev, VitalSignsSample):
         return VitalSignsSample(**kwargs)
-    if isinstance(prev, PrecisionTempSample):
-        return PrecisionTempSample(**kwargs)
     if isinstance(prev, AmbientSample):
         return AmbientSample(**kwargs)
     if isinstance(prev, MotionSample):
@@ -442,8 +437,6 @@ def _failed_sample(entry: _Entry, now: float, error: str) -> Sample:
     # 从未成功读过：根据驱动名猜一个合理类型（首次失败时走到这里）
     guess = {
         "max30102": VitalSignsSample,
-        "tmp36": PrecisionTempSample,
-        "mcp3002": PrecisionTempSample,
         "dht11": AmbientSample,
         "hc_sr501": lambda **kw: MotionSample(state=MotionState.UNKNOWN, **kw),
         "hc_sr04": RangeSample,

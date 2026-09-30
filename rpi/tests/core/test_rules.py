@@ -28,7 +28,6 @@ from health_monitor.hal.models import (
     AmbientSample,
     MotionSample,
     MotionState,
-    PrecisionTempSample,
     Severity,
     VitalSignsSample,
 )
@@ -59,7 +58,6 @@ class TestNormalValues(unittest.TestCase):
         snap = ReadingSnapshot(
             ts=1000.0,
             vitals=vitals(hr=72, spo2=98),
-            body_temp=PrecisionTempSample(ts=1000.0, device="tmp36", temperature_c=36.5),
             ambient=AmbientSample(ts=1000.0, device="dht11", temperature_c=24.0, humidity_percent=55.0),
             motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.DETECTED),
         )
@@ -114,21 +112,7 @@ class TestVitalSigns(unittest.TestCase):
         self.assertEqual(events, [])
 
 
-class TestBodyAndAmbient(unittest.TestCase):
-    def test_体温偏高(self) -> None:
-        engine = RuleEngine()
-        events = engine.evaluate(
-            ReadingSnapshot(ts=1000.0, body_temp=PrecisionTempSample(ts=1000.0, device="tmp36", temperature_c=38.5))
-        )
-        self.assertIn(AlarmCode.BODY_TEMP_HIGH, [e.code for e in events])
-
-    def test_体温偏低(self) -> None:
-        engine = RuleEngine()
-        events = engine.evaluate(
-            ReadingSnapshot(ts=1000.0, body_temp=PrecisionTempSample(ts=1000.0, device="tmp36", temperature_c=34.0))
-        )
-        self.assertIn(AlarmCode.BODY_TEMP_LOW, [e.code for e in events])
-
+class TestAmbient(unittest.TestCase):
     def test_室温异常只是NOTICE(self) -> None:
         engine = RuleEngine()
         events = engine.evaluate(
@@ -498,7 +482,7 @@ class TestSnapshotSummary(unittest.TestCase):
     def test_摘要里缺失值必须是None而不是0(self) -> None:
         """手机端把 None 显示为"未知"，把 0 显示成"0 bpm"会吓死人。"""
         summary = ReadingSnapshot(ts=1000.0).health_summary()
-        for key in ("heart_rate_bpm", "spo2_percent", "body_temp_c", "ambient_temp_c", "motion_state"):
+        for key in ("heart_rate_bpm", "spo2_percent", "ambient_temp_c", "motion_state"):
             self.assertIsNone(summary[key], f"{key} 缺失时必须为 None")
 
     def test_摘要包含已采到的值(self) -> None:
@@ -510,7 +494,6 @@ class TestSnapshotSummary(unittest.TestCase):
         s = snap.health_summary()
         self.assertEqual(s["heart_rate_bpm"], 72)
         self.assertEqual(s["ambient_temp_c"], 24.5)
-        self.assertIsNone(s["body_temp_c"])
 
     def test_摘要里不许出现inf或nan(self) -> None:
         """★ 真机 T4 实测（ERROR.md E47）：PIR "从没检测到人"时 ``motion_silent_s`` 是 ``inf``，

@@ -47,7 +47,6 @@ class TestNeedsOf(unittest.TestCase):
         self.assertEqual(hardware_test.needs_of(["dht11"]), {"gpio"})
         self.assertEqual(hardware_test.needs_of(["max30102"]), {"i2c"})
         self.assertEqual(hardware_test.needs_of(["lcd1602"]), {"i2c"})
-        self.assertEqual(hardware_test.needs_of(["tmp36"]), {"spi"})
         self.assertEqual(hardware_test.needs_of(["bt_speaker"]), {"audio"})
         self.assertEqual(hardware_test.needs_of(["tft_spi"]), {"gpio", "spi"})
 

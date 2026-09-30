@@ -32,7 +32,6 @@ from .console import safe_print  # noqa: E402
 DEMO_CONFIG: Dict[str, Any] = {
     "thresholds": {
         "hr_min": 50, "hr_max": 110, "spo2_min": 93,
-        "body_temp_min": 35.5, "body_temp_max": 37.5,
         "ambient_temp_min": 16, "ambient_temp_max": 30, "humidity_max": 80,
         "no_motion_timeout_s": 60,
         "night_start_hour": 22, "night_end_hour": 6,
@@ -41,7 +40,6 @@ DEMO_CONFIG: Dict[str, Any] = {
     },
     "devices": {
         "vitals": {"driver": "max30102", "read_interval_s": 1.0},
-        "body_temp": {"driver": "tmp36", "read_interval_s": 1.0},
         "ambient": {"driver": "dht11", "read_interval_s": 3.0},
         "motion": {"driver": "hc_sr501", "read_interval_s": 0.5},
         "display": {"driver": "lcd1602", "read_interval_s": 1.0},
@@ -109,7 +107,7 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
         print(f"── 第 {frame_no['n']} 幕：{title} ──")
         print(
             f"   读数：心率 {_fmt(s['heart_rate_bpm'], 'bpm')} · 血氧 {_fmt(s['spo2_percent'], '%')} · "
-            f"体温 {_fmt(s['body_temp_c'], '°C')} · 室温 {_fmt(s['ambient_temp_c'], '°C')} · "
+            f"室温 {_fmt(s['ambient_temp_c'], '°C')} · "
             f"活动 {s['motion_state']}"
         )
         if events:

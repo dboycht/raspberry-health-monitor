@@ -19,8 +19,6 @@ class AlarmCatalogTest {
             "hr_too_high" to "心率过高",
             "hr_too_low" to "心率过低",
             "spo2_too_low" to "血氧过低",
-            "body_temp_high" to "体温偏高",
-            "body_temp_low" to "体温偏低",
             "ambient_temp_high" to "室温偏高",
             "ambient_temp_low" to "室温偏低",
             "humidity_high" to "湿度过高",
@@ -35,11 +33,11 @@ class AlarmCatalogTest {
         expected.forEach { (code, label) ->
             assertEquals("报警码 $code 的中文名不对", label, AlarmCatalog.label(code))
         }
-        // 表里数一数：15 个码，别漏。
+        // 表里数一数：13 个码，别漏。
         // ⚠️ 这个数字**故意写死**：新增报警码时必须同时改三处
         //    （models.py 的 AlarmCode / docs/08-报警规则表.md / 本文件），
         //    跨语言的一致性由 `rpi/scripts/check_docs.py` 兜底检查。
-        assertEquals(15, AlarmCatalog.allCodes().size)
+        assertEquals(13, AlarmCatalog.allCodes().size)
     }
 
     @Test
@@ -47,8 +45,6 @@ class AlarmCatalogTest {
         // 2 警告
         assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("hr_too_high"))
         assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("hr_too_low"))
-        assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("body_temp_high"))
-        assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("body_temp_low"))
         assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("night_frequent_wake"))
         assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("sensor_fault"))
         assertEquals(Severity.WARNING, AlarmCatalog.defaultSeverity("device_offline"))

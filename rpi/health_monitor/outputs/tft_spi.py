@@ -12,8 +12,8 @@
    每个都画三色条（红/绿/蓝）—— **颜色对得上、字能看清** 的那个就是它；
 3. **命令行自检**帮你一次试完：``python3 scripts/tft_check.py --controller auto``。
 
-接线（SPI0，与 MCP3002 共用总线，靠 **CS 片选**区分——两者不会打架）
--------------------------------------------------------------------
+接线（SPI0 —— **总线上只有 TFT 一个从设备**）
+---------------------------------------------------
 =============  ==================  ==========================================
 TFT 模块引脚    树莓派物理脚         说明
 =============  ==================  ==========================================
@@ -23,15 +23,15 @@ SCL / CLK      脚 23（GPIO11）    SPI0 SCLK
 SDA / MOSI/DIN 脚 19（GPIO10）    SPI0 MOSI
 RES / RST      脚 22（GPIO25）    复位（低电平复位）
 DC / RS        脚 18（GPIO24）    命令/数据选择（0=命令 1=数据）
-CS / CE        脚 26（GPIO7）     SPI0 **CE1** —— 本项目固定用它（CE0=脚 24 被 MCP3002 占用）
+CS / CE        脚 26（GPIO7）     SPI0 **CE1** —— 本项目固定用它（CE0=脚 24 空着不用）
 BLK / BL/LED   脚 1 或 33（3.3V） 背光；接 GPIO 可调光（可选）
 =============  ==================  ==========================================
 
-⚠️ **别与 MCP3002 抢同一个 CS**：SPI 是共享总线，**每个从设备必须有自己的片选**。
-本项目默认：MCP3002 = CE0（脚 24），**TFT = CE1（脚 26）**。
+⚠️ **SPI 是共享总线，每个从设备必须有自己的片选** —— 往后若在 SPI0 上再加器件，
+请用**另一个 CE**（或改用别的 GPIO 做片选），不要与 TFT 共用脚 26。
 
-真实 SPI 的两种后端（与 :mod:`health_monitor.sensors.mcp3002` 保持一致）
------------------------------------------------------------------------
+真实 SPI 的两种后端（与其它 SPI 驱动保持同一套后端选择）
+---------------------------------------------------------
 - 优先 ``spidev``（快，几十 KB 的帧缓冲也能刷得动）；
 - 没有 ``spidev`` 时退回 **``lgpio`` 手工 SPI**（树莓派 5 上 ``RPi.GPIO`` 不可用，
   所以只能走 lgpio）—— 慢一点，但能点亮。
@@ -508,7 +508,7 @@ class TftSpi(OutputDevice):
             + "；".join(self.init_attempts)
             + f"（最后错误：{type(last_error).__name__}: {last_error}）。排查："
             "1) `ls -l /dev/spidev0.*` 是否存在（没有就开 SPI）；"
-            "2) DC/RST/CS 三根线是否按文档接对（CS 别和 MCP3002 抢同一个片选）；"
+            "2) DC/RST/CS 三根线是否按文档接对（CS 用 CE1=脚 26）；"
             "3) VCC 先试 3.3V（部分模块要 5V 且自带稳压）；"
             "4) 用 `python3 scripts/tft_check.py --controller st7735` 逐个试并看颜色条"
         )
@@ -880,7 +880,7 @@ class TftSpi(OutputDevice):
                 f"偏移 col={self._col_offset_override if self._col_offset_override is not None else (spec.col_offset if spec else 0)}"
                 f"/row={self._row_offset_override if self._row_offset_override is not None else (spec.row_offset if spec else 0)}；"
                 "⚠️ 彩色屏只能显示 ASCII（中文请走 LCD/手机/语音）；"
-                "⚠️ CS 不要与 MCP3002 抢同一个片选（本项目 MCP3002=CE0、TFT=CE1）；"
+                "⚠️ CS 固定用 CE1（脚 26），别与总线上的其它器件共用片选；"
                 "颜色红蓝互换 ⇒ 把 bgr 设为 true（BGR/RGB 顺序）；"
                 "画面像底片（反色）⇒ 把 invert 设为 true；"
                 "边缘出现一条杂色/错位 ⇒ 用 col_offset / row_offset 微调（见 scripts/tft_check.py）"

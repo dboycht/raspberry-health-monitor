@@ -36,7 +36,6 @@ from .hal.models import (
     LightCommand,
     MotionSample,
     MotionState,
-    PrecisionTempSample,
     RangeSample,
     Sample,
     Severity,
@@ -132,30 +131,6 @@ class SimVitals(_SimBase):
         )
 
 
-class SimBodyTemp(_SimBase):
-    """模拟 TMP36 + MCP3002：36.5°C 附近波动，并给出 ADC 原始值与电压。"""
-
-    KIND = DeviceKind.PRECISION
-    NAME = "tmp36"
-
-    def __init__(self, temperature_c: float = 36.5, vref: float = 3.3, **kw: Any) -> None:
-        super().__init__(**kw)
-        self.temperature_c = temperature_c
-        self.vref = vref
-
-    def read(self) -> PrecisionTempSample:
-        self._require_open()
-        self._maybe_fail()
-        # 设定值即固定值（只叠加极小噪声）——剧本要能可靠地控制读数
-        temp = self.temperature_c + self._rng.uniform(-0.05, 0.05)
-        voltage = 0.75 + (temp - 25.0) * 0.010        # TMP36：10mV/°C，25°C 时 750mV
-        raw = int(round(voltage / self.vref * 1023.0))
-        return PrecisionTempSample(
-            device=self.name, temperature_c=round(temp, 2),
-            raw_adc=max(0, min(1023, raw)), voltage_v=round(voltage, 4),
-        )
-
-
 class SimAmbient(_SimBase):
     """模拟 DHT11：24~27°C、50~60%RH。"""
 
@@ -221,30 +196,6 @@ class SimRange(_SimBase):
         t = time.time() - self._t0
         cm = self.distance_cm + 3.0 * math.sin(t / 5.0)
         return RangeSample(device=self.name, distance_cm=round(cm, 1), echo_us=round(cm * 58.0, 1))
-
-
-class SimMCP3002(_SimBase):
-    """模拟 MCP3002：返回正弦变化的 ADC 原始值，供拓展功能使用。"""
-
-    KIND = DeviceKind.PRECISION
-    NAME = "mcp3002"
-
-    def __init__(self, channel: int = 0, vref: float = 3.3, **kw: Any) -> None:
-        super().__init__(**kw)
-        self.channel = channel
-        self.vref = vref
-
-    def read_raw(self, channel: int = 0) -> int:
-        self._require_open()
-        self._maybe_fail()
-        t = time.time() - self._t0
-        return int(round((0.5 + 0.4 * math.sin(t / 8.0 + channel)) * 1023))
-
-    def read(self) -> PrecisionTempSample:
-        raw = self.read_raw(self.channel)
-        return PrecisionTempSample(
-            device=self.name, raw_adc=raw, voltage_v=round(raw / 1023.0 * self.vref, 4),
-        )
 
 
 class SimButton(_SimBase):
@@ -404,8 +355,6 @@ class ConsoleLed(ConsoleOutput):
 _DRIVER_TRANSPORT: Dict[str, str] = {
     "max30102": "i2c",
     "dht11": "onewire",
-    "tmp36": "spi",
-    "mcp3002": "spi",
     "hc_sr501": "gpio",
     "hc_sr04": "gpio",
     "button": "gpio",
@@ -417,11 +366,9 @@ _DRIVER_TRANSPORT: Dict[str, str] = {
 
 _SIM_INPUTS: Dict[str, type] = {
     "max30102": SimVitals,
-    "tmp36": SimBodyTemp,
     "dht11": SimAmbient,
     "hc_sr501": SimMotion,
     "hc_sr04": SimRange,
-    "mcp3002": SimMCP3002,
     "button": SimButton,
 }
 
@@ -520,7 +467,7 @@ def _set_or_inject(device: Any, field: str, value: Any) -> bool:
 #: 之所以不"先试真驱动"：真驱动的数值由总线字节决定，剧本改不动它，
 #: 会让演示出现"我设了 128 bpm 但屏幕还是 72"这种自欺现象。
 _PLAYBACK_SIM_DRIVERS = {
-    "max30102", "tmp36", "dht11", "hc_sr501", "hc_sr04", "mcp3002", "button",
+    "max30102", "dht11", "hc_sr501", "hc_sr04", "button",
     "lcd1602", "bt_speaker", "buzzer", "led",
 }
 
@@ -560,23 +507,6 @@ class PlaybackRuntime(Runtime):
             _set_or_inject(dev, "spo2", spo2)
         if finger is not None:
             _set_or_inject(dev, "finger", finger)
-
-    def set_body_temp(self, temperature_c: float) -> None:
-        """设定体温（体温通道）。
-
-        ⚠️ 真实驱动把 ``temperature_c`` 做成**只读属性**，并在内部把"要测的温度"
-        换算成电压注入内层 ADC。回放模式因此**默认使用 :class:`SimBodyTemp`**
-        （见 :class:`FallbackFactory` 的 ``prefer_sim``），避免与驱动的私有字段耦合；
-        真驱动在场时这里退回"直接改可写字段"，改不动就如实提示（不静默失败）。
-        """
-        dev = self.devices.get("body_temp")
-        if dev is None:
-            return
-        if _set_or_inject(dev, "temperature_c", temperature_c):
-            return
-        self.script_warnings.append(
-            f"体温脚本未能改值：{type(dev).__name__} 的 temperature_c 只读且没有可用的注入接口"
-        )
 
     def set_ambient(self, temperature_c: Optional[float] = None, humidity_percent: Optional[float] = None) -> None:
         dev = self.devices.get("ambient")
@@ -641,11 +571,9 @@ class PlaybackRuntime(Runtime):
 
 __all__ = [
     "SimVitals",
-    "SimBodyTemp",
     "SimAmbient",
     "SimMotion",
     "SimRange",
-    "SimMCP3002",
     "SimButton",
     "ConsoleLcd",
     "ConsoleSpeaker",

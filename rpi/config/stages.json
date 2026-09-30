@@ -64,18 +64,18 @@
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
       "status": "cancelled",
       "cancelled_on": "2026-09-28",
-      "note": "❌ 用户决定取消（不做 ADC/TMP36 这一路）。2026-09-28 真机联调未验通：树莓派侧信号全部实测正常（CS/CLK/DIN），但回读线读数不稳定（三种读法互相矛盾）⇒ 判定为面包板/接线侧问题，排查成本超出该级价值。完整经过与教训见 ERROR.md E48。器件集合保留，是为了阶梯单调性与历史可读。"
+      "note": "❌ 用户决定取消（不做 ADC/TMP36 这一路）。2026-09-28 真机联调未验通：树莓派侧信号全部实测正常（CS/CLK/DIN），但回读线读数不稳定（三种读法互相矛盾）⇒ 判定为面包板/接线侧问题，排查成本超出该级价值。完整经过与教训见 ERROR.md E48。⚠️ 2026-10-01：用户决定**彻底删除** MCP3002/TMP36 的代码（驱动/测试/配置/报警码均已移除），本级条目**仅作阶梯历史保留**。"
     },
     "T6": {
       "title": "TMP36 精密体温（模拟量 → 温度）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
       "status": "cancelled",
       "cancelled_on": "2026-09-28",
-      "note": "❌ 随 T5 一并取消（它依赖 T5 的 ADC 自证）。⚠️ 代码与 71 项单测仍然保留（不依赖硬件、mock 可跑），报告里请如实写「已实现、未真机验证」。"
+      "note": "❌ 随 T5 一并取消（它依赖 T5 的 ADC 自证）。⚠️ 2026-10-01：用户决定**彻底删除** TMP36/MCP3002 的代码（驱动/测试/配置/报警码/`body_temp` 全部移除），本级条目**仅作阶梯历史保留**。"
     },
     "T7": {
       "title": "MAX30102 心率血氧",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals"],
       "status": "verified",
       "verified_on": "2026-09-29",
       "commit": "47bbb21",
@@ -83,12 +83,12 @@
     },
     "T8": {
       "title": "蓝牙音箱语音播报",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker"],
       "status": "planned"
     },
     "T9": {
       "title": "TFT 1.8\" SPI 彩屏",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
       "status": "verified",
       "verified_on": "2026-09-29",
       "commit": "7b1958f",
@@ -96,25 +96,25 @@
     },
     "T10": {
       "title": "服务化：HTTP API + 状态网页",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
       "status": "planned",
       "note": "到这里本级器件集合与 T9 相同；差别在『全部起服务』（S1–S10 逐项验收）"
     },
     "T11": {
       "title": "SQLite 历史与趋势",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
       "status": "planned",
       "note": "内核已具备；本级是『用起来』：连跑 30~60 分钟 + 历史接口 + 保留期清理"
     },
     "T12": {
       "title": "OneNET 上云（数据点 + 规则引擎转发）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
       "status": "planned",
       "note": "另需在板子的 devices.local.json 里开 onenet.enabled 并配密钥（密钥不入库）；平台接收已实测过 'accepted'"
     },
     "T13": {
       "title": "手机 App 联调 + 整机收口",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "body_temp", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
       "status": "planned",
       "note": "安卓端在局域网联调；本级还要填完 docs/07 的 54 项与准备答辩材料"
     }

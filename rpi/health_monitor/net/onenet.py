@@ -82,7 +82,6 @@ DEFAULT_PORT_TLS = 8883
 DEFAULT_STREAM_MAP: Dict[str, str] = {
     "heart_rate_bpm": "heart_rate",
     "spo2_percent": "spo2",
-    "body_temp_c": "body_temp",
     "ambient_temp_c": "ambient_temp",
     "humidity_percent": "humidity",
     "motion_state": "motion",
@@ -497,7 +496,7 @@ class OneNetPublisher(MqttPublisher):
     def publish_reading(self, summary: Dict[str, Any], ts: Optional[float] = None) -> None:
         """上报一次读数摘要（按 stream_map 映射成本地量 → 数据流名）。
 
-        ⚠️ **只上报本地量名**（``heart_rate_bpm`` / ``body_temp_c`` …，见 ``stream_map``）。
+        ⚠️ **只上报本地量名**（``heart_rate_bpm`` / ``ambient_temp_c`` …，见 ``stream_map``）。
         传进来的其它键会被忽略；若一个字段都没映射上，本调用**什么都不会发**，
         并且记一条 warning + 累加 ``skipped_empty`` ——
         **不允许"静默不发"**（2026-09-22 实测踩到：用自造键 ``probe_temp`` 调用，

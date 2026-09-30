@@ -35,7 +35,7 @@ BCM_ROLE: Dict[int, str] = {
     5: "GPIO（也叫 GPCLK0）",
     6: "GPIO（也叫 GPCLK1）",
     7: "SPI0 CE1（片选 1）",
-    8: "SPI0 CE0（片选 0，MCP3002 默认用它）",
+    8: "SPI0 CE0（片选 0，本项目空着不用）",
     9: "SPI0 MISO（D_OUT）",
     10: "SPI0 MOSI（D_IN）",
     11: "SPI0 SCLK（时钟）",

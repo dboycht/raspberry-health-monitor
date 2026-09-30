@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """精细诊断：为什么"能扫到地址"却"读不到数据"。
 
-两个具体问题：
-  ① MAX3010x：i2cdetect 能看到 0x57，但"版本号"读不对；
-  ② TMP36+MCP3002：SPI 能打开，但 ADC 读数全是 None。
+具体问题：MAX3010x —— i2cdetect 能看到 0x57，但"版本号"读不对。
 
-⚠️ **关于 ① 的重要更正（2026-09-29 真机，`ERROR.md` E49）**：
+⚠️ **重要更正（2026-09-29 真机，`ERROR.md` E49）**：
 早前把"0x21 读到 0x00"当成"器件可疑/假片"，**是误判**。MAX3010x 系有**两套已知布局**：
 
     MAX30102/MAX30101：0x21 = PART_ID（应读回 0x15）
@@ -15,8 +13,7 @@
 若立刻报出一个像室温的温度，说明 0x21 是 TEMP_EN（MAX30105 布局），版本号在 0xFF。
 所以本脚本**两个地址都读**，并且能区分"器件可疑"与"布局不同"。
 
-本脚本的 MAX3010x 部分会**写** 0x21（只为验 TEMP_EN，取证实用）与恢复原始值；
-TMP36/MCP3002 部分只读。
+本脚本的 MAX3010x 部分会**写** 0x21（只为验 TEMP_EN，取证实用）与恢复原始值。
 """
 
 from __future__ import annotations
@@ -137,52 +134,8 @@ def diag_max30102() -> None:
     bus.close()
 
 
-def diag_tmp36_mcp3002() -> None:
-    section("② TMP36 + MCP3002（SPI0.0，CE0）")
-    try:
-        import spidev
-    except ImportError:
-        safe_print("  ❌ 未安装 spidev")
-        return
-
-    spi = spidev.SpiDev()
-    try:
-        spi.open(0, 0)
-        spi.max_speed_hz = 1_000_000
-        spi.mode = 0
-    except Exception as exc:  # noqa: BLE001
-        safe_print(f"  ❌ 打开 SPI0.0 失败：{exc}")
-        return
-
-    print("  读 CH0 与 CH1 各 5 次（MCP3002 单端模式；raw 0~1023）：")
-    for channel in (0, 1):
-        # MCP3002 单端：起始位1 + SGL/DIFF=1 + ODD/SIGN=channel + 填充 → 0x60 | (channel<<5)
-        cmd = [0x60 | (channel << 5), 0x00]
-        raws = []
-        for _ in range(5):
-            resp = spi.xfer2(cmd)
-            raw = ((resp[0] & 0x03) << 8) | resp[1]
-            raws.append(raw)
-            time.sleep(0.02)
-        volts = [r / 1023.0 * 3.3 for r in raws]
-        print(f"    CH{channel}: raw={raws}　电压≈{[round(v, 3) for v in volts]} V")
-        if all(r == 0 for r in raws):
-            safe_print("      ⚠️ 全是 0：MCP3002 没回应（CS/CLK/DIN/DOUT 接线或供电）")
-        elif all(r == 1023 for r in raws):
-            safe_print("      ⚠️ 全是 1023：输入饱和（CH 接到 3.3V 了？或 TMP36 供电接了 5V）")
-        elif channel == 0:
-            temp = [(r / 1023.0 * 3.3 - 0.5) * 100 for r in raws]
-            safe_print(f"      → 按 TMP36 公式换算温度：{[round(t, 1) for t in temp]} ℃")
-            safe_print("      （室温应 20~30 ℃；若约 50 ℃ 说明公式没用 0.5V 偏移）")
-    spi.close()
-    print("\n  结论提示：")
-    print("    · CH0 与 CH1 都恒定相同值 → 很可能 MCP3002 没工作（先查 CS=物理脚24 与供电）")
-    print("    · CH0 有变化但 TMP36 没接 → 那是悬空引脚在飘（接上 TMP36 中脚到 CH0）")
-    print("    · 别忘了 TMP36 与 MCP3002 必须**共地**、都用 3.3V")
-
-
 def diag_dht11() -> None:
-    section("③ DHT11（GPIO4 = 物理脚 7）")
+    section("② DHT11（GPIO4 = 物理脚 7）")
     from health_monitor.sensors.dht11 import Dht11
 
     dev = Dht11(pin=4, retries=3, min_interval_s=2.0)
@@ -211,7 +164,6 @@ def main() -> int:
     print("精细诊断：能扫到地址 ≠ 能读到数据")
     print("=" * 74)
     diag_max30102()
-    diag_tmp36_mcp3002()
     diag_dht11()
     return 0
 

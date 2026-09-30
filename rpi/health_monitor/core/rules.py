@@ -26,7 +26,6 @@ from ..hal.models import (
     AmbientSample,
     MotionSample,
     MotionState,
-    PrecisionTempSample,
     Severity,
     VitalSignsSample,
     now_ts,
@@ -86,7 +85,6 @@ class ReadingSnapshot:
 
     ts: float = field(default_factory=now_ts)
     vitals: Optional[VitalSignsSample] = None
-    body_temp: Optional[PrecisionTempSample] = None
     ambient: Optional[AmbientSample] = None
     motion: Optional[MotionSample] = None
     motion_silent_s: Optional[float] = None       # 距上次检测到人的秒数
@@ -118,7 +116,6 @@ class ReadingSnapshot:
         安卓端必须把 ``None`` 渲染成"未知"，**不能渲染成 0**。
         """
         v = self.vitals
-        b = self.body_temp
         a = self.ambient
         m = self.motion
         return {
@@ -127,7 +124,6 @@ class ReadingSnapshot:
             "spo2_percent": v.spo2_percent if v else None,
             "finger_detected": v.finger_detected if v else None,
             "vitals_quality": v.quality if v else None,
-            "body_temp_c": b.temperature_c if b else None,
             "ambient_temp_c": a.temperature_c if a else None,
             "humidity_percent": a.humidity_percent if a else None,
             "motion_state": m.state.value if m else None,
@@ -206,18 +202,7 @@ class RuleEngine:
                         value=v.spo2_percent, unit="%", source=v.device,
                     )
 
-        # ---- 2. 精密体温 ----
-        bt = snap.body_temp
-        if bt is not None and bt.ok and bt.temperature_c is not None:
-            ev = self._check_high_low(
-                snap.ts, AlarmCode.BODY_TEMP_HIGH, AlarmCode.BODY_TEMP_LOW,
-                bt.temperature_c, self.th.body_temp_min, self.th.body_temp_max, "°C",
-                "体温", bt.device,
-            )
-            if ev:
-                triggered[ev.code] = ev
-
-        # ---- 3. 环境温湿度（只提示，不紧急） ----
+        # ---- 2. 环境温湿度（只提示，不紧急） ----
         am = snap.ambient
         if am is not None and am.ok:
             if am.temperature_c is not None:
@@ -237,7 +222,7 @@ class RuleEngine:
                     value=am.humidity_percent, unit="%", source=am.device,
                 )
 
-        # ---- 4. 久无活动 / 夜间频繁起夜 ----
+        # ---- 3. 久无活动 / 夜间频繁起夜 ----
         motion = snap.motion
         if motion is not None and motion.state is not MotionState.UNKNOWN:
             if motion.detected:
@@ -279,16 +264,16 @@ class RuleEngine:
                     value=float(len(self._night_wakes)), unit="次", source=motion.device,
                 )
 
-        # ---- 5. 登记报警态（★必须在冷却过滤之前） ----
+        # ---- 4. 登记报警态（★必须在冷却过滤之前） ----
         for code, ev in triggered.items():
             self._active.setdefault(code, ev.ts)
 
-        # ---- 6. 冷却过滤：同一报警在冷却期内只提醒一次（但不影响"仍在报警"这个状态） ----
+        # ---- 5. 冷却过滤：同一报警在冷却期内只提醒一次（但不影响"仍在报警"这个状态） ----
         for code, ev in triggered.items():
             if self._cooldown_ok(code, ev.ts):
                 events.append(ev)
 
-        # ---- 7. 传感器故障（数据缺失必须显式上报，绝不当成正常） ----
+        # ---- 6. 传感器故障（数据缺失必须显式上报，绝不当成正常） ----
         for device, count in snap.sensor_failures.items():
             if count >= self.th.sensor_fault_after:
                 key = f"{AlarmCode.SENSOR_FAULT.value}:{device}"
@@ -307,7 +292,7 @@ class RuleEngine:
                         )
                     )
 
-        # ---- 8. 恢复（ALL_CLEAR） ----
+        # ---- 7. 恢复（ALL_CLEAR） ----
         events.extend(self._recoveries(snap, triggered))
 
         events.sort(key=lambda e: -int(e.severity))
@@ -442,9 +427,6 @@ class RuleEngine:
             # 于是**一次低血氧读数会让报警永久卡住**、每 5 秒重发到天荒地老
             # （2026-09-30 真机实测到第 32 次，红灯一直闪 + 4 声蜂鸣）。
             return not bool(getattr(v, "awaiting_data", False))
-        if code in (AlarmCode.BODY_TEMP_HIGH, AlarmCode.BODY_TEMP_LOW):
-            b = snap.body_temp
-            return b is None or not b.ok or b.temperature_c is None
         if code in (AlarmCode.AMBIENT_TEMP_HIGH, AlarmCode.AMBIENT_TEMP_LOW, AlarmCode.HUMIDITY_HIGH):
             a = snap.ambient
             return a is None or not a.ok
@@ -458,8 +440,6 @@ class RuleEngine:
             AlarmCode.HR_TOO_HIGH: "心率偏高",
             AlarmCode.HR_TOO_LOW: "心率偏低",
             AlarmCode.SPO2_TOO_LOW: "血氧偏低",
-            AlarmCode.BODY_TEMP_HIGH: "体温偏高",
-            AlarmCode.BODY_TEMP_LOW: "体温偏低",
             AlarmCode.AMBIENT_TEMP_HIGH: "室温偏高",
             AlarmCode.AMBIENT_TEMP_LOW: "室温偏低",
             AlarmCode.HUMIDITY_HIGH: "湿度偏高",

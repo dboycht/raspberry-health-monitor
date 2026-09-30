@@ -23,7 +23,6 @@ DEMO = {
     "thresholds": {"no_motion_timeout_s": 60, "repeat_cooldown_s": 0},
     "devices": {
         "vitals": {"driver": "max30102", "read_interval_s": 1.0},
-        "body_temp": {"driver": "tmp36", "read_interval_s": 1.0},
         "ambient": {"driver": "dht11", "read_interval_s": 3.0},
         "motion": {"driver": "hc_sr501", "read_interval_s": 0.5},
         "display": {"driver": "lcd1602", "read_interval_s": 1.0},
@@ -86,9 +85,9 @@ class TestStatusPage(unittest.TestCase):
         self.assertNotIn("https://cdn", page)
         self.assertNotIn("<script src", page)
 
-    def test_六张指标卡都在(self) -> None:
+    def test_五张指标卡都在(self) -> None:
         page = render_page(self.rt)
-        for title in ("心率", "血氧", "体温（精密）", "室温 / 湿度", "活动状态", "数据年龄"):
+        for title in ("心率", "血氧", "室温 / 湿度", "活动状态", "数据年龄"):
             self.assertIn(title, page, f"缺少指标卡：{title}")
 
     def test_正常状态显示正常横幅(self) -> None:
@@ -122,7 +121,7 @@ class TestStatusPage(unittest.TestCase):
 
     def test_设备状态表列出每个设备(self) -> None:
         page = render_page(self.rt)
-        for name in ("vitals", "body_temp", "ambient", "motion"):
+        for name in ("vitals", "ambient", "motion"):
             self.assertIn(name, page)
         self.assertIn("设备状态", page)
         self.assertIn("连续失败", page)

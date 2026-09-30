@@ -7,7 +7,7 @@
 于是只剩两种可能，本脚本用两个实验分开：
 
 实验 A「脚 1 / 脚 6 是否真的带电」
-    只用**读**：跑 `python3 scripts/diag_pin_levels.py --adc` 之类会误伤，
+    只用**读**：跑 `python3 scripts/pin_probe.py --pulse` 之类会翻转引脚、干扰判断，
     所以这里用"整机状态"侧写：读取 `/proc/device-tree` 无关，
     改为**提示人工**用万用表量 脚1-脚6 ≈ 3.3V（脚本给出判据）。
 

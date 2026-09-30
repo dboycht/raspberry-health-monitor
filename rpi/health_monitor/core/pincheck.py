@@ -28,7 +28,6 @@ EXCLUSIVE_PIN_KEYS: Dict[str, Tuple[str, ...]] = {
     "buzzer": ("pin",),
     "button": ("pin",),
     "tft_spi": ("dc_pin", "reset_pin"),
-    "mcp3002": ("cs_pin",),
 }
 
 

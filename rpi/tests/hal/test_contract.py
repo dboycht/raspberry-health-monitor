@@ -23,7 +23,6 @@ from health_monitor.hal import (
     MockBus,
     MotionSample,
     MotionState,
-    PrecisionTempSample,
     Severity,
     SpeakCommand,
     VitalSignsSample,
@@ -47,12 +46,6 @@ class TestModels(unittest.TestCase):
         self.assertIsNone(v.heart_rate_bpm)
         self.assertIsNone(v.spo2_percent)
         self.assertFalse(v.finger_detected)
-
-    def test_精密温度保留原始ADC值(self) -> None:
-        """报告里要写"电压→温度"的换算推导，所以 raw_adc / voltage_v 必须保留。"""
-        s = PrecisionTempSample(temperature_c=25.0, raw_adc=465, voltage_v=0.75)
-        self.assertEqual(s.raw_adc, 465)
-        self.assertAlmostEqual(s.voltage_v, 0.75)
 
     def test_严重度可比较(self) -> None:
         self.assertGreater(Severity.CRITICAL, Severity.WARNING)

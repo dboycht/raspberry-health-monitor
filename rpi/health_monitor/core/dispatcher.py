@@ -72,14 +72,6 @@ PRESENTATION_TABLE: Dict[AlarmCode, AlarmPresentation] = {
         speak="血氧偏低，请立即查看", beep_times=4, beep_on_ms=250, beep_off_ms=120,
         light="red", blink=True, lcd_lines=("ALARM: SPO2 LOW", ""),
     ),
-    AlarmCode.BODY_TEMP_HIGH: AlarmPresentation(
-        speak="体温偏高，请注意观察", beep_times=2, beep_on_ms=200, beep_off_ms=200,
-        light="yellow", blink=False, lcd_lines=("ALARM: TEMP HIGH", ""),
-    ),
-    AlarmCode.BODY_TEMP_LOW: AlarmPresentation(
-        speak="体温偏低，请注意保暖", beep_times=2, beep_on_ms=200, beep_off_ms=200,
-        light="yellow", blink=False, lcd_lines=("ALARM: TEMP LOW", ""),
-    ),
     AlarmCode.AMBIENT_TEMP_HIGH: AlarmPresentation(
         speak="室温偏高，建议通风", beep_times=1, light="yellow", blink=False,
         lcd_lines=("ROOM TEMP HIGH", ""),

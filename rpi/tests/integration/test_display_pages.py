@@ -155,7 +155,7 @@ class TestPageTexts(unittest.TestCase):
 
     def test_报警页在有故障时提示FAULT(self) -> None:
         snap = type("S", (), {"vitals": None, "ambient": None,
-                              "sensor_failures": {"body_temp": 3}})()
+                              "sensor_failures": {"ambient": 3}})()
         lines = display_page_lines(2, snap, alarm_count=5, last_alarm="sensor_fault")
         self.assertIn("FAULT", lines[0])
 

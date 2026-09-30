@@ -208,7 +208,6 @@ class MqttPublisher:
             "heart_rate_bpm": summary.get("heart_rate_bpm"),
             "spo2_percent": summary.get("spo2_percent"),
             "finger_detected": summary.get("finger_detected"),
-            "body_temp_c": summary.get("body_temp_c"),
             "ambient_temp_c": summary.get("ambient_temp_c"),
             "humidity_percent": summary.get("humidity_percent"),
             "motion_state": summary.get("motion_state"),

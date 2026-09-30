@@ -60,7 +60,7 @@ ECHO 一直不拉高（模块没接好/超出量程/物体太软吸声）时，*
 3. **量程校验**：2~400cm 之外一律 ``ok=False``（``distance_cm=None``，符合
    :class:`~health_monitor.hal.models.RangeSample` 的约定："超量程或回波超时为 None"）。
 4. **温度补偿**：声速 ``v = 331.3 + 0.606*T`` m/s。默认按 20°C 算；
-   若项目里已有 TMP36/DHT11，建议把实测温度传进 ``temperature_c``（例如放在
+   若项目里已有 DHT11 这类温度源，建议把实测温度传进 ``temperature_c``（例如放在
    ``core/`` 的装配代码里设置 ``hc.temperature_c = 实测值``）。
 
 负责人占位

@@ -30,8 +30,6 @@ ALARM_LABELS: Dict[str, str] = {
     "hr_too_high": "心率过高",
     "hr_too_low": "心率过低",
     "spo2_too_low": "血氧过低",
-    "body_temp_high": "体温偏高",
-    "body_temp_low": "体温偏低",
     "ambient_temp_high": "室温偏高",
     "ambient_temp_low": "室温偏低",
     "humidity_high": "湿度过高",
@@ -155,7 +153,6 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
               state="warn" if finger is False else ""),
         _card("血氧", summary.get("spo2_percent"), " %",
               "未测出（未贴合手指）" if finger is False else ""),
-        _card("体温（精密）", summary.get("body_temp_c"), " ℃", "TMP36 + MCP3002", digits=1),
         _card(
             "室温 / 湿度",
             f"{_fmt(summary.get('ambient_temp_c'), '', 1)[0]} ℃ / "
@@ -288,10 +285,6 @@ THRESHOLD_GROUPS: List[Tuple[str, List[Tuple[str, str, str]]]] = [
     ("血氧", [
         ("spo2_min", "血氧下限", "%"),
     ]),
-    ("体温（精密，TMP36）", [
-        ("body_temp_min", "体温下限", "℃"),
-        ("body_temp_max", "体温上限", "℃"),
-    ]),
     ("环境（DHT11）", [
         ("ambient_temp_min", "室温下限", "℃"),
         ("ambient_temp_max", "室温上限", "℃"),
@@ -386,7 +379,6 @@ function clientCheck(p) {
     return '';
   }
   var bad = pair('hr_min', 'hr_max', '心率')
-         || pair('body_temp_min', 'body_temp_max', '体温')
          || pair('ambient_temp_min', 'ambient_temp_max', '室温');
   if (bad) { return bad; }
   if (t.spo2_min !== undefined && !(t.spo2_min > 0 && t.spo2_min <= 100)) {

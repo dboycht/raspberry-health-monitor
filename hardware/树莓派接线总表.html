@@ -42,14 +42,14 @@
 <tr><td>I2C1</td><td>LCD1602 液晶</td><td>0x27 或 0x3F（自动探测）</td><td>3(SDA) / 5(SCL)</td></tr>
 <tr><td>单总线</td><td>DHT11 温湿度</td><td>—</td><td>7 (GPIO4)</td></tr>
 <tr><td>GPIO</td><td>HC-SR501 人体红外</td><td>—</td><td>VCC=2(5V) / OUT=11(GPIO17) / GND=6</td></tr>
-<tr><td>SPI0</td><td>MCP3002 ADC（带 TMP36）</td><td>CE0 = 脚24</td><td>19/21/23/24</td></tr>
+<tr><td>SPI0</td><td>TFT 彩屏（ST7735S）</td><td>CE1 = 脚26</td><td>19/23/26</td></tr>
 <tr><td>SPI0</td><td>TFT 彩屏 1.8 寸</td><td>CE1 = 脚26</td><td>19/23/26/18/22</td></tr>
 <tr><td>GPIO</td><td>蜂鸣器</td><td>—</td><td>12 (GPIO18)</td></tr>
 <tr><td>GPIO</td><td>LED 绿／黄／红</td><td>—</td><td>15 / 16 / 18</td></tr>
 <tr><td>GPIO</td><td>求救按键</td><td>—</td><td>13 (GPIO27)</td></tr>
 <tr><td>GPIO</td><td>（拓展）HC-SR04 超声波</td><td>—</td><td>29 / 31 + 电平转换</td></tr>
 </tbody></table>
-<blockquote>供电原则（<strong>照这个接，别照别的</strong>）：<br><strong>3.3V（脚 1/17）</strong>：MAX30102、DHT11、TMP36、MCP3002、TFT<br><strong>5V（脚 2/4）</strong>：<strong>LCD1602</strong>、<strong>HC-SR501</strong>、（拓展）HC-SR04<br>把 5V 给 3.3V 器件可能烧器件；把 3.3V 给 LCD1602 会"几乎全黑"（对比度不足）。</blockquote>
+<blockquote>供电原则（<strong>照这个接，别照别的</strong>）：<br><strong>3.3V（脚 1/17）</strong>：MAX30102、DHT11、TFT<br><strong>5V（脚 2/4）</strong>：<strong>LCD1602</strong>、<strong>HC-SR501</strong>、（拓展）HC-SR04<br>把 5V 给 3.3V 器件可能烧器件；把 3.3V 给 LCD1602 会"几乎全黑"（对比度不足）。</blockquote>
 <p><strong>两条最重要的红线</strong></p>
 <ul>
 <li><strong>插拔任何杜邦线之前，先断电</strong>（带电插拔最容易烧 GPIO；硬拔电源还会坏 SD 卡）。</li>
@@ -67,8 +67,6 @@
 <tr><td>DHT11</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>14</strong></td></tr>
 <tr><td>HC-SR501</td><td>脚 <strong>2</strong>（5V）</td><td>脚 <strong>20</strong></td></tr>
 <tr><td>TFT 彩屏</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>39</strong></td></tr>
-<tr><td>MCP3002</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>30</strong></td></tr>
-<tr><td>TMP36</td><td>脚 <strong>1</strong>（3.3V）</td><td>脚 <strong>34</strong></td></tr>
 <tr><td>LED 绿/黄（共阴）</td><td>—（阴极不接电源）</td><td>脚 <strong>39</strong>（与 TFT、蜂鸣器共用一个 GND 脚即可）</td></tr>
 <tr><td>蜂鸣器</td><td>—（<code>+</code> 接脚 12）</td><td>脚 <strong>39</strong>（与 LED 共地即可）</td></tr>
 <tr><td>求救按键</td><td>一端接脚 13</td><td>另一端 → 脚 <strong>25</strong></td></tr>
@@ -88,7 +86,7 @@
 <table>
 <thead><tr><th>物理脚</th><th>BCM</th><th>固定功能</th><th>接谁</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>—</td><td>3.3V（500 mA 上限）</td><td>MAX30102 VIN、DHT11 VCC、<strong>TMP36 +VS</strong>、MCP3002 VDD、TFT VCC</td></tr>
+<tr><td>1</td><td>—</td><td>3.3V（500 mA 上限）</td><td>MAX30102 VIN、DHT11 VCC、TFT VCC</td></tr>
 <tr><td>2</td><td>—</td><td><strong>5V</strong></td><td><strong>LCD1602 转接板 VCC</strong>、<strong>HC-SR501 VCC</strong>（两者都必须 5V）；拓展 HC-SR04 VCC</td></tr>
 <tr><td>3</td><td>GPIO2</td><td>I2C1 SDA</td><td>MAX30102 SDA ＋ LCD SDA（并挂）</td></tr>
 <tr><td>5</td><td>GPIO3</td><td>I2C1 SCL</td><td>MAX30102 SCL ＋ LCD SCL（并挂）</td></tr>
@@ -103,18 +101,17 @@
 <tr><td>16</td><td>GPIO23</td><td>GPIO</td><td>LED 黄</td></tr>
 <tr><td>17</td><td>—</td><td>3.3V</td><td>TFT 背光 LED</td></tr>
 <tr><td>18</td><td>GPIO24</td><td>GPIO</td><td>LED 红 ／（TFT 启用时改为 TFT A0）见第 5 节</td></tr>
-<tr><td>19</td><td>GPIO10</td><td>SPI0 MOSI</td><td>MCP3002 DIN ＋ TFT SDA</td></tr>
+<tr><td>19</td><td>GPIO10</td><td>SPI0 MOSI</td><td><strong>TFT SDA</strong></td></tr>
 <tr><td>20</td><td>—</td><td>GND</td><td>HC-SR501 GND</td></tr>
-<tr><td>21</td><td>GPIO9</td><td>SPI0 MISO</td><td>MCP3002 DOUT</td></tr>
+<tr><td>21</td><td>GPIO9</td><td>SPI0 MISO</td><td>空闲（本项目无 SPI 输入器件）</td></tr>
 <tr><td>22</td><td>GPIO25</td><td>GPIO</td><td>TFT RESET</td></tr>
-<tr><td>23</td><td>GPIO11</td><td>SPI0 SCLK</td><td>MCP3002 CLK ＋ TFT SCK</td></tr>
-<tr><td>24</td><td>GPIO8</td><td>SPI0 CE0</td><td><strong>MCP3002 CS（独占，不许给别人）</strong></td></tr>
+<tr><td>23</td><td>GPIO11</td><td>SPI0 SCLK</td><td><strong>TFT SCK</strong></td></tr>
+<tr><td>24</td><td>GPIO8</td><td>SPI0 CE0</td><td>空闲（本项目空着不用）</td></tr>
 <tr><td>25</td><td>—</td><td>GND</td><td><strong>求救按键另一端</strong></td></tr>
 <tr><td>26</td><td>GPIO7</td><td>SPI0 CE1</td><td><strong>TFT CS（独占，不许给别人）</strong></td></tr>
 <tr><td>29</td><td>GPIO5</td><td>GPIO</td><td>（拓展）HC-SR04 TRIG</td></tr>
-<tr><td>30</td><td>—</td><td>GND</td><td>MCP3002 VSS（GND）</td></tr>
+<tr><td>30</td><td>—</td><td>GND</td><td>公共地</td></tr>
 <tr><td>31</td><td>GPIO6</td><td>GPIO</td><td>（拓展）HC-SR04 ECHO（<strong>须电平转换</strong>）</td></tr>
-<tr><td>34</td><td>—</td><td>GND</td><td><strong>TMP36 GND</strong></td></tr>
 <tr><td>39</td><td>—</td><td>GND</td><td>LED 阴极共地 ＋ 蜂鸣器 <code>−</code>（拓展 HC-SR04 GND 也接这里）</td></tr>
 </tbody></table>
 <hr>
@@ -184,53 +181,18 @@
 </tbody></table>
 <p>程序已启用 GPIO27 内部上拉，<strong>不需要</strong>外接上拉电阻：按下即为低电平。</p>
 <hr>
-<h2>3. SPI 器件：TMP36 精密测温</h2>
-<p><strong>原理必须先讲清楚</strong>：树莓派<strong>没有模拟输入脚</strong>。TMP36 输出的是模拟电压，<br>所以<strong>必须</strong>经过 MCP3002 这个 ADC 芯片，程序读的是 ADC 转换结果。</p>
-<h3>3.1 MCP3002（ADC，使用 CE0）</h3>
+<h2>3. SPI 总线（本项目只挂 TFT 一个从设备）</h2>
+<p><strong>先说一个知识点</strong>：树莓派<strong>没有模拟输入脚</strong>。早期计划用 <strong>TMP36（模拟输出）+ MCP3002（SPI ADC）</strong><br>补上"精密体温"，该路线已于 <strong>2026-09-28 由用户决定取消</strong>、<strong>相关代码与接线已于 2026-10-01 彻底删除</strong><br>（为什么取消、踩了什么坑，见 <code>ERROR.md</code> <strong>E48</strong>）。</p>
+<p>于是 SPI0 上现在<strong>只剩 TFT 一个从设备</strong>：</p>
 <table>
-<thead><tr><th>MCP3002 脚</th><th>接树莓派物理脚</th><th>说明</th></tr></thead>
+<thead><tr><th>项目</th><th>值</th><th>说明</th></tr></thead>
 <tbody>
-<tr><td>VDD / VCC</td><td>1</td><td>3.3V</td></tr>
-<tr><td>VSS / GND</td><td><strong>30</strong></td><td>GND（见第 0.5 节的 GND 分配）</td></tr>
-<tr><td>CLK</td><td>23</td><td>GPIO11 / SCLK</td></tr>
-<tr><td>DIN</td><td>19</td><td>GPIO10 / MOSI</td></tr>
-<tr><td>DOUT</td><td>21</td><td>GPIO9 / MISO</td></tr>
-<tr><td>CS</td><td>24</td><td>GPIO8 / CE0，独占</td></tr>
-<tr><td>CH0</td><td>← TMP36 VOUT</td><td>体温通道</td></tr>
-<tr><td>CH1</td><td>空闲</td><td>可接 10kΩ 电位器做拓展</td></tr>
+<tr><td>总线</td><td><strong>SPI0</strong>（<code>/dev/spidev0.1</code>）</td><td>树莓派 5 默认 4 线 SPI0</td></tr>
+<tr><td>片选</td><td><strong>CE1 = GPIO7 = 物理脚 26</strong></td><td>TFT 的 CS</td></tr>
+<tr><td>MISO（脚 21）</td><td><strong>空闲</strong></td><td>本项目没有需要 MISO 的 SPI 器件</td></tr>
+<tr><td>CE0（脚 24）</td><td><strong>空闲</strong></td><td>空着不用</td></tr>
 </tbody></table>
-<h3>3.2 TMP36（模拟温度，接 CH0）</h3>
-<table>
-<thead><tr><th>TMP36 脚</th><th>接哪</th><th>说明</th></tr></thead>
-<tbody>
-<tr><td>左脚 (+Vs)</td><td>物理脚 1（3.3V）</td><td></td></tr>
-<tr><td>中脚 (VOUT)</td><td>MCP3002 的 CH0</td><td></td></tr>
-<tr><td>右脚 (GND)</td><td>物理脚 34（GND）</td><td>与树莓派共地</td></tr>
-<tr><td>去耦电容</td><td>V+ 与 GND 之间并 0.1µF</td><td>强烈建议，能明显稳住读数</td></tr>
-</tbody></table>
-<p>注意：TMP36 与 MCP3002 必须共地，且都用 3.3V。用 5V 给 ADC 会超出其输入范围。</p>
-<h4>3.2.1 先确认封装（决定能不能直接插面包板）</h4>
-<table>
-<thead><tr><th>封装</th><th>长相</th><th>怎么办</th></tr></thead>
-<tbody>
-<tr><td><strong>TO-92</strong></td><td>三脚直插小黑块（像普通三极管）</td><td>✅ 直接插面包板</td></tr>
-<tr><td><strong>SOT-23</strong></td><td>贴片（米粒大小、无长脚）</td><td>⚠️ <strong>必须焊到 SOT-23 转 DIP 转接板</strong>才能插面包板</td></tr>
-</tbody></table>
-<h4>3.2.2 认脚方向（插反会读数离谱）</h4>
-<p>拿 TMP36 时<strong>平面（有字的那面）朝自己</strong>，三只脚从左到右依次是：</p>
-<pre><code>   ┌─────────┐
-   │  TMP36  │   ← 平面朝自己
-   └─┬──┬──┬─┘
-     │  │  │
-    1   2   3
-   +Vs VOUT GND
-   (3.3V) (→CH0) (GND)</code></pre>
-<h4>3.2.3 最容易错的一点：公式里必须减掉 0.5V 偏移</h4>
-<p>TMP36 的输出<strong>不是</strong>"电压直接对应温度"，而是带有 <strong>500 mV 的固定偏移</strong>：</p>
-<pre><code>温度(℃) = (Vout 毫伏 − 500) / 10</code></pre>
-<p>例：Vout = 750 mV ⇒ (750 − 500)/10 = <strong>25.0 ℃</strong>。</p>
-<p><strong>判断有没有踩这个坑</strong>：室温下如果读数显示 <strong>50 ℃ 左右</strong>，就是漏减了 0.5V；<br>显示 <strong>0 ℃ 附近</strong>说明接线或通道选错。</p>
-<p>本项目驱动 <code>sensors/tmp36.py</code> 已按上式实现，并用 <code>calibration_offset_c</code> 做单点校准<br>（默认 0，读数有固定偏差时改它）。</p>
+<p>⚠️ SPI 是<strong>共享总线，每个从设备必须有自己的片选</strong> —— 往后若要在 SPI0 上加器件，<br>请用<strong>另一个片选</strong>，<strong>不要与 TFT 共用脚 26</strong>。</p>
 <hr>
 <h2>4. TFT 彩屏 1.8 寸（丝印 1.8TFT SPI 128*160，控制器 ST7735S）</h2>
 <table>
@@ -238,8 +200,8 @@
 <tbody>
 <tr><td>VCC</td><td>1</td><td>3.3V</td></tr>
 <tr><td>GND</td><td><strong>25</strong></td><td>GND（见第 0.5 节的 GND 分配）</td></tr>
-<tr><td>SCK</td><td>23</td><td>与 MCP3002 共用 SPI 时钟</td></tr>
-<tr><td>SDA</td><td>19</td><td>与 MCP3002 共用 MOSI</td></tr>
+<tr><td>SCK</td><td>23</td><td>GPIO11 / SPI0 SCLK</td></tr>
+<tr><td>SDA</td><td>19</td><td>GPIO10 / SPI0 MOSI</td></tr>
 <tr><td>CS</td><td>26</td><td>GPIO7 / CE1，独占</td></tr>
 <tr><td>A0</td><td>18</td><td>GPIO24，即 DC／RS（命令与数据选择）</td></tr>
 <tr><td>RESET</td><td>22</td><td>GPIO25</td></tr>
@@ -248,9 +210,7 @@
 <h3>4.1 撞脚问题：<strong>已于 2026-09-26 解决</strong>（红灯改接脚 32）</h3>
 <p>历史：早期<strong>红灯</strong>用 GPIO24（脚 18），而 TFT 的 <strong>A0</strong> 也是 GPIO24 ⇒ 两者不能同时接。<br><strong>2026-09-26 起红灯改接 GPIO12（物理脚 32）</strong>（<code>rpi/config/devices.json</code> 里<br><code>status_led.pins.red = 12</code>），所以<strong>现在 TFT（脚 18）与三色指示灯可以同时接</strong>。</p>
 <p>⚠️ 本节此前的版本写着"<strong>建议不接红灯</strong>"（方案 B）—— <strong>那条已作废</strong>，别再照它做。<br>（当初的方案 A/B/C 取舍保留在 <code>docs/14</code> 的分级记录里供追溯，见 T2 那一轮。）</p>
-<p>唯一还需要当心的"撞脚"是<strong>片选</strong>：<strong>TFT 的 CS 必须用脚 26（CE1）</strong>，<br>不要与 MCP3002 的 CE0（脚 24）混 —— SPI 是总线式，两个从机靠片选区分，配置里已经定好。</p>
-<h3>4.2 TFT 与 MCP3002 可以同时接</h3>
-<p>SPI 是总线式，支持多个从设备，前提是<strong>片选分开</strong>：MCP3002 用 CE0（脚 24）、<br>TFT 用 CE1（脚 26）。这一点本项目已配置好，不需要额外处理。</p>
+<p>唯一还需要当心的"撞脚"是<strong>片选</strong>：<strong>TFT 的 CS 必须用脚 26（CE1）</strong>，<br>SPI 是总线式，往后加器件请另用一个片选（CE0=脚 24 现在空着）。</p>
 <hr>
 <h2>5. 拓展件（默认关闭，先不要接）</h2>
 <h3>5.1 HC-SR04 超声波测距</h3>
@@ -270,7 +230,7 @@
 <tbody>
 <tr><td>断电插拔</td><td>任何接线、改线<strong>先断电</strong>（拔电源或 <code>sudo poweroff</code>）</td></tr>
 <tr><td>共地</td><td>所有器件 GND 必须与树莓派 GND 相连</td></tr>
-<tr><td>电压</td><td>MAX30102、LCD、MCP3002、TMP36、DHT11 均为 3.3V 器件，<strong>不要接 5V</strong></td></tr>
+<tr><td>电压</td><td>MAX30102、LCD、DHT11、TFT 均为 3.3V 器件，<strong>不要接 5V</strong></td></tr>
 <tr><td>限流</td><td>LED 串 220Ω~1kΩ；蜂鸣器串 100Ω~1kΩ</td></tr>
 <tr><td>电流预算</td><td>全接上约 100~150 mA，树莓派 3.3V 轨上限约 500 mA，够用但不要长期满载</td></tr>
 <tr><td>背光</td><td>TFT 背光建议接 5V（串限流电阻）或单独供电，减轻 3.3V 轨压力</td></tr>
@@ -285,9 +245,8 @@
 <tr><td>1</td><td>MAX30102 + LCD1602（I2C）</td><td><code>sudo /usr/sbin/i2cdetect -y 1</code> 应见 0x57 与 0x27（或 0x3f）</td></tr>
 <tr><td>2</td><td>DHT11（脚7）+ HC-SR501（脚11）</td><td><code>python3 -m health_monitor selfcheck --real</code></td></tr>
 <tr><td>3</td><td>LED(15/16/18) + 蜂鸣器(12) + 按键(13)</td><td><code>sudo python3 scripts/hardware_test.py</code></td></tr>
-<tr><td>4</td><td>MCP3002 + TMP36（SPI CE0）</td><td>体温读数应在 35~38 ℃ 之间</td></tr>
-<tr><td>5</td><td>TFT（CE1 + A0 + RESET）</td><td><code>python3 scripts/tft_check.py --steps</code>，看三色条是否正确</td></tr>
-<tr><td>6</td><td>（可选）HC-SR04</td><td>需电平转换，见第 5 节</td></tr>
+<tr><td>4</td><td>TFT（CE1 + A0 + RESET）</td><td><code>python3 scripts/tft_check.py --steps</code>，看三色条是否正确</td></tr>
+<tr><td>5</td><td>（可选）HC-SR04</td><td>需电平转换，见第 5 节</td></tr>
 </tbody></table>
 <p>每步只加一类器件，出问题时容易定位：<strong>一次全接上，出问题要排查的点会多很多</strong>。</p>
 <hr>
@@ -299,7 +258,6 @@
 <tr><td>2</td><td>SPI 已启用</td><td><code>ls -l /dev/spidev0.*</code></td><td>存在 spidev0.0 与 spidev0.1</td><td>☐</td></tr>
 <tr><td>3</td><td>逐器件体检</td><td><code>sudo python3 scripts/hardware_test.py</code></td><td>各项通过（输出器件需人工确认）</td><td>☐</td></tr>
 <tr><td>4</td><td>全部驱动体检</td><td><code>python3 -m health_monitor selfcheck --real</code></td><td>全部器件 open 与自检通过</td><td>☐</td></tr>
-<tr><td>4b</td><td><strong>体温通道判据</strong></td><td><code>python3 -m health_monitor serve --real</code> 看 body_temp</td><td>室温下 20~30 ℃（DHT11 做环境温度时体温偏高一点正常）</td><td>☐</td></tr>
 <tr><td>5</td><td>TFT 控制器</td><td><code>python3 scripts/tft_check.py --steps</code></td><td>三色条颜色纯正、文字不镜像</td><td>☐</td></tr>
 <tr><td>6</td><td>服务运行</td><td><code>python3 -m health_monitor serve --real</code></td><td>状态页显示实时数值</td><td>☐</td></tr>
 <tr><td>7</td><td>报警闭环</td><td>手指离开传感器约 10 秒</td><td>蜂鸣 + 语音 + 灯变红 + App 收到</td><td>☐</td></tr>
@@ -312,11 +270,6 @@
 <tr><td>I2C 一个都扫不到</td><td>SDA/SCL 接反、没共地、器件没供电</td></tr>
 <tr><td>扫到 0x57 但读不到心率</td><td>手指未覆盖传感器、强光直射、等待时间不足 10 秒</td></tr>
 <tr><td>扫到 0x27 但 LCD 不显示</td><td>对比度电位器没调、背光跳线未短接</td></tr>
-<tr><td>TMP36 读数恒定不变</td><td>VOUT 未接到 CH0、CH0 与 CH1 弄反、未共地</td></tr>
-<tr><td>TMP36 读数约 50 ℃</td><td><strong>公式漏减 0.5V 偏移</strong>（见 3.2.3），或 ADC 参考电压设错</td></tr>
-<tr><td>TMP36 读数约 0 ℃</td><td>VOUT 接到 GND、通道选错（读的是悬空的 CH1）</td></tr>
-<tr><td>TMP36 读数跳得厉害</td><td>缺 0.1µF 去耦电容、杜邦线接触不良、电源噪声</td></tr>
-<tr><td>TMP36 读数高 1~2 ℃</td><td>属正常（自身发热 + 3.3V 供电偏置），可用 <code>calibration_offset_c</code> 单点校准</td></tr>
 <tr><td>DHT11 一直返回缓存值</td><td>读取间隔小于 2 秒（本驱动已限制为 3 秒）</td></tr>
 <tr><td>TFT 花屏或全白</td><td>控制器型号选错、SPI 时钟过快、DC/RST 接错</td></tr>
 <tr><td>TFT 颜色红蓝互换</td><td>需要开启 BGR 选项</td></tr>

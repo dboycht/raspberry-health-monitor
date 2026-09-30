@@ -16,7 +16,7 @@
 #
 # 各包用途：
 #   smbus2 / python3-smbus    I2C 总线（MAX30102、LCD1602）
-#   python3-spidev            SPI 总线（MCP3002）
+#   python3-spidev            SPI 总线（TFT 彩屏）
 #   python3-gpiozero          GPIO 抽象（按键、PIR、蜂鸣器、LED、DHT11、HC-SR04）
 #   python3-lgpio             gpiozero 在树莓派 5 上的后端（RPi.GPIO 在 Pi 5 上不可用）
 #   espeak-ng / alsa-utils    语音播报（TTS 合成 + aplay 播放）

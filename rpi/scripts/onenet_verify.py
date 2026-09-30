@@ -119,7 +119,6 @@ def main() -> int:
         "ts": time.time(),
         "heart_rate_bpm": 72.0,
         "spo2_percent": 98.0,
-        "body_temp_c": 36.5,
         "ambient_temp_c": 24.8,
         "humidity_percent": 56.0,
         "motion_state": "detected",

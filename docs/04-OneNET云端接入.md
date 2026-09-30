@@ -157,7 +157,7 @@ OneNET 已接收数据点：{'id': 1}
 **这是"上云成功"的第一手证据**：
 
 1. 控制台 → 产品 → 设备列表 → 点你的设备
-2. 看 **数据流**（数据点）列表：应出现 `heart_rate`、`spo2`、`body_temp`、`ambient_temp`、
+2. 看 **数据流**（数据点）列表：应出现 `heart_rate`、`spo2`、`ambient_temp`、
    `humidity`、`motion`、`data_age_s` 等数据流，并有最近时间戳
 3. 点某个数据流能看 **最新数据 / 历史曲线**
 
@@ -167,7 +167,6 @@ OneNET 已接收数据点：{'id': 1}
 | --- | --- | --- |
 | `heart_rate` | 心率 | bpm |
 | `spo2` | 血氧 | % |
-| `body_temp` | 精密体温 | ℃ |
 | `ambient_temp` | 室温 | ℃ |
 | `humidity` | 湿度 | % |
 | `motion` | 活动状态（`detected`/`idle`/`unknown`） | 字符串 |

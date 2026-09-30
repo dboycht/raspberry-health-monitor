@@ -265,7 +265,7 @@ def main() -> int:
 
     print("=" * 78)
     safe_print("❌ 所有候选控制器都没有被确认。下一步：")
-    print("   1) 先查接线：DC/RST/CS 三根线最常见接错（CS 别与 MCP3002 抢同一个片选）")
+    print("   1) 先查接线：DC/RST/CS 三根线最常见接错（CS 固定用 CE1=脚 26）")
     print("   2) VCC 换到 5V 试（若你的模块自带稳压）")
     print("   3) SPI 时钟调小：--baudrate 8000000")
     print("   4) 色偏/底片：分别加 --bgr / --invert 再试一轮")

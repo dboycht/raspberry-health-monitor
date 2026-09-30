@@ -25,6 +25,8 @@
   `OutputDevice`（额外要求 `send(command)`）。
 - `hal/models.py`：`Sample` 及其子类 `VitalSignsSample` / `AmbientSample` / `PrecisionTempSample` /
   `RangeSample` / `MotionSample` / `ButtonEvent` / `DisplayStatus`；
+  ⚠️ **2026-10-01 变更**：其中 `PrecisionTempSample` 已随 TMP36/MCP3002 一并**删除**（见 `ERROR.md` E48），
+  上面这条保留为当时的接口快照；
   枚举 `DeviceKind` / `MotionState` / `ButtonAction` / `Severity` / `AlarmCode` / `CommandType`；
   `AlarmEvent` / `Command` 家族；`now_ts()`。
 - `hal/exceptions.py`：`HealthMonitorError` 体系（含 `DeviceTimeout` 继承 `DeviceIOError` 的设计说明）。

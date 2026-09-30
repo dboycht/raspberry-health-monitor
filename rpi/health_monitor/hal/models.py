@@ -39,7 +39,6 @@ class DeviceKind(str, Enum):
 
     VITAL = "vital"          # 生理：心率/血氧
     AMBIENT = "ambient"      # 环境：温湿度
-    PRECISION = "precision"  # 精密测温（模拟量 + ADC）
     MOTION = "motion"        # 人体活动
     RANGE = "range"          # 距离
     DISPLAY = "display"      # 显示
@@ -66,8 +65,6 @@ class AlarmCode(str, Enum):
     HR_TOO_HIGH = "hr_too_high"            # 心率过高
     HR_TOO_LOW = "hr_too_low"              # 心率过低
     SPO2_TOO_LOW = "spo2_too_low"          # 血氧过低
-    BODY_TEMP_HIGH = "body_temp_high"      # 体温偏高
-    BODY_TEMP_LOW = "body_temp_low"        # 体温偏低
     AMBIENT_TEMP_HIGH = "ambient_temp_high"  # 环境温度过高
     AMBIENT_TEMP_LOW = "ambient_temp_low"    # 环境温度过低
     HUMIDITY_HIGH = "humidity_high"        # 湿度过高
@@ -174,21 +171,6 @@ class AmbientSample(Sample):
     temperature_c: Optional[float] = None
     humidity_percent: Optional[float] = None
     is_cached: bool = False
-
-
-@dataclass(frozen=True)
-class PrecisionTempSample(Sample):
-    """精密温度（TMP36 + MCP3002）。
-
-    Attributes:
-        temperature_c: 换算后的摄氏温度。
-        raw_adc: ADC 原始值（0~1023），**务必保留**——报告里要用它写换算推导。
-        voltage_v: 由原始值反推的电压（V），同样保留以便答辩时展示"电压→温度"的换算。
-    """
-
-    temperature_c: Optional[float] = None
-    raw_adc: Optional[int] = None
-    voltage_v: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -379,7 +361,6 @@ __all__ = [
     "Sample",
     "VitalSignsSample",
     "AmbientSample",
-    "PrecisionTempSample",
     "RangeSample",
     "MotionSample",
     "ButtonEvent",

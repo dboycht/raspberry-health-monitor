@@ -27,8 +27,8 @@
 
 ```
 ┌──────────────────────── 树莓派 5（本仓库 rpi/） ────────────────────────┐
-│  传感器层     MAX30102 心率血氧 │ DHT11 温湿度 │ TMP36+MCP3002 精密体温   │
-│               HC-SR501 人体活动 │（拓展）HC-SR04 超声波测距              │
+│  传感器层     MAX30102 心率血氧 │ DHT11 温湿度 │ HC-SR501 人体活动        │
+│               （拓展）HC-SR04 超声波测距                                  │
 │      ↓ 统一契约（hal：Device 基类 / 数据模型 / Mock 总线 / 注册表）      │
 │  业务层       采集调度 → 报警规则引擎 → 报警下发（语音/蜂鸣/灯/LCD）      │
 │      ↓                                   ↓ SQLite 历史                  │
@@ -191,7 +191,7 @@ raspberry-health-monitor/
 | 角色 | 负责文件 | 必须实现 |
 | --- | --- | --- |
 | 传感器 A | `sensors/max30102.py`、`sensors/dht11.py` | 继承 `Device`，实现 `open/read/close` |
-| 传感器 B | `sensors/tmp36.py`、`sensors/mcp3002.py`、`sensors/hc_sr501.py` | 同上（TMP36 经 ADC 读） |
+| 传感器 B | `sensors/hc_sr501.py`（另有拓展件 `sensors/hc_sr04.py`） | 同上 |
 | 交互 | `outputs/lcd1602.py`、`outputs/buzzer.py`、`outputs/led.py`、`outputs/bt_speaker.py` | 继承 `OutputDevice`，实现 `send(command)` |
 | 安卓 | `android/` | 按 `docs/手册/05-安卓通信协议.md` 实现 |
 | 文档/答辩 | `hardware/`、`docs/`、`contrib/` | 引脚表、接线图、报告素材 |
@@ -210,7 +210,7 @@ raspberry-health-monitor/
 
 ## 5. 核心设计（答辩会被问到的点）
 1. **端-边-云三层**
-   - **端**：传感器与执行器（MAX30102、DHT11、TMP36、HC-SR501、LCD、蜂鸣器、音箱、LED）
+   - **端**：传感器与执行器（MAX30102、DHT11、HC-SR501、LCD、蜂鸣器、音箱、LED）
    - **边**：树莓派本地完成采集、判定、报警——**断网也能报警**（不依赖云端）
    - **云/远程**：HTTP API 供安卓 App 远程查看与控制（可选再接 MQTT 上云，见 `docs/07`）
 
@@ -291,7 +291,7 @@ raspberry-health-monitor/
 > 证据在 [`basic/evidence/`](basic/evidence/README.md)）、基础版动态曲线出图，
 > 以及逐级验收推进到 **T4**：**LCD1602**（09-26）、**蜂鸣器 / 双色 LED / 实体按键**（09-26）、
 > **HC-SR501 人体红外"久无活动"报警**（2026-09-28，端到端 4 轮闭环，用户确认声/光/屏/语音）；
-> ❌ **仍未实测**：TMP36 / MAX30102 的真实读数、蓝牙音箱配对、手机与树莓派的真实局域网往返。
+> ❌ **仍未实测**：蓝牙音箱配对、手机与树莓派的真实局域网往返。
 > 逐器件现状以 [`docs/13`](docs/13-真机接线现状与逐器件实测.md) 为**唯一来源**；
 > 阶梯进度见 [`docs/14`](docs/14-分步实施路线图.md)。
 > 真机联调命令：`python -m health_monitor selfcheck --real`；

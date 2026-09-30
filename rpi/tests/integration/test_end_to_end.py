@@ -380,8 +380,10 @@ class TestHttpApiEndToEnd(unittest.TestCase):
         """手机端渲染规则的契约：缺失必须是 null（App 会显示"未知"）。"""
         payload = self._get("/api/v1/current")
         data = payload["data"]
-        for key in ("heart_rate_bpm", "spo2_percent", "body_temp_c", "ambient_temp_c"):
+        for key in ("heart_rate_bpm", "spo2_percent", "ambient_temp_c"):
             self.assertTrue(data[key] is None or isinstance(data[key], (int, float)), key)
+        # 2026-10-01：TMP36/MCP3002 彻底删除 ⇒ 摘要里**不该再有**体温这一项
+        self.assertNotIn("body_temp_c", data)
 
     def test_history_接口支持指标与条数(self) -> None:
         payload = self._get("/api/v1/history?metric=ambient_temp_c&limit=5")

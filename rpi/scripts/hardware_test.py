@@ -13,8 +13,8 @@
 1. 运行环境（是否树莓派 / Python 版本 / 是否 root 权限问题）
 2. 内核接口是否就绪：`/dev/i2c-1`、`/dev/spidev0.*`、`/dev/gpiomem` 或 gpiochip
 3. I2C 总线扫描（**关键**：能否看到 MAX30102 的 0x57 与 LCD 的 0x27/0x3F）
-4. SPI 回环/读数（MCP3002 的原始值是否在合理范围，而不是恒 0/1023）
-5. 逐器件读取：**数值是否物理合理**（心率 40~180、体温 30~42、体温与 ADC 原始值一致等）
+4. SPI 接口是否就绪（本项目 SPI 只服务 TFT 彩屏；屏本身要人眼确认，见 `tft_check.py`）
+5. 逐器件读取：**数值是否物理合理**（心率 40~180、血氧 85~100、室温 0~50 等）
 6. 输出器件：LCD 显示、LED 亮灯、蜂鸣器响一声（**需要用户目视/耳听确认**）
 7. 超声/拓展件（若启用）
 
@@ -298,8 +298,6 @@ def evaluate_bounds(values: List[Optional[float]], low: float, high: float) -> T
 DRIVER_NEEDS: Dict[str, Set[str]] = {
     "max30102": {"i2c"},
     "lcd1602": {"i2c"},
-    "tmp36": {"spi"},
-    "mcp3002": {"spi"},
     "tft_spi": {"spi", "gpio"},
     "dht11": {"gpio"},
     "hc_sr501": {"gpio"},
@@ -331,14 +329,13 @@ TOOL_CHECK_NEEDS: Dict[str, str] = {
 #: 名字来自默认配置（`core/config.py::DEFAULT_CONFIG`）；改了设备名要同步这里，
 #: 测试会断言"默认配置里的每个设备名要么在这里、要么在 COMPOSED_DEVICE_HINTS 里"。
 CHECKED_DEVICE_NAMES: Set[str] = {
-    "vitals", "body_temp", "ambient", "motion", "distance",
+    "vitals", "ambient", "motion", "distance",
     "display", "status_led", "alarm_buzzer", "speaker", "sos_button", "spo2_button",
 }
 
 #: 没有专门检查、但有**别的**验收办法的设备名 → 提示用哪个脚本/为什么
 COMPOSED_DEVICE_HINTS: Dict[str, str] = {
     "tft": "TFT 的显示确认要用：python3 scripts/tft_check.py --steps（人眼确认颜色/方向）",
-    "mcp3002": "MCP3002 由 tmp36 的检查覆盖；也可单独验通道：python3 scripts/diag_pin_levels.py --adc",
 }
 
 
@@ -532,7 +529,7 @@ def main() -> int:
             "检查范围", FAIL,
             f"配置里没有这些设备名：--only {unknown_only} / --exclude {unknown_exclude}",
             "看一遍可用名字：python3 scripts/hardware_test.py --list\n"
-            "（注意用的是**配置里的设备名**，例如 ambient / body_temp / vitals，不是驱动名 dht11）",
+            "（注意用的是**配置里的设备名**，例如 ambient / vitals / motion，不是驱动名 dht11）",
         )
         return rep.summary()
     if disabled_requested:
@@ -702,23 +699,6 @@ def main() -> int:
                 "把手指完全覆盖传感器窗口，保持静止，然后重跑本脚本",
             )
 
-    # 体温（TMP36 + MCP3002）
-    body = with_device("body_temp")
-    if body is not None:
-        samples = sample_device(body, args.interval)
-        temps = [getattr(s, "temperature_c", None) for s in samples if not isinstance(s, Exception)]
-        raws = [getattr(s, "raw_adc", None) for s in samples if not isinstance(s, Exception)]
-        status, detail = evaluate_bounds(temps, 15.0, 45.0)
-        if status == PASS and raws:
-            detail += f"；ADC 原始值 {min(r for r in raws if r is not None)}~{max(r for r in raws if r is not None)}"
-        rep.add(
-            "体温数值（TMP36+MCP3002）", status, detail,
-            "⚠️ 裸 TMP36 是 SOT-23 表贴封装，必须焊在转接板上\n"
-            "供电必须 3.3V（接 5V 会让输出超过 ADC 量程、读数饱和）\n"
-            "读数恒 0 或 1023：先查 SPI 控制字与 CS（真机最常见的两个原因）\n"
-            "换算公式：T = (raw/1023*3.3 - 0.75)*100 + 25；可用 calibration_offset_c 标定",
-        )
-
     # 环境温湿度
     ambient = with_device("ambient")
     if ambient is not None:
@@ -887,8 +867,8 @@ def main() -> int:
 
     # ---------------- 7.5 覆盖度提示（哪些器件本脚本还没数值判据） ----------------
     # 为什么要有这一段（2026-09-26）：加了 `--only` 之后，用户可以只验一个器件；
-    # 但如果那个器件在本脚本里**没有专门的检查**（例如 tft 由 tft_check.py 验、
-    # mcp3002 由 tmp36 组合使用），报告会只显示"打开成功"——看起来全绿，其实什么都没验。
+    # 但如果那个器件在本脚本里**没有专门的检查**（例如 tft 由 tft_check.py 验），
+    # 报告会只显示"打开成功"——看起来全绿，其实什么都没验。
     uncovered = [name for name in selected if name not in CHECKED_DEVICE_NAMES]
     if uncovered:
         hints = [
