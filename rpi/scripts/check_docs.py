@@ -83,6 +83,14 @@ ALLOW_MISSING = {
     "probe_max30102_nofinger.py",         # 空房/环境光/手指三态
     "probe_max30102_distance.py",         # 距离扫描（E59 标定依据）
     "probe_e58_acceptance.py",            # E58 三阶段验收（含 --old 对照）
+    # ⚠️ 2026-10-01 **又踩了同一族**（E56/E70），这次不只是板子假红 —— **CI 一直是红的**：
+    #    docs/14 引用了 `_scratch/preview_tft_frames.py`（TFT 帧预览器，开发副本专属），
+    #    而 CI 跑在 checkout 出来的仓库上（没有 `_scratch/`）⇒ `validate.py` 第 7 项 FAIL
+    #    ⇒ **最近每一次 push 的 CI 都是 failure**，连续几天没人看（本地开发副本恰好有这个目录，
+    #    所以本机 11/11 全绿，把问题盖住了）。
+    #    教训：开发副本里"多出来的东西"会让**本机通过、推送后失败** —— 见 ERROR.md E70。
+    "_scratch/preview_tft_frames.py",     # TFT 帧预览器（docs/14 引用；不随仓库发布）
+    "preview_tft_frames.py",
     # ⚠️ 本机覆盖配置：**按设计不入库**（含 OneNET 密钥等凭据，.gitignore 已忽略），
     #    所以仓库里永远找不到它 —— 文档里必须能讨论它，检查器不该报悬空。
     "config/devices.local.json",
@@ -97,6 +105,12 @@ ALLOW_PREFIXES = (
     "rules/",
     "memory/",
 )
+
+#: **开发副本专属**前缀：这些路径**不随仓库发布**。
+#: 引用它们时，开发机上一切正常（文件就在那儿），**推送后**才变成悬空引用 ⇒ CI 红。
+#: （2026-10-01 实测：CI 连续多天每次 push 都 failure，见 ERROR.md E70）
+#: 检查 `check_dev_only_refs()` 按前缀判定、**在开发机上就会报**。
+DEV_ONLY_PREFIX = "_scratch/"
 
 #: 已重命名/已移动的文件：旧路径 → 新路径（检查器据此报"引用已过时"而不是"不存在"）
 #: 2026-09-22 重组：参考资料统一移入 ``docs/手册/``，操作手册留在 ``docs/`` 根下。
@@ -144,7 +158,14 @@ def _strip_code_blocks(text: str) -> str:
 #: 把它们算作悬空引用，会让"记录历史"与"维护活文档"互相打架 ——
 #: 判据：**只检查"给人照着做的活文档"**（根 README / docs / hardware / contrib / android），
 #: 开发流水（DEVELOPMENT.md / ERROR.md）由写它的人自己负责前后一致。
-DEV_ONLY_DOCS = {"DEVELOPMENT.md", "ERROR.md"}
+DEV_ONLY_DOCS = {
+    "DEVELOPMENT.md", "ERROR.md",
+    # HANDOVER.md 同为开发副本专属的接续文档（不随仓库发布）。
+    # ⚠️ 2026-10-01 发现它**没在这个集合里** ⇒ 被当成要发布的文档扫描，
+    #    于是它引用 `_scratch/` 探针的写法被新检查 `check_dev_only_refs()` 报成 3 条假红
+    #    （开发副本专属文档引用开发副本专属工具，本来就是允许的）。
+    "HANDOVER.md",
+}
 
 
 def iter_docs() -> List[Path]:
@@ -423,6 +444,56 @@ def self_test() -> List[str]:
     return problems
 
 
+def _raw_targets(text: str) -> List[str]:
+    """**不做"能不能解析"过滤**地抽出所有像文件引用的目标。
+
+    ⚠️ 为什么不能复用 :func:`_probe_targets`（第一版就是这么写的，结果检查是**哑的**）：
+    那个函数**只返回"解析不到"的目标** —— 文件存在就提前 return。
+    而"文档引用了开发副本专属路径"这件事在**开发机上恰恰是能解析的**
+    （`_scratch/xxx.py` 就在那儿）⇒ 复用它等于让这条检查**永远看不到东西**。
+    2026-10-01 用注入自测当场发现（取消白名单放行后仍报 0 条）——
+    又一次印证 memory/30 那条："**永远绿的守卫比没有守卫更糟**"。
+    """
+    out: List[str] = [m.group(1) for m in MD_LINK.finditer(text)]
+    out += [m.group(1) for m in BACKTICK_PATH.finditer(text)]
+    return out
+
+
+def check_dev_only_refs(docs: List[Path]) -> List[str]:
+    """抓"**要发布的文档**里引用了**开发副本专属**路径"。
+
+    为什么必须有这条（2026-10-01，ERROR.md **E70**）
+    ------------------------------------------------
+    普通的悬空检查**在开发机上抓不到它** —— 因为开发副本里那个文件**真的存在**
+    （`_scratch/preview_tft_frames.py` 就在那儿），于是：
+
+        开发机 `validate.py`  → 11/11 全绿
+        CI（checkout 出来的仓库没有 `_scratch/`）→ 文档自检 FAIL ⇒ **每一次 push 都红**
+
+    实测后果：CI 连续多天每次 push 都是 failure，而**没人看**（我那天推了 5 次都没看）。
+
+    所以这条检查**按前缀判定**、不看文件是否存在 ⇒ **在开发机上就会报**，
+    把问题拦在 push 之前。已登记的（写进 `ALLOW_MISSING`，为的是保留"这条结论出自哪支探针"的
+    可追溯性）不报。
+    """
+    problems: List[str] = []
+    for doc in docs:
+        text = _strip_code_blocks(doc.read_text(encoding="utf-8", errors="replace"))
+        for target in _raw_targets(text):
+            norm = target.split("#", 1)[0].strip().replace("\\", "/")
+            if not norm.startswith(DEV_ONLY_PREFIX):
+                continue
+            if norm in ALLOW_MISSING or Path(norm).name in ALLOW_MISSING:
+                continue
+            problems.append(
+                f"{doc.relative_to(ROOT)}：引用了**开发副本专属**路径 {target} —— "
+                "它不随仓库发布，推送后 CI 的文档自检会 FAIL（ERROR.md E70）。"
+                "要么把它加进 check_docs.py 的 ALLOW_MISSING（若这条追溯确实必要），"
+                "要么别在要发布的文档里写它。"
+            )
+    return problems
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="文档一致性自检")
     parser.add_argument("--fix-hint", action="store_true", help="打印修复建议")
@@ -460,6 +531,7 @@ def main() -> int:
 
     problems.extend(check_docs_index())
     problems.extend(check_report_rules_consistency())
+    problems.extend(check_dev_only_refs(docs))
 
     if not problems:
         safe_print(safe_text(f"✅ 全部通过：{len(docs)} 份文档的链接都可解析；docs 索引与实体一一对应；报警码三方一致"))
