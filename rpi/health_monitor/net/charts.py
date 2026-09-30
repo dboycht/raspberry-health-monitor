@@ -54,21 +54,71 @@ def _fmt(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
-def _segments(points: Sequence[Point]) -> List[List[Tuple[float, float]]]:
-    """把点列按"缺口"切成若干条连续线段。
+def _median(xs: List[float]) -> float:
+    """中位数（**刻意不用平均值**：网络抖动/停摆会把它拉飞）。"""
+    if not xs:
+        return 0.0
+    s = sorted(xs)
+    mid = len(s) // 2
+    if len(s) % 2 == 1:
+        return float(s[mid])
+    return (float(s[mid - 1]) + float(s[mid])) / 2.0
 
-    ⚠️ 这是本模块**最重要**的一个函数：值为 ``None`` 就是缺口，
-    必须在缺口处**断开**，否则会把两段数据用一条直线连起来、凭空造出中间那段趋势。
+
+def _auto_max_gap(points: Sequence[Point]) -> Optional[float]:
+    """按"正常采样间隔"推算多大的时间空档算**缺口**（= 中位间隔 × 3）。
+
+    ⚠️ 为什么必须有这条判据（2026-10-01 用**板子上的真实历史**验出来的）：
+
+    历史库**只存成功读数** —— 设备停摆或连续读失败的那段时间，库里**一行都没有**，
+    所以那些点根本不会以 ``value=None`` 的形态出现在点列里。
+    于是只按 ``None`` 断线是**防不住**的：一次 10 分钟的停摆，
+    会被画成"从停摆前的点直接连到恢复后的点"的**一条直线**，
+    而那正是本模块第一条纪律要防的谎（"视觉上看起来这段时间一直有数据"）。
+
+    ⇒ **时间上有洞就必须断线**：相邻两点间隔超过"正常间隔的 3 倍"就断开。
+    真实实测：300 行环境温度全是有效值、一个 ``None`` 都没有，但采样间隔是 3 秒，
+    其中若干处间隔达二十几秒（正是 E63 那次播报卡停主循环的窗口）。
+    """
+    ts_list = sorted(ts for ts, _ in points)
+    deltas = [b - a for a, b in zip(ts_list, ts_list[1:]) if b - a > 0]
+    if len(deltas) < 3:
+        return None                      # 点太少，推不出"正常间隔"，就别乱断
+    return max(_median(deltas) * 3.0, 1e-6)
+
+
+def _segments(points: Sequence[Point], max_gap_s: Optional[float] = None) -> List[List[Tuple[float, float]]]:
+    """把点列切成若干条连续线段。
+
+    在两处**必须断开**：
+
+    1. 值为 ``None`` —— 该时刻明确没有数据；
+    2. **相邻两点的时间间隔超过 ``max_gap_s``** —— 时间上有洞（见 :func:`_auto_max_gap`）。
+
+    ⚠️ 这是本模块**最重要**的一个函数：不在这两处断开，
+    就会把两段数据用一条直线连起来、凭空造出中间那段趋势。
     """
     segments: List[List[Tuple[float, float]]] = []
     current: List[Tuple[float, float]] = []
+    prev_ts: Optional[float] = None
     for ts, value in points:
+        ts = float(ts)
         if value is None:
             if current:
                 segments.append(current)
                 current = []
+            prev_ts = None
             continue
-        current.append((float(ts), float(value)))
+        if (
+            current
+            and max_gap_s is not None
+            and prev_ts is not None
+            and (ts - prev_ts) > float(max_gap_s)
+        ):
+            segments.append(current)
+            current = []
+        current.append((ts, float(value)))
+        prev_ts = ts
     if current:
         segments.append(current)
     return segments
@@ -117,6 +167,7 @@ def line_chart(
     thresholds: Sequence[Tuple[float, str]] = (),
     now: Optional[float] = None,
     stale_after_s: Optional[float] = None,
+    max_gap_s: Optional[float] = None,
     empty_note: str = "暂无数据",
 ) -> str:
     """画一条时间序列曲线，返回**内联 SVG 字符串**。
@@ -127,11 +178,16 @@ def line_chart(
         thresholds: 报警阈值 ``[(值, 标签)]``，画成红色虚线。
         now: 当前时刻（用于判断"最后一个点是不是过期了"）。
         stale_after_s: 超过这么久没新数据 ⇒ 整条线转灰 + 标"数据已过期"。
+        max_gap_s: 相邻两点间隔超过它就**断线**（时间上有洞 ⇒ 数据有洞）。
+            默认 ``None`` = 自动按"中位采样间隔 × 3"推算；显式传 ``0`` 可关掉这条判据。
+            ⚠️ 别轻易关：历史库只存成功读数，停摆期间**没有行**，
+            只靠 ``value=None`` 是防不住"把 10 分钟停摆画成一条直线"的（见 :func:`_auto_max_gap`）。
     """
     if not points:
         return _empty_svg(width, height, empty_note)
 
-    segments = _segments(points)
+    gap = 0.0 if max_gap_s == 0 else (max_gap_s if max_gap_s is not None else _auto_max_gap(points))
+    segments = _segments(points, gap if gap else None)
     if not segments:
         return _empty_svg(width, height, empty_note)
 
@@ -183,8 +239,14 @@ def line_chart(
         )
 
     # ---- 报警阈值虚线：一眼看出"什么时候会报警" ----
+    # 量程**之内**的画成虚线；量程**之外**的**不丢弃**，而是标在上下边缘（见下）。
+    # 为什么不能丢：2026-10-01 用真实数据验出来 —— 湿度实测在 57.9~59.1% 之间跳，
+    # 而报警阈值是 80% ⇒ 阈值在量程外。若直接不画，用户**看不出一离报警还有多远**，
+    # 而自动缩放又把 DHT11 那 1% 的正常台阶放得像剧烈波动（两件事凑一起就是误导）。
+    out_of_range: List[Tuple[float, str]] = []
     for tval, tlabel in thresholds:
         if not (lo <= float(tval) <= hi):
+            out_of_range.append((float(tval), tlabel))
             continue
         y = sy(float(tval))
         parts.append(
@@ -194,6 +256,14 @@ def line_chart(
         parts.append(
             f'<text x="{pad_l + plot_w - 4:.1f}" y="{y - 3:.1f}" text-anchor="end" '
             f'font-size="11" fill="{_COLORS["threshold"]}">{_esc(tlabel)}</text>'
+        )
+    for tval, tlabel in out_of_range:
+        above = tval > hi
+        y = pad_t + 9.0 if above else height - pad_b - 3.0
+        arrow = "↑" if above else "↓"
+        parts.append(
+            f'<text x="{pad_l + 4:.1f}" y="{y:.1f}" font-size="11" '
+            f'fill="{_COLORS["threshold"]}">{_esc(arrow + " " + tlabel)}</text>'
         )
 
     # ---- 曲线：**每个连续段各画各的**（缺口处自然断开）----

@@ -68,10 +68,22 @@ class TestThresholds(unittest.TestCase):
         self.assertIn("stroke-dasharray", svg, "阈值要画成虚线")
         self.assertIn("室温上限 30", svg)
 
-    def test_范围外的阈值不画(self) -> None:
-        svg = line_chart([(1.0, 20), (2.0, 25)], thresholds=[(99.0, "不该出现")], y_min=0, y_max=40)
-        self.assertNotIn("不该出现", svg)
-        self.assertNotIn("stroke-dasharray", svg)
+    def test_范围外的阈值标在边缘而不是丢掉(self) -> None:
+        """★ 量程外的阈值**不许消失**（2026-10-01 真实数据验出来的问题）。
+
+        实测湿度在 57.9~59.1% 跳、而报警阈值 80% ⇒ 阈值在量程外。
+        若直接不画，用户**看不出一离报警还有多远**；而自动缩放又会把 DHT11 那 1%
+        的正常台阶放大得像剧烈波动 —— 两件事凑一起就是误导。
+        """
+        svg = line_chart([(1.0, 20), (2.0, 25)], thresholds=[(99.0, "上限 99")], y_min=0, y_max=40)
+        self.assertIn("上限 99", svg, "量程外的阈值必须有交代，不能悄悄消失")
+        self.assertIn("↑", svg, "高于量程要标成向上箭头")
+        self.assertNotIn("stroke-dasharray", svg, "但它不该画在绘图区里（那会拉伸量程）")
+
+    def test_低于量程的阈值标向下箭头(self) -> None:
+        svg = line_chart([(1.0, 20), (2.0, 25)], thresholds=[(5.0, "下限 5")], y_min=15, y_max=40)
+        self.assertIn("↓", svg)
+        self.assertIn("下限 5", svg)
 
     def test_可以同时画上限与下限(self) -> None:
         svg = line_chart(
@@ -135,6 +147,50 @@ class TestRobustness(unittest.TestCase):
         svg = line_chart([(1.0, 5.0), (2.0, 6.0)])
         self.assertIn("viewBox=", svg)
         self.assertIn("width:100%", svg)
+
+
+class TestTimeGaps(unittest.TestCase):
+    """★ 时间上有洞也必须断线（2026-10-01 用**板子上的真实历史**验出来的）。
+
+    历史库**只存成功读数**：设备停摆/连续读失败期间**一行都没有**，
+    所以那些点根本不会以 ``None`` 的形态出现。
+    只按 ``None`` 断线 ⇒ 一次 10 分钟停摆会被画成一条直线 ——
+    正是"缺口断线"这条纪律要防的那个谎。
+    真实数据：300 行环境温度**全是有效值、一个 None 都没有**，
+    但采样间隔 3 秒、其中若干处达二十几秒（E63 那次播报卡停主循环的窗口）。
+    """
+
+    def test_正常等间隔不会被误断(self) -> None:
+        pts = [(i * 3.0, 20.0 + i * 0.1) for i in range(10)]
+        self.assertEqual(line_chart(pts).count("<polyline"), 1, "等间隔不许被误判成缺口")
+
+    def test_时间空档超过三倍中位间隔就断线(self) -> None:
+        # 前 6 个点每 3 秒一个，然后**空掉 10 分钟**，再来 6 个
+        pts = [(i * 3.0, 20.0) for i in range(6)]
+        base = 5 * 3.0 + 600.0
+        pts += [(base + i * 3.0, 21.0) for i in range(6)]
+        self.assertEqual(line_chart(pts).count("<polyline"), 2,
+                         "十分钟的空档必须断开，不能画成一条直线")
+
+    def test_可以显式指定空档上限(self) -> None:
+        pts = [(0.0, 1.0), (1.0, 2.0), (5.0, 3.0), (6.0, 4.0)]
+        self.assertEqual(line_chart(pts, max_gap_s=2.0).count("<polyline"), 2)
+        self.assertEqual(line_chart(pts, max_gap_s=10.0).count("<polyline"), 1)
+
+    def test_传0可以关掉时间断线(self) -> None:
+        pts = [(0.0, 1.0), (1.0, 2.0), (10000.0, 3.0), (10001.0, 4.0)]
+        self.assertEqual(line_chart(pts, max_gap_s=0).count("<polyline"), 1)
+
+    def test_点太少时不做时间推断(self) -> None:
+        """只有两三个点时推不出"正常间隔"，不该乱断。"""
+        self.assertEqual(line_chart([(0.0, 1.0), (9999.0, 2.0)]).count("<polyline"), 1)
+
+    def test_时间断线与None断线可以叠加(self) -> None:
+        pts = [(0.0, 1.0), (1.0, 2.0), (2.0, None), (3.0, 3.0), (4.0, 4.0),
+               (5000.0, 5.0), (5001.0, 6.0)]
+        svg = line_chart(pts)
+        # 段：(0,1)-(1,2) / (3,3)-(4,4) / (5000..)-(5001..)  ⇒ 3 条
+        self.assertEqual(svg.count("<polyline"), 3)
 
 
 class TestSparkline(unittest.TestCase):
