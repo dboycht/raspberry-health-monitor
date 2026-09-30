@@ -35,6 +35,8 @@ _PAGE_IN_RE = re.compile(r'parsed\.path in \(([^)]*)\)')
 _QUOTED_RE = re.compile(r'"([^"]+)"')
 #: 文档 §3 表的行：`| GET | \`/api/v1/health\` | ...`
 _DOC_ROW_RE = re.compile(r"^\|\s*(GET|POST)\s*\|\s*`([^`]+)`\s*\|", re.MULTILINE)
+#: 路由表的条目：`("GET", "/api/v1/health"): self._health,` —— 顺带把处理函数名抓出来
+_ROUTE_ENTRY_RE = re.compile(r'\("(GET|POST)",\s*"(/api/v1[^"]*)"\):\s*self\.(\w+)')
 
 
 def _code_api_routes() -> set[tuple[str, str]]:
@@ -71,6 +73,47 @@ def _doc_routes() -> set[tuple[str, str]]:
     return {(m.group(1), m.group(2)) for m in _DOC_ROW_RE.finditer(text)}
 
 
+def _code_body_readers() -> set[tuple[str, str]]:
+    """**真的会读请求体**的那些接口。
+
+    ⚠️ 用 `ast` 而不是正则（`memory/30` §7 的教训："要按语法理解源码，就用 ast/tokenize"）：
+    先找出所有调用了 `_current_body()` 的处理函数名，再回到路由表把函数名映射成 `(方法, 路径)`。
+    """
+    import ast
+
+    source = WEB_PY.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    readers: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for call in ast.walk(node):
+            if isinstance(call, ast.Call):
+                name = getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+                if name == "_current_body":
+                    readers.add(node.name)
+    routes: dict[str, tuple[str, str]] = {}
+    for match in _ROUTE_ENTRY_RE.finditer(source):
+        routes[match.group(3)] = (match.group(1), match.group(2))
+    return {routes[name] for name in readers if name in routes}
+
+
+def _doc_body_readers() -> set[tuple[str, str]]:
+    """文档 §2 "请求体"那一行里列出的接口（**这一行是机器可检的契约**）。
+
+    ⚠️ 要把路径两侧的反引号去掉：第一版的 `(?P<path>`?/api/…)` 会把**结尾那个反引号
+    一起吞进路径**，于是文档明明写对了、比对仍然是红的（假红）。
+    """
+    text = DOC.read_text(encoding="utf-8")
+    for line in text.split("\n"):
+        if line.startswith("| 请求体 |"):
+            found = set()
+            for method, path in re.findall(r"(GET|POST)\s+`?(/api/v1/[^`\s|]*)`?", line):
+                found.add((method, path.rstrip("`")))
+            return found
+    return set()
+
+
 class TestExtractionWorks(unittest.TestCase):
     """先证明"抽取器真的抽到了东西" —— 否则下面"没缺"只是因为它什么都没读到。"""
 
@@ -89,6 +132,47 @@ class TestExtractionWorks(unittest.TestCase):
         doc = _doc_routes()
         self.assertGreaterEqual(len(doc), 10, f"只抽到 {sorted(doc)}")
         self.assertIn(("GET", "/api/v1/health"), doc)
+
+
+class TestBodyReaderListMatchesDocs(unittest.TestCase):
+    """★ "哪些接口读请求体"这件事，**文档说的与代码做必须一致**（2026-10-01 加）。
+
+    为什么值得单独一条：契约文档 §2 原来那句"本协议**不使用请求体**，参数一律走 query string
+    （服务器不读 body）"在 2026-10-01 之后**已经不成立**（`POST /api/v1/config` 与
+    `POST /api/v1/cloud/callback` 都读 body），而**没有任何东西会提醒你**。
+    这条假话当场把代理自己坑了一次：我按文档把 `text` 放进播报接口的 **body**，
+    得到的是 `{"error": "缺少 text 参数"}` —— 看起来像接口坏了，其实是**文档错了**。
+
+    判据（可执行）：用 `ast` 找出所有**真的调用了 `_current_body()`** 的处理函数
+    （不是靠人记得），映射回路由，与文档 §2 那一行列出的接口**双向比对**。
+    """
+
+    def test_抽取器真的抽到了东西(self) -> None:
+        self.assertTrue(_code_body_readers(), "没找到任何读请求体的处理函数，抽取器多半失效了")
+        self.assertTrue(_doc_body_readers(), "没从文档 §2 的'请求体'那行解析出接口")
+
+    def test_读请求体的接口都在文档里列了(self) -> None:
+        missing = sorted(_code_body_readers() - _doc_body_readers())
+        self.assertEqual(
+            missing, [],
+            "这些接口**真的读了请求体**，但契约文档 §2 的'请求体'那行没列它们 ⇒ "
+            f"调用方会照文档把参数放进 query string，然后收到'缺少参数'：{missing}",
+        )
+
+    def test_文档列的读body接口都真的读(self) -> None:
+        extra = sorted(_doc_body_readers() - _code_body_readers())
+        self.assertEqual(
+            extra, [],
+            f"文档说这些接口读请求体，但代码里没有 ⇒ 文档过期：{extra}",
+        )
+
+    def test_不读body的接口确实不是靠body传参(self) -> None:
+        """反向钉子：把"不读 body"这件事也钉一下，免得文档那张表变成万能背锅侠。"""
+        readers = _code_body_readers()
+        self.assertNotIn(("POST", "/api/v1/speak"), readers,
+                         "播报接口的 text 是 query 参数；若改成读 body，文档 §4.8 要同步改")
+        self.assertNotIn(("POST", "/api/v1/sos"), readers)
+        self.assertNotIn(("POST", "/api/v1/silence"), readers)
 
 
 class TestApiSurfaceMatchesDocs(unittest.TestCase):
