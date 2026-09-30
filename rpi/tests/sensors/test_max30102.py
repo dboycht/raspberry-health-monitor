@@ -1148,5 +1148,294 @@ class TestRealCaptureRegression(unittest.TestCase):
         )
 
 
+class TestNoFingerAndTransitionRegression(unittest.TestCase):
+    """★★ **真机"没贴手指 / 手指刚移开"回归**（`ERROR.md` **E58**）。
+
+    现场症状（HANDOVER §6 观察 1）：**没人碰传感器时**服务报出
+    `hr 45 bpm / spo2 87 %`，进而触发 `hr_too_low` + `spo2_too_low`
+    （黄灯闪 + 蜂鸣 + 两块屏刷报警）。
+
+    根因之一（2026-09-30 真机实测，不是推断）：手指检测原先只看**整窗均值**
+    ``mean(IR) >= finger_dc_min``。手指移开后整窗均值还要 **9.6 秒**
+    （96.5 % 的采样已换成"无手指"）才掉到阈值以下，那段时间的窗是
+    **手指段 + 暗段拼接**，阶跃被算成 45 bpm、血氧被压到 87 %。
+    实测 DC：无手指 **584**、LED 全关 **32**、贴手指 **127794**。
+
+    修法：改成**逐采样**判据 —— 整窗每一点都要高于阈值（`finger_frac_min = 1.0`），
+    于是"拼接窗"当场被判成"没贴合"，不给任何结论。
+
+    ⚠️ **本条只是两个根因之一**：还有 `finger_dc_min` 定得太低（手凑近就误判），
+    见下面 :class:`TestNearHandRegression`（`ERROR.md` **E59**）与
+    `ppg_real_handnear.csv`。两处**都**要修，少一个现场就会继续误报。
+
+    这份 `ppg_real_nofinger.csv` 是同一台板子上抓的**真实无手指波形**，
+    和 `ppg_real_capture.csv`（真实手指）配成一对：**两类真机数据都要过**。
+    """
+
+    @staticmethod
+    def _load(name: str) -> tuple[list[float], list[float], float]:
+        path = Path(__file__).resolve().parent.parent / "fixtures" / name
+        ir: list[float] = []
+        red: list[float] = []
+        rate = 25.0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                if "analysis_rate_hz=" in line:
+                    rate = float(line.split("analysis_rate_hz=")[1].split()[0])
+                continue
+            if line.startswith("index"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            ir.append(float(parts[1]))
+            red.append(float(parts[2]))
+        return ir, red, rate
+
+    def test_无手指夹具存在且是250组(self) -> None:
+        ir, red, rate = self._load("ppg_real_nofinger.csv")
+        self.assertEqual(len(ir), 250)
+        self.assertEqual(len(red), 250)
+        self.assertEqual(rate, 25.0)
+
+    def test_真机无手指窗必须判为没手指(self) -> None:
+        ir, red, rate = self._load("ppg_real_nofinger.csv")
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertFalse(result.finger_detected, "没人碰传感器却报『检测到手指』")
+        self.assertIsNone(result.heart_rate_bpm, "没贴手指竟然算出了心率")
+        self.assertIsNone(result.spo2_percent, "没贴手指竟然算出了血氧")
+        self.assertEqual(result.finger_frac, 0.0)
+
+    def test_无手指窗的直流确实远低于阈值(self) -> None:
+        """空房间那一档（IR DC 584）必须离阈值足够远。
+
+        注意**别**拿这条去论证"阈值不用改"——真正决定阈值的是"手凑近"那一档
+        （实测 5817~9097，见 :class:`TestNearHandRegression` 与 `ERROR.md` E59）。
+        """
+        ir, _red, _rate = self._load("ppg_real_nofinger.csv")
+        dc = sum(ir) / len(ir)
+        self.assertLess(dc, PpgParams().finger_dc_min)
+        self.assertLess(dc, 1000.0, f"真机无手指直流只有 584 量级，实测 {dc:.0f}")
+
+    def test_手指刚移开的拼接窗一律不给结论(self) -> None:
+        """把手指段与暗段按各种比例拼接 ⇒ 每一个都必须被判成"没贴合"。
+
+        `k` = 窗尾有多少个"无手指"采样（k=1 就相当于手指移开后不到一帧）。
+        **k=1 也必须是 False**：血氧走原始信号 AC/DC，一个阶跃就能把它从 99.7 打到 91.9
+        （实测），所以这条判据一个坏点都不能容忍。
+        """
+        f_ir, f_red, rate = self._load("ppg_real_capture.csv")
+        n_ir, n_red, _ = self._load("ppg_real_nofinger.csv")
+        for k in (1, 2, 5, 10, 40, 100, 200, 240, 249):
+            with self.subTest(k=k):
+                ir = f_ir[len(f_ir) - (250 - k):] + n_ir[:k]
+                red = f_red[len(f_red) - (250 - k):] + n_red[:k]
+                result = analyze_ppg(ir, rate, red, PpgParams())
+                self.assertFalse(
+                    result.finger_detected,
+                    f"手指移开后 k={k} 的拼接窗仍被判成『检测到手指』"
+                    f"（hr={result.heart_rate_bpm} spo2={result.spo2_percent} "
+                    f"q={result.quality}）",
+                )
+                self.assertIsNone(result.heart_rate_bpm)
+                self.assertIsNone(result.spo2_percent)
+
+    def test_拼接窗经过规则引擎也不许报任何警(self) -> None:
+        """端到端：拼接窗 ⇒ 驱动不给结论 ⇒ 报警引擎无话说（这才是现场那条误报的出口）。"""
+        from health_monitor.core.rules import ReadingSnapshot, RuleEngine
+        from health_monitor.hal.models import Severity, VitalSignsSample
+
+        f_ir, f_red, rate = self._load("ppg_real_capture.csv")
+        n_ir, n_red, _ = self._load("ppg_real_nofinger.csv")
+        engine = RuleEngine()
+        for k in (1, 10, 100, 240):
+            with self.subTest(k=k):
+                ir = f_ir[len(f_ir) - (250 - k):] + n_ir[:k]
+                red = f_red[len(f_red) - (250 - k):] + n_red[:k]
+                an = analyze_ppg(ir, rate, red, PpgParams())
+                # 驱动把它包成 ok=False / awaiting_data=True 的样本；规则引擎只看这两条：
+                sample = VitalSignsSample(
+                    ts=1000.0, device="max30102",
+                    ok=False, awaiting_data=True,
+                    heart_rate_bpm=an.heart_rate_bpm,
+                    spo2_percent=an.spo2_percent,
+                    finger_detected=an.finger_detected,
+                    quality=an.quality,
+                )
+                events = [
+                    e for e in engine.evaluate(ReadingSnapshot(ts=1000.0, vitals=sample))
+                    if e.severity is not Severity.INFO
+                ]
+                self.assertEqual(
+                    [e.code.value for e in events], [],
+                    f"k={k} 的拼接窗触发了报警：{[e.code.value for e in events]}",
+                )
+
+    def test_稳定手指窗必须照常给结论(self) -> None:
+        """反方向钉子：修误报**不许**把好数据一起毙掉（真机那份手指波形仍要过）。"""
+        ir, red, rate = self._load("ppg_real_capture.csv")
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertTrue(result.finger_detected, result.reason)
+        self.assertEqual(result.finger_frac, 1.0, "真手指窗应当整窗都在阈值之上")
+        self.assertIsNotNone(result.heart_rate_bpm)
+        self.assertGreater(result.quality, 0.30)
+        self.assertFalse(result.reason, result.reason)
+
+
+class TestNearHandRegression(unittest.TestCase):
+    """★★ **真机"手凑近但没碰到"回归**（`ERROR.md` **E59**）——现场误报的**主**根因。
+
+    现场经过：操作者**并没有在测**，只是在传感器旁边接 TFT 的线，服务就报了
+    `hr_too_low` + `spo2_too_low` 并且**持续重发**（真机日志实测刷到"第 16 次"）。
+    单独跑一遍驱动也能复现（2026-09-30 真机服务级复现）：
+    服务起来时手还在窗口附近 ⇒ `finger_detected=true`、`hr 45.0 bpm`、`spo2 87.8 %`。
+
+    根因（真机**距离扫描**实测，不是推断）：`finger_dc_min` 原来是 **5000**，
+    而"手凑到窗口前 2 cm（没碰）"的红外直流就已经 **5817~9097**：
+
+    ======================  ============  ============
+    窗口前方状态             红外直流      旧阈值 5000
+    ======================  ============  ============
+    什么都没有（空房）              492  没手指
+    掌心离 10 cm                   1013  没手指
+    掌心离 5 cm                    1940  没手指
+    **掌心离 2 cm**             **5817~9097**  **误判成"有手指"**
+    食指轻贴窗口                  128674  有手指（下限 101887）
+    ======================  ============  ============
+
+    修法：阈值提到 **40000**（比"手在 2 cm"那档高 4.4 倍、比真手指下限低 2.5 倍），
+    并随 LED 电流等比缩放。
+
+    ⚠️ 判别力（同一轮实测）：**AC/DC 灌注指数在各档都是 0.004~0.022，分不开**；
+    能分开"手在旁边"和"手指贴上"的只有**直流电平**——所以判据就用直流，
+    别再往"波形形状"上想办法。
+    """
+
+    #: 真机距离扫描的**实测锚点**（同一次会话、同一配置：LED 7.6mA / SR100 / AVG4）。
+    #: 这些数字是"阈值该定在哪"的唯一依据，改动前必须先重新量一遍。
+    MEASURED_NOT_FINGER_MAX = 9097.0     # 掌心离 2 cm（最贴近但没碰）的红外直流上界
+    MEASURED_FINGER_MIN = 101887.0       # T7 真机手指波形夹具的红外直流下界
+
+    @staticmethod
+    def _load(name: str) -> tuple[list[float], list[float], float]:
+        path = Path(__file__).resolve().parent.parent / "fixtures" / name
+        ir: list[float] = []
+        red: list[float] = []
+        rate = 25.0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                if "analysis_rate_hz=" in line:
+                    rate = float(line.split("analysis_rate_hz=")[1].split()[0])
+                continue
+            if line.startswith("index"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            ir.append(float(parts[1]))
+            red.append(float(parts[2]))
+        return ir, red, rate
+
+    def test_近手夹具存在且是250组(self) -> None:
+        ir, red, rate = self._load("ppg_real_handnear.csv")
+        self.assertEqual(len(ir), 250)
+        self.assertEqual(len(red), 250)
+        self.assertEqual(rate, 25.0)
+
+    def test_真机近手窗必须判为没手指(self) -> None:
+        """一份**真实**的"掌心离 2 cm"波形：旧阈值下它被算成 hr 47 / spo2 86.8。"""
+        ir, red, rate = self._load("ppg_real_handnear.csv")
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertFalse(
+            result.finger_detected,
+            f"手没碰到窗口却报『检测到手指』（dc={result.dc:.0f} "
+            f"hr={result.heart_rate_bpm} spo2={result.spo2_percent}）",
+        )
+        self.assertIsNone(result.heart_rate_bpm)
+        self.assertIsNone(result.spo2_percent)
+
+    def test_近手窗的直流确实属于非手指那一档(self) -> None:
+        """钉住实测：这档直流在 7k~9k 量级，**远低于**真手指的 10 万量级。"""
+        ir, _red, _rate = self._load("ppg_real_handnear.csv")
+        dc = sum(ir) / len(ir)
+        self.assertGreater(dc, 5000.0, "这档就是当年骗过 5000 阈值的那一档")
+        self.assertLessEqual(
+            max(ir), self.MEASURED_NOT_FINGER_MAX + 1.0,
+            f"近手窗最大值 {max(ir)} 超出实测锚点",
+        )
+
+    def test_手指阈值必须落在实测两级之间(self) -> None:
+        """★ 标定守卫：阈值要**同时**满足"挡住手凑近"和"认得出真手指"。
+
+        左边 = 实测"手凑到 2 cm"的上界（9097），右边 = 实测真手指的下界（101887）。
+        任何人把阈值改到区间外，这里当场红——避免再出现"拍脑袋调阈值"。
+        """
+        threshold = PpgParams().finger_dc_min
+        self.assertGreater(
+            threshold, self.MEASURED_NOT_FINGER_MAX * 2.0,
+            f"阈值 {threshold:.0f} 离『手凑近』那档（{self.MEASURED_NOT_FINGER_MAX:.0f}）太近，"
+            "手一靠近就会误判成贴了手指",
+        )
+        self.assertLess(
+            threshold, self.MEASURED_FINGER_MIN * 0.5,
+            f"阈值 {threshold:.0f} 逼近真手指下限（{self.MEASURED_FINGER_MIN:.0f}），"
+            "手指薄/贴得轻的人会永远测不到",
+        )
+
+    def test_近手窗经过规则引擎也不许报任何警(self) -> None:
+        """端到端：近手窗 ⇒ 不给结论 ⇒ 报警引擎无话说（现场那条持续误报的出口）。
+
+        ⚠️ 诚实说明：**这一份**夹具即使回到旧阈值也不会触发报警——因为它的质量分
+        只有 0.002，被 `quality_min` 挡住了。但现场并不总这么走运：真机服务级复现里
+        同一个窗口能拿到 q≥0.30（对照跑里甚至 q=1.0）从而真的报警。
+        所以"阈值该定在哪"的**决定性守卫是下面的标定测试**，不是这一条；
+        这一条的作用是保证"近手窗到不了报警引擎"这条链路是通的。
+        """
+        from health_monitor.core.rules import ReadingSnapshot, RuleEngine
+        from health_monitor.hal.models import Severity, VitalSignsSample
+
+        ir, red, rate = self._load("ppg_real_handnear.csv")
+        an = analyze_ppg(ir, rate, red, PpgParams())
+        sample = VitalSignsSample(
+            ts=1000.0, device="max30102", ok=False, awaiting_data=True,
+            heart_rate_bpm=an.heart_rate_bpm, spo2_percent=an.spo2_percent,
+            finger_detected=an.finger_detected, quality=an.quality,
+        )
+        events = [
+            e for e in RuleEngine().evaluate(ReadingSnapshot(ts=1000.0, vitals=sample))
+            if e.severity is not Severity.INFO
+        ]
+        self.assertEqual([e.code.value for e in events], [])
+
+    def test_LED电流调小后真手指仍要认得出(self) -> None:
+        """阈值随 LED 电流**等比缩放**：调暗 LED 不许静默地"再也测不到手指"。
+
+        实测依据：LED 电流从 7.6mA 调到 1.2mA，反射光同比减少约 6 倍，
+        真手指的直流会从 ~128674 掉到 ~20000 —— 若阈值固定在 40000，
+        手指贴着也会永远判成"没检测到手指"，而且**不报错**（本项目最忌讳的静默失效）。
+        """
+        from health_monitor.sensors.max30102 import LED_CURRENT_STEPS, Max30102
+
+        base = Max30102(mock=True, led_current="7.6mA")
+        dim = Max30102(mock=True, led_current="1.2mA")
+        ratio = LED_CURRENT_STEPS["1.2mA"] / float(LED_CURRENT_STEPS["7.6mA"])
+        self.assertAlmostEqual(dim.finger_dc_min, base.finger_dc_min * ratio, places=3)
+
+        # 真机实测：7.6mA 下贴手指的直流约 128674 ⇒ 1.2mA 下应约 128674*ratio
+        scaled_finger_dc = 128674.0 * ratio
+        self.assertGreater(
+            scaled_finger_dc, dim.finger_dc_min * 2.0,
+            "调暗 LED 后真手指的直流离阈值太近，会认不出手指",
+        )
+
+    def test_零电流档必须被拒绝(self) -> None:
+        """`0mA`（LED 全关）不能拿来测心率血氧：阈值会退化成 0，什么都算手指。"""
+        from health_monitor.hal.exceptions import ConfigError
+        from health_monitor.sensors.max30102 import Max30102
+
+        with self.assertRaises(ConfigError):
+            Max30102(mock=True, led_current="0mA")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

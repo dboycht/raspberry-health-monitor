@@ -279,6 +279,9 @@ class PpgAnalysis:
     beats: int = 0          # 检出的脉搏波个数（峰值数）
     samples: int = 0        # 参与计算的样本数
     dc: float = 0.0         # 红外直流分量（"手指在不在"的判据）
+    #: 窗口里高于 ``finger_dc_min`` 的采样占比（0~1）。1.0 = 整窗都贴合。
+    #: 手指刚移开的"拼接窗"会明显小于 1（`ERROR.md` E58），是排查误报的第一眼证据。
+    finger_frac: float = 0.0
     reason: str = ""        # 没给出数值时的原因（中文，便于日志排查）
     #: 这个心率是用哪条路子得到的：``"自相关"``（主）/ ``"峰值间隔"``（兜底），便于排查
     source: str = ""
@@ -292,7 +295,44 @@ class PpgParams:
 
     hr_min_bpm: float = 30.0        # 低于 30 bpm 判为噪声
     hr_max_bpm: float = 220.0       # 高于 220 bpm 判为噪声（运动伪迹）
-    finger_dc_min: float = 5000.0   # 红外直流分量下限：低于此值视为没贴手指
+    #: 红外直流分量下限："窗口前方到底有没有手指"。
+    #: **标定在 7.6 mA 的 LED 电流下**（本项目默认档）；换电流档时由驱动按比例缩放
+    #: （见 :meth:`Max30102.__init__` 里的 `self.finger_dc_min`）。
+    #:
+    #: ⚠️ 数值怎么来的（2026-09-30 真机**距离扫描**，`ERROR.md` **E59**）——**别拍脑袋改**：
+    #:
+    #: ======================  ============  ==================================
+    #: 窗口前方状态             红外直流      判定
+    #: ======================  ============  ==================================
+    #: 什么都没有（空房）              492  没手指
+    #: 掌心离 10 cm                   1013  没手指
+    #: 掌心离 5 cm                    1940  没手指
+    #: 掌心离 2 cm                    5817  **没手指**（旧阈值 5000 会判成"有手指"）
+    #: 食指轻贴窗口                  128674  有手指（多次实测下限 101887）
+    #: ======================  ============  ==================================
+    #:
+    #: 旧的 ``5000`` **正落在"掌心 2 cm"那一档上** ⇒ 手凑近但没碰到就被当成"贴了手指"，
+    #: 于是把"手的慢动作"当脉搏，算出 ``hr 45 / spo2 87`` 并触发真机误报
+    #: （现场就是"手在探头边上接 TFT 线"的时候报的）。
+    #: 取 **40000** = 比"掌心 2 cm"（5817）高 **6.9 倍**，同时比实测真手指下限
+    #: （101887）低 **2.5 倍** —— 两侧都留足余量。
+    #:
+    #: ⚠️ 判别力说明（同一轮实测）：**AC/DC 灌注指数在以上各档都是 0.004~0.007，
+    #: 完全分不开**；能分开"手在旁边"与"手指贴上"的只有**直流电平**，所以判据用它。
+    finger_dc_min: float = 40000.0
+    #: **整窗里至少这么高比例的采样**要高于 ``finger_dc_min``，否则本窗不给任何结论。
+    #: 为什么不能只看**整窗均值**（2026-09-30 真机实测，`ERROR.md` **E58**）：
+    #: 手指移开后，10 秒窗里还留着大量手指数据，均值要等 **96.5 %** 的采样都换成
+    #: "无手指"才会掉到阈值以下（实测 DC 127794 → 584，约 9.6 秒）；那 9.6 秒里的窗
+    #: 是**手指段+暗段拼接**，阶跃会让算法报出 **hr 45 / spo2 87** 并触发
+    #: ``hr_too_low``+``spo2_too_low``（与现场误报逐位吻合）。
+    #: ⚠️ **为什么门限定成 1.0（一个点都不许差）**：用真机两份波形实测 k=0..14
+    #: （k = 窗尾有几个"无手指"采样）—— k=0 血氧 99.7 正常，而 **k=1 掉到 91.9
+    #: 立刻误报 spo2_too_low**（k=5 是 88.3）。血氧走的是**原始信号**的 AC/DC 比值，
+    #: 一个阶跃就把交流分量抬上去、把比值带偏，所以"容忍 2 % 坏点"并不安全。
+    #: 反方向不用担心太严：真手指每一点都在阈值之上（实测最低 119502，是阈值的 24 倍），
+    #: 1.0 不会把好数据毙掉。
+    finger_frac_min: float = 1.0
     min_samples_s: float = 5.0      # 至少要 5 秒数据才给结论（约 5 个脉搏波，估得稳）
     min_beats: int = 3              # 至少要 3 个波峰才够算心率
     peak_min_s: float = 0.3         # 两个波峰最小间隔（0.3s ≈ 200bpm，抗重复检出）
@@ -677,8 +717,13 @@ def analyze_ppg(
     """把一段红外（可选红光）原始采样算成心率/血氧（**纯函数**）。
 
     算法（课程设计够用且可解释）：
-    1. **手指检测**：红外直流分量均值 ``dc`` 超过 ``finger_dc_min`` 才算贴了手指。
-       没贴手指直接返回 ``finger_detected=False``、心率血氧为 ``None``。
+    1. **手指检测（逐采样，不是整窗均值）**：整窗里至少 ``finger_frac_min``（98 %）
+       的采样要高于 ``finger_dc_min`` 才算"这一段确实贴着手指"。
+       没贴手指、或窗口里混了"刚放上/刚移开"的一段，一律返回
+       ``finger_detected=False``、心率血氧为 ``None``。
+       ⚠️ 为什么不能用均值（2026-09-30 真机实测，`ERROR.md` **E58**）：
+       手指移开后整窗均值还要 **9.6 秒**才掉到阈值以下，那段时间的"拼接窗"带着
+       一个巨大阶跃，会被算成 **hr 45 / spo2 87** 并触发真机误报。
     2. **带通 0.7~4 Hz**：二阶 Butterworth（前向-反向各滤一遍，零相位）。
        ⚠️ 必须切掉 0.15~0.5 Hz 的**呼吸引起的基线波动**（它常比脉搏波还大）。
     3. **心率 = 归一化自相关主峰**（含次谐波校验，防一次心跳数成两次）；
@@ -706,15 +751,30 @@ def analyze_ppg(
         return PpgAnalysis(samples=n, reason="没有采样数据")
 
     dc = sum(ir) / n
-    if dc < p.finger_dc_min:
+    above = sum(1 for v in ir if v >= p.finger_dc_min)
+    finger_frac = above / float(n)
+    if finger_frac < p.finger_frac_min:
+        # ⚠️ 判据是**逐采样**的，不是整窗均值（2026-09-30 真机实测，ERROR.md E58）：
+        # 只看均值时，"手指刚移开"的拼接窗会带着一个巨大的阶跃继续被当成"贴了手指"，
+        # 阶跃经带通后落成 ~45 bpm 的假心率、并把血氧压到 ~87 %，直接触发误报。
+        # 这里只区分两种说法，便于日志一眼看出是"没贴"还是"刚移开"。
+        if above == 0:
+            reason = (
+                f"红外直流分量 {dc:.0f} 低于阈值 {p.finger_dc_min:.0f}：未检测到手指"
+            )
+        else:
+            reason = (
+                f"窗口里有 {n - above}/{n} 个采样低于阈值 {p.finger_dc_min:.0f}"
+                f"（仅 {finger_frac * 100:.0f}% 贴合）：手指刚放上/刚移开，本窗不给结论"
+            )
         return PpgAnalysis(
             finger_detected=False, samples=n, dc=dc,
-            reason=f"红外直流分量 {dc:.0f} 低于阈值 {p.finger_dc_min:.0f}：未检测到手指",
+            finger_frac=round(finger_frac, 4), reason=reason,
         )
 
     if n < int(p.min_samples_s * sample_rate):
         return PpgAnalysis(
-            finger_detected=True, samples=n, dc=dc,
+            finger_detected=True, samples=n, dc=dc, finger_frac=round(finger_frac, 4),
             reason=f"采样时长不足 {p.min_samples_s:.1f}s（当前 {n / sample_rate:.1f}s）",
         )
 
@@ -722,7 +782,7 @@ def analyze_ppg(
     level = _rms(ac)
     if level < p.ac_floor:
         return PpgAnalysis(
-            finger_detected=True, samples=n, dc=dc,
+            finger_detected=True, samples=n, dc=dc, finger_frac=round(finger_frac, 4),
             reason=f"交流分量 {level:.2f} 太小：手指没贴稳或 LED 电流太低",
         )
 
@@ -749,6 +809,7 @@ def analyze_ppg(
     else:
         return PpgAnalysis(
             finger_detected=True, samples=n, dc=dc, beats=len(peaks),
+            finger_frac=round(finger_frac, 4),
             acf_score=acf_score,
             reason=(
                 f"没有找到可靠的心率周期（频谱 SNR {spec_snr:.2f} 偏低，"
@@ -759,6 +820,7 @@ def analyze_ppg(
     if not (p.hr_min_bpm <= hr <= p.hr_max_bpm):
         return PpgAnalysis(
             finger_detected=True, samples=n, dc=dc, beats=len(peaks), acf_score=acf_score,
+            finger_frac=round(finger_frac, 4),
             reason=f"心率 {hr:.1f} bpm 不在 {p.hr_min_bpm:.0f}~{p.hr_max_bpm:.0f} 区间内",
         )
 
@@ -786,6 +848,7 @@ def analyze_ppg(
         beats=len(peaks),
         samples=n,
         dc=dc,
+        finger_frac=round(finger_frac, 4),
         reason=reason,
         source=source,
         acf_score=round(acf_score, 3),
@@ -856,7 +919,6 @@ class Max30102(Device):
             raise ConfigError(f"quality_min={quality_min} 非法：应在 0.0~1.0 之间")
         self.quality_min = float(quality_min)
         self.mock_auto_wave = bool(mock_auto_wave)
-        self._params = PpgParams(quality_min=self.quality_min)
 
         # 参数校验放在构造期（启动即失败，别等跑起来才炸）
         if not 0x03 <= int(address) <= 0x77:
@@ -878,6 +940,25 @@ class Max30102(Device):
         self._bus: Any = None if isinstance(bus, int) else bus
         self.address = int(address)
         self.led_current = led_current
+        # 手指检测阈值随 LED 电流**按比例缩放**：LED 驱动电流变小 ⇒ 反射回来的光同比变少
+        # ⇒ 直流电平也同比变小。标定值 `PpgParams.finger_dc_min` 是 7.6mA（默认档）下的。
+        # ⚠️ 为什么不缩放不行（`ERROR.md` E59 的同源实测）：把 `led_current` 从 7.6mA
+        # 调到 1.2mA，真手指的直流会从 ~128000 掉到 ~20000（≈1/6），低于固定阈值 40000
+        # ⇒ **手指贴着也永远判成"没检测到手指"**，而且不报错——正是本项目最忌讳的
+        # "静默失效"。缩放后各级电流下"手指/手在旁边"的判别保持同一套余量。
+        self.finger_dc_min = PpgParams.finger_dc_min * (
+            LED_CURRENT_STEPS[led_current] / float(LED_CURRENT_STEPS["7.6mA"])
+        )
+        if self.finger_dc_min <= 0.0:
+            # `0mA` 是给诊断用的档（LED 全关看环境光），拿它测心率血氧没有意义：
+            # 阈值退化成 0 ⇒ 任何采样点都算"贴了手指"。宁可启动就报错，也不静默出错数。
+            raise ConfigError(
+                f"led_current={led_current!r} 不能用于心率血氧测量："
+                "LED 不发光就没有反射光，手指判定阈值会退化成 0"
+            )
+        self._params = PpgParams(
+            quality_min=self.quality_min, finger_dc_min=self.finger_dc_min
+        )
         self.sample_rate = int(rate_key)             # **配置给器件的 ADC 采样率**（写进 SPO2_SR）
         # 分析真正该用的时间基数：FIFO 的实际产出速率。
         # ⚠️ 4 点平均会让器件每秒只推出 sample_rate/4 组（实测，见 FIFO_SAMPLE_AVG 注释），
@@ -1262,14 +1343,18 @@ class Max30102(Device):
             self._ir_buf, self.analysis_rate, self._red_buf, self._params
         )
         if not analysis.finger_detected:
-            # 没贴手指：清空缓冲，避免手指再贴上来时把"旧手指"的数据算进去
+            # 没贴手指（或手指刚移开、本窗是拼接的）：清空缓冲，避免手指再贴上来时
+            # 把"旧手指"的数据算进去。⚠️ 这一步同时是 E58 的**第二道保险**：
+            # 一旦判成"没贴合"就立刻丢掉旧窗，手指移开后不会再拿拼接窗去算 45 bpm。
             self._ir_buf.clear()
             self._red_buf.clear()
             if self.mock:
                 self._mock_index = 0
             return VitalSignsSample(
                 ts=now_ts(), device=self.name, ok=False, awaiting_data=True,
-                error="未检测到手指（红外直流分量过低），请把指腹完全覆盖传感器窗口",
+                # 文案要同时覆盖"没贴"和"刚移开"两种情形（`ERROR.md` E58）：
+                # 现场看到的 `hr 45 / spo2 87` 就是后者，写清楚才好排查。
+                error="未检测到手指（或手指刚移开、本窗不完整），请把指腹完全覆盖传感器窗口",
                 heart_rate_bpm=None, spo2_percent=None,
                 finger_detected=False, quality=0.0,
             )
