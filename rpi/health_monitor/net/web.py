@@ -143,6 +143,17 @@ class WebApi:
             ("POST", "/api/v1/silence"): self._silence,
             ("POST", "/api/v1/sos"): self._sos,
             ("POST", "/api/v1/speak"): self._speak,
+            # ⚠️ **回归修复（2026-10-01）**：`_cloud_callback` 从它被写出来的那一天起
+            #    就**没有注册过**（既不在老的 if/elif 链里、也不在这张表里）——
+            #    它是**死代码**，而 `CHANGELOG-接口.md` 与手册都写着这个端点存在
+            #    ⇒ 实测 `POST /api/v1/cloud/callback` 一直返回 **404**，
+            #    OneNET 规则引擎转发这条路**从来没通过**（`docs/07` 的 C7 因此"未实测"，
+            #    其实是**没法测**）。
+            #    没人发现的原因：**没有任何守卫比较"路由表 ↔ 契约文档"**。
+            #    现已补上守卫 `tests/integration/test_api_contract_docs.py`（双向比对）。
+            ("POST", "/api/v1/cloud/callback"): self._cloud_callback,
+            # 把 `_cloud_callback` 记下的原件读出来（此前只记不读，等于证据不存在）
+            ("GET", "/api/v1/cloud/last"): self._cloud_last,
         }
         handler = routes.get((method.upper(), path))
         if handler is None:
@@ -187,7 +198,7 @@ class WebApi:
 
         本端点做三件事（**只记录，不改任何监护状态**）：
         1. 把收到的原始 JSON 记一条日志（排查"云端到底发了什么"的唯一硬证据）；
-        2. 在内存里保留最近若干条，供 ``/api/v1/cloud/last`` 与状态页查看；
+        2. 在内存里保留最近若干条，供 :meth:`_cloud_last`（``GET /api/v1/cloud/last``）查看；
         3. 原样返回 ``{"code": 0, "msg": "ok"}``（平台约定的成功应答）。
 
         ⚠️ **安全**：默认不校验来源（局域网/课程演示够用）。
@@ -210,6 +221,28 @@ class WebApi:
         else:
             _LOG.info("收到云端推送（无记录器）：%s", json.dumps(record, ensure_ascii=False)[:500])
         return 200, {"code": 0, "msg": "ok"}
+
+    def _cloud_last(self, q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """最近收到的云端推送（新的在后）—— **把 `_cloud_callback` 记下的证据读出来**。
+
+        为什么必须有它（2026-10-01 发现的两个洞叠在一起）：
+        ① `_cloud_callback` 的 docstring 从写出来那天起就写着"供 `/api/v1/cloud/last`
+           **与状态页**查看"，但**两者都不存在** —— 既没有这个路由，`webui.py` 里也
+           一个"云端"字样都没有；
+        ② 结果就是**推送被记进了内存、却没有任何办法读出来**，
+           而它自称是"排查云云对接的唯一硬证据" ⇒ 证据等于没有。
+        （注：状态页那一半**不打算做** —— "云端推送了几条"是运维/排查信息，
+        不属于给老人家属看的照护数据；`GET` 这个端点才是它该在的地方。）
+        """
+        limit = _int_param(q, "limit", 20, low=1, high=200)
+        getter = getattr(self.runtime, "recent_cloud_pushes", None)
+        pushes = list(getter(limit)) if callable(getter) else []
+        return 200, {
+            "ok": True,
+            "count": len(pushes),
+            "total": int(getattr(self.runtime, "cloud_push_count", 0) or 0),
+            "pushes": pushes,
+        }
 
     def _current(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         snap = self.runtime.collector.snapshot()
