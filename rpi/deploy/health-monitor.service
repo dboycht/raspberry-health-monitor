@@ -3,6 +3,14 @@ Description=Raspberry Health Monitor (elder care IoT monitor)
 Documentation=file:///home/pi/raspberry-health-monitor/README.md
 After=network-online.target
 Wants=network-online.target
+# ⚠️ 这一行**必须待在 [Unit] 段里**（2026-10-01，ERROR.md **E74**）
+#    它原本被写在 [Service] 段里 ⇒ `systemd-analyze verify` 报
+#    "Unknown key 'After' in section [Service], ignoring." ⇒ **被静默忽略**，
+#    于是注释里承诺的"等 /dev/i2c-1 就绪再启动"根本没生效
+#    （启动早于节点创建时靠 Restart=always 兜底重试 —— 能自愈，但白费一轮、
+#      而且日志里留下"打不开 I2C"的错，看着像硬件坏了）。
+#    判据：**systemd 只认"段 + 键"的组合；写错段不是报错，是"忽略"**。
+After=dev-i2c-1.device
 
 [Service]
 Type=simple
@@ -28,9 +36,6 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=health-monitor
-
-# 设备节点就绪后再启动（启动早于节点创建时，Restart=always 会自动重试）
-After=dev-i2c-1.device
 
 [Install]
 WantedBy=multi-user.target

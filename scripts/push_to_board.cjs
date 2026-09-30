@@ -39,6 +39,12 @@ const DEFAULT_PLAN = [
   'rpi/tests',
   'rpi/config/devices.example.json', // 只推"示例"，**不推** devices.json
   'rpi/config/stages.json',
+  // ★ 2026-10-01 补（第 10 轮，ERROR.md E74）：`rpi/deploy` 是**部署产物**
+  //   （systemd 单元 + 安装脚本），而用户是在**板子上**跑 `install-service.sh`
+  //   ⇒ 板子上那份旧的就等于"装的是旧版"。
+  //   实测踩到：我修好了单元里放错段的 `After=`，板子上 `systemd-analyze verify`
+  //   **仍报同样的告警** —— 因为这个目录根本不在推送计划里。
+  'rpi/deploy',
   // ★ 2026-09-28 补：仓库根的 `scripts/`（主机侧 Node 工具）**板子上也要有** ——
   //   因为 `rpi/scripts/validate.py` 的**第 11 项"Node 脚本自检"要在板子上跑**
   //   （它调 `scripts/selftest.cjs` 与 `scripts/push_to_board.cjs`）。
