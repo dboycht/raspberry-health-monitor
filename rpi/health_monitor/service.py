@@ -79,9 +79,26 @@ SPO2_RESULT_HOLD_S = 8.0
 #: ⚠️ 第二段 **就是 `ERROR.md` E60 的产品化处置**：实测"按紧"会把血氧从 96.7 压到
 #: 93.9（物理性伪迹、改预处理去不掉，而本项目**无真值参照**所以**不改公式**），
 #: 于是改成在这里当场提示"轻贴别压" —— 在正确的时候给用户正确的提示。
-SPO2_PROMPT_LINES: Tuple[str, str] = ("SPO2 CHECK?", "PRESS BUTTON")
+#: ⚠️ 第一段（叫人）**必须把两种选择写在屏上**（2026-10-01）：老人得知道"我现在不想测"
+#: 该怎么表达，否则他只能干等超时（见下面 :data:`SPO2_REQ_DECLINE` 的说明）。
+SPO2_PROMPT_LINES: Tuple[str, str] = ("SPO2 CHECK NOW?", "CLICK=Y HOLD=N")
 SPO2_MEASURE_LINES: Tuple[str, str] = ("FINGER ON PPG", "TOUCH LIGHTLY")
 SPO2_FAIL_LINES: Tuple[str, str] = ("NO READING", "TRY AGAIN LATER")
+
+#: 「测血氧」按键的**两种有类型的请求**。
+#:
+#: 为什么要"有类型"（2026-10-01 用户 review 指出的**真实设计缺陷**）：
+#: 原来把 ``CLICK`` 与 ``LONG_PRESS`` **都当成"同意"** ⇒ **物理按键上不存在"拒绝"**：
+#: 老人不想测时只能干等 ``spo2_remind_timeout_s``（默认 60 秒）超时，
+#: 而这段时间**两块屏一直被提示占着**、他无法表达"我现在不测"。
+#: 这与本项目 SOS 键的既有做法（**短按消音 / 长按求助**）不一致 ——
+#: 属于**功能退化**，不是"设计取舍"。
+#:
+#: ⚠️ 语义边界（很容易写错，测试有双向钉子）：**``LONG_PRESS`` 只在 ``prompt`` 阶段
+#: 等于"否决"**；``idle`` / ``measure`` / ``result`` 阶段它与 ``CLICK`` **完全等价**
+#: （不给用户"长按了却没反应"的挫败感）。
+SPO2_REQ_MEASURE = "measure"
+SPO2_REQ_DECLINE = "decline"
 
 #: 蜂鸣声数（沿用本项目的"人耳暗号"：1 声 = 注意 / 2 声 = 成功 / 5 声 = 失败）
 SPO2_PROMPT_BEEPS = 2    # 叫人："该测血氧了"
@@ -276,8 +293,15 @@ class Runtime:
         self._spo2_deadline = 0.0
         #: 下一次"叫人测血氧"的时刻。**用绝对时刻排下一轮**（不用累加，避免漂移）。
         self._spo2_next_remind_ts = self.started_at + float(config.thresholds.spo2_remind_interval_s)
-        #: 本帧是否收到「测血氧」按键（由 :meth:`_consume_button_events` 置位）
-        self._spo2_requested = False
+        #: 本帧「测血氧」按键的**有类型请求**：``None`` / ``SPO2_REQ_MEASURE`` /
+        #: ``SPO2_REQ_DECLINE``（由 :meth:`_consume_button_events` 置位，:meth:`_drive_spo2` 消费）。
+        #: 为什么不是一个布尔量：布尔量**表达不了"拒绝"**，那正是 2026-10-01 修掉的缺陷。
+        self._spo2_request: Optional[str] = None
+        #: 累计数（**只在内存里，不落库** —— 它是"运行期交互统计"，重启即归零才是对的）
+        self._spo2_accepted_total = 0
+        self._spo2_declined_total = 0
+        #: 最近一次测量的结果（成功/失败**都记**，给面板显示"上次结果"）
+        self._spo2_last_result: Optional[Dict[str, Any]] = None
         #: 测量窗口内**所有**有效读数（结尾取中位数报结果，见 :func:`_median`）
         self._spo2_samples: List[Any] = []
         #: 上次喂提示的时刻（提示要周期性重发）
@@ -808,6 +832,8 @@ class Runtime:
     def _spo2_finish_measure(self, now: float) -> None:
         """测量结束：有有效读数就报**窗口中位数**，没有就如实说"没测到"（**不报警**）。"""
         usable = [s for s in self._spo2_samples if _has_usable_vitals(s)]
+        hr: Optional[float] = None
+        spo2: Optional[float] = None
         if usable:
             hr = _median([float(s.heart_rate_bpm) for s in usable])
             spo2 = _median([float(s.spo2_percent) for s in usable])
@@ -819,6 +845,14 @@ class Runtime:
             lines = SPO2_FAIL_LINES
             beeps = SPO2_FAIL_BEEPS
             _LOG.info("[测血氧] 测量结束但没拿到有效读数（手指没贴好 / 中途移开）")
+        # 记下"最近一次结果"给面板看：**失败也要记**（不然面板会一直显示上一次的成功值，
+        # 让用户以为这次也测到了）。
+        self._spo2_last_result = {
+            "ok": bool(usable),
+            "heart_rate_bpm": (round(hr, 1) if hr is not None else None),
+            "spo2_percent": (round(spo2, 1) if spo2 is not None else None),
+            "ts": now,
+        }
         self._spo2_state = "result"
         self._spo2_deadline = now + SPO2_RESULT_HOLD_S
         self._spo2_last_notice_ts = 0.0
@@ -827,16 +861,87 @@ class Runtime:
         self._spo2_schedule_next(now)
 
     def _spo2_give_up(self, now: float) -> None:
-        """本轮没测成（叫人后没人按）⇒ 回到待机并排下一轮。**不报警。**"""
+        """本轮没测成（叫人后没人按 / 用户否决）⇒ 回到待机并排下一轮。**不报警。**"""
         self._spo2_state = "idle"
         self._spo2_samples = []
+        self._spo2_request = None
+        # ★ **把两块屏立刻交还**：本方法跑在 `_rotate_display_page` / `_refresh_debug_panel`
+        #   **之前**，所以把两个"上次刷新时刻"清零 ⇒ **同一帧内**信息页与调试面板就会回来。
+        #   为什么必须这样：用户说"我现在不测"之后，屏上还挂着"要不要测"是**没有反馈的反馈** ——
+        #   他会怀疑"到底按没按上"。清零比"等最多 12 秒自然刷新"好得多，而且零成本。
+        self._last_page_ts = 0.0
+        self._last_debug_ts = 0.0
         self._spo2_schedule_next(now)
+
+    # ---- 对外动作（物理按键与 HTTP **共用这三个方法**）----
+
+    def spo2_measure_now(self, now: float) -> bool:
+        """请求**现在测一次**。物理短按与 ``POST /api/v1/spo2/measure`` 走同一条路径。
+
+        Returns:
+            ``True`` = 接受；``False`` = 功能没开（调用方据此返回 409）。
+
+        各状态下的含义（与物理按键表完全一致）：
+
+        * ``prompt``  ⇒ **接受叫人**，开始测量；
+        * ``idle``    ⇒ 主动测（不必等叫人）；
+        * ``measure`` ⇒ **提前结束**（不等满 ``spo2_measure_s``）；
+        * ``result``  ⇒ 再测一次。
+
+        ⚠️ 为什么做成 Runtime 的公开方法、而不是让 HTTP 自己改状态：
+        **物理按键与 HTTP 必须是同一条路径** —— 这是本项目反复吃过的亏
+        （`sos()` / `silence()` 的复用、E57 的屏分工都是同一条纪律）。
+        """
+        if not self._spo2_enabled():
+            return False
+        if self._spo2_state == "measure":
+            self._spo2_finish_measure(now)      # 提前结束**不算**一次新的"接受"
+            return True
+        self._spo2_accepted_total += 1
+        self._spo2_begin_measure(now)
+        return True
+
+    def spo2_decline(self, now: float) -> bool:
+        """**否决这一轮提醒**（"我现在不测"）。只在 ``prompt`` 阶段有意义。
+
+        Returns:
+            ``True`` = 确实否决掉了这一轮；
+            ``False`` = 功能没开，**或当前不在叫人阶段** —— 调用方据此返回 **409**，
+            而不是"假装成功"（假装成功会让面板显示一个没发生过的动作）。
+        """
+        if not self._spo2_enabled():
+            return False
+        if self._spo2_state != "prompt":
+            return False
+        self._spo2_declined_total += 1
+        _LOG.info("[测血氧] 用户**暂不检测**：本轮叫人被否决 ⇒ 放弃本轮（**不报警**），"
+                  "按 %.0f 秒间隔排下一轮",
+                  float(self.config.thresholds.spo2_remind_interval_s))
+        self._spo2_give_up(now)
+        return True
+
+    def spo2_status(self, now: float) -> Dict[str, Any]:
+        """「测血氧」当前状态（面板 2 秒轮询 + ``GET /api/v1/spo2`` 共用）。**纯读，不改状态。**"""
+        left: Optional[float] = None
+        if self._spo2_state in ("prompt", "measure"):
+            left = round(max(0.0, self._spo2_deadline - now), 1)
+        return {
+            "ok": True,
+            "enabled": self._spo2_enabled(),
+            "state": self._spo2_state,
+            "prompt_left_s": left if self._spo2_state == "prompt" else None,
+            "measure_left_s": left if self._spo2_state == "measure" else None,
+            "accepted_total": self._spo2_accepted_total,
+            "declined_total": self._spo2_declined_total,
+            "last_result": dict(self._spo2_last_result) if self._spo2_last_result else None,
+        }
 
     def _drive_spo2(self, now: float, snap: Any) -> None:
         """推进「按需测血氧」状态机（每帧调一次）。
 
-        状态流：``idle`` --(到点叫人)--> ``prompt`` --(按键)--> ``measure``
-        --> ``result`` --(停留够)--> ``idle``。
+        状态流：``idle`` --(到点叫人)--> ``prompt`` --(短按接受)--> ``measure``
+        --> ``result`` --(停留够)--> ``idle``；
+        ``prompt`` 阶段**长按 = 否决** ⇒ 直接回 ``idle``（也是"本轮结束"的一种）。
 
         任一步都可能"没成"，而且**都不报警**：
         ``prompt`` 超时 ⇒ 直接回 ``idle``；``measure`` 没读到 ⇒ 屏上说"没测到"。
@@ -845,28 +950,34 @@ class Runtime:
 
         ⚠️ 与报警的关系：**报警优先** —— 有活动报警时不覆盖报警文案，
         但状态机本身继续走（不会因为"正好报了个警"就把这次测量废掉）。
+
+        ⚠️ 本方法只负责**计时器与消费按键请求**；"用户动作"一律走
+        :meth:`spo2_measure_now` / :meth:`spo2_decline`，HTTP 也是调那两个 ——
+        所以两条入口的行为**必然一致**，不会各写一套。
         """
         if not self._spo2_enabled():
             self._spo2_state = "idle"
-            self._spo2_requested = False
+            self._spo2_request = None
             return
 
-        requested = self._spo2_requested
-        self._spo2_requested = False
+        request = self._spo2_request
+        self._spo2_request = None
         th = self.config.thresholds
 
         if self._spo2_state == "idle":
-            if requested:
-                self._spo2_begin_measure(now)        # 主动测：不必等叫人
+            if request == SPO2_REQ_MEASURE:
+                self.spo2_measure_now(now)          # 主动测：不必等叫人
             elif float(th.spo2_remind_interval_s) > 0 and now >= self._spo2_next_remind_ts:
                 self._spo2_begin_prompt(now)
             return
 
         if self._spo2_state == "prompt":
-            if requested:
-                self._spo2_begin_measure(now)
+            if request == SPO2_REQ_DECLINE:
+                self.spo2_decline(now)              # 否决：本轮结束
+            elif request == SPO2_REQ_MEASURE:
+                self.spo2_measure_now(now)          # 接受：开始测
             elif now >= self._spo2_deadline:
-                _LOG.info("[测血氧] 叫人后 %.0f 秒内没有按键，本轮放弃（**不报警**）",
+                _LOG.info("[测血氧] 叫人后 %.0f 秒内既没接受也没否决，本轮放弃（**不报警**）",
                           float(th.spo2_remind_timeout_s))
                 self._spo2_give_up(now)
             else:
@@ -877,14 +988,18 @@ class Runtime:
             vitals = getattr(snap, "vitals", None)
             if _has_usable_vitals(vitals):
                 self._spo2_samples.append(vitals)    # 攒窗口内的样本，结尾取中位数
-            if requested or now >= self._spo2_deadline:
+            if request == SPO2_REQ_MEASURE:
+                self.spo2_measure_now(now)           # 再按一下 = 提前结束
+            elif now >= self._spo2_deadline:
                 self._spo2_finish_measure(now)
             else:
                 self._spo2_show(SPO2_MEASURE_LINES, now)
             return
 
         # state == "result"：让结果在屏上停够时间，再交给信息页 / 调试面板
-        if now >= self._spo2_deadline:
+        if request == SPO2_REQ_MEASURE:
+            self.spo2_measure_now(now)               # 结果还没消失就又按了 = 马上再测
+        elif now >= self._spo2_deadline:
             self._spo2_state = "idle"
 
     def _consume_button_events(self, now: float) -> List[AlarmEvent]:
@@ -908,14 +1023,19 @@ class Runtime:
             action = getattr(event, "action", None)
             who = getattr(event, "device", "") or ""
             if who == SPO2_BUTTON_NAME:
-                # 「测血氧」按键（2026-09-30）：它**只**表达"用户想现在测血氧"。
-                # - 待机时按 ⇒ 立刻开始测（不必等叫人）；
-                # - 叫人提示中按 ⇒ 接受提示，开始测；
-                # - 测量中按 ⇒ 提前结束（不用等满 30 秒）。
-                if action in (ButtonAction.CLICK, ButtonAction.LONG_PRESS):
-                    self._spo2_requested = True
-                    _LOG.info("[按键] 「测血氧」按键按下（%s）",
-                              getattr(action, "value", action))
+                # 「测血氧」按键（2026-10-01 起是**双语义**，与 SOS 键的"短按消音/长按求助"一致）：
+                #   正在叫人时：短按 = **接受**（开始测） / 长按 = **否决**（本轮不测）
+                #   其它阶段　：短按与长按**完全等价**，都说"我要测"
+                #              （长按不给"按了却没反应"的挫败感 —— 测试有反向钉子）
+                if action is ButtonAction.LONG_PRESS and self._spo2_state == "prompt":
+                    self._spo2_request = SPO2_REQ_DECLINE
+                elif action in (ButtonAction.CLICK, ButtonAction.LONG_PRESS):
+                    self._spo2_request = SPO2_REQ_MEASURE
+                else:
+                    continue          # RELEASE 之类不表达意图，别把它当成一次请求
+                _LOG.info("[按键] 「测血氧」按键 %s（当前阶段 %s）⇒ 请求=%s",
+                          getattr(action, "value", action), self._spo2_state,
+                          self._spo2_request)
                 # ⚠️ **必须 continue**：绝不能让这个按键落到下面的"消音 / 求救"分支里去
                 #    （否则"想测血氧"会变成"消音"甚至"SOS"）。这就是 E61 的教训。
                 continue

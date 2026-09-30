@@ -341,6 +341,12 @@ button[disabled] { opacity: .55; cursor: progress; }
 .result ul { margin: 6px 0 0 18px; padding: 0; }
 .result li { margin: 2px 0; }
 .hint { font-size: 12px; color: #6b7480; }
+/* 「血氧检测」一节：它放在阈值表单**之前**（最显眼），所以给它一圈更重的边框 */
+.spo2box { border: 2px solid #1f6feb; }
+.spo2state { font-size: 14px; font-weight: 600; margin: 2px 0 10px; color: #1b3a63; }
+.spo2btns { display: flex; gap: 12px; flex-wrap: wrap; }
+button.ghost { background: #fff; color: #1f6feb; border: 1px solid #1f6feb; }
+button.ghost[disabled] { opacity: .45; cursor: not-allowed; }
 """
 
 #: 面板的脚本。**刻意不做自动刷新**：这是表单，整页刷新会把没保存的输入抹掉
@@ -442,6 +448,69 @@ async function save() {
     btn.disabled = false;
   }
 }
+
+// ---------------- 【血氧检测】一节（2026-10-01）----------------
+// ⚠️ 这里的轮询**只更新这一节自己的 DOM**（状态行 + 两个按钮的可用性），
+// **绝不整页刷新** —— 整页刷新会把用户还没保存的阈值输入全部抹掉。
+// 这正是本脚本开头那条"刻意不做自动刷新"的理由，别在这里破例。
+
+function spo2Line(st) {
+  if (!st.enabled) { return '功能已关闭（配置里 spo2_button.enabled = false）'; }
+  if (st.state === 'prompt') {
+    return '正在叫人：剩余 ' + Math.ceil(st.prompt_left_s) +
+           ' 秒 —— 短按 = 开始检测，长按 = 暂不检测';
+  }
+  if (st.state === 'measure') {
+    return '测量中：剩余 ' + Math.ceil(st.measure_left_s) +
+           ' 秒 —— 请把食指指腹轻贴、别用力压';
+  }
+  var parts = [];
+  var lr = st.last_result;
+  if (lr) {
+    parts.push(lr.ok
+      ? ('上次结果：HR ' + lr.heart_rate_bpm + ' bpm、SpO2 ' + lr.spo2_percent + ' %')
+      : '上次测量没拿到读数');
+  }
+  parts.push('接受 ' + st.accepted_total + ' 次 / 暂不 ' + st.declined_total + ' 次');
+  return '待机 · ' + parts.join(' · ');
+}
+
+function spo2Render(st) {
+  var line = document.getElementById('spo2state');
+  if (line) { line.textContent = spo2Line(st); }
+  var go = document.getElementById('spo2go');
+  if (go) { go.disabled = !st.enabled; }
+  var no = document.getElementById('spo2no');
+  // 「暂不检测」只在"正在叫人"时可用：灰掉是为了**不让用户点了拿到 409**
+  if (no) { no.disabled = (st.state !== 'prompt'); }
+}
+
+async function spo2Poll() {
+  try {
+    var res = await fetch('/api/v1/spo2', { cache: 'no-store' });
+    spo2Render(await res.json());
+  } catch (err) {
+    // 网络抖动不该弹错误框、更不该刷新页面；下一轮 2 秒后自然会重试
+  }
+}
+
+async function spo2Act(what) {
+  try {
+    var res = await fetch('/api/v1/spo2/' + what, { method: 'POST' });
+    var data = await res.json();
+    if (!data.ok) {
+      show('bad', '操作未执行（HTTP ' + res.status + '）：' + esc(data.error || '未知错误'));
+    } else {
+      show('ok', (what === 'decline' ? '已记下：本次暂不检测' : '已开始血氧检测'), []);
+    }
+  } catch (err) {
+    show('bad', '请求失败：' + esc(err));
+  }
+  spo2Poll();
+}
+
+spo2Poll();
+setInterval(spo2Poll, 2000);
 </script>
 """
 
@@ -529,6 +598,24 @@ def render_panel(runtime: Any, store: Any, *, secured: bool = False) -> str:
         items = "".join(f"<li>{_esc(w)}</li>" for w in store_warnings)
         warn_block = f'<div class="banner warn">本机覆盖（devices.local.json）影响了面板正在编辑的项：<ul>{items}</ul></div>'
 
+    # 【血氧检测】（2026-10-01）：放在**阈值表单之前** —— 它是"当下要不要量一次"的
+    # 即时操作，比调阈值更常用，也更能体现"这块板子真的在监护"。
+    # 内容由 JS 每 2 秒轮询 `/api/v1/spo2` 填充；这里只出骨架，
+    # 所以**不需要**服务端先知道状态（也就不用担心渲染期与运行期不一致）。
+    spo2_section = """
+  <fieldset class="spo2box">
+    <legend>【血氧检测】</legend>
+    <div class="spo2state" id="spo2state">状态读取中…</div>
+    <div class="spo2btns">
+      <button type="button" id="spo2go" onclick="spo2Act('measure')">血氧检测</button>
+      <button type="button" id="spo2no" class="ghost" onclick="spo2Act('decline')" disabled>暂不检测</button>
+    </div>
+    <div class="hint">与板上那个「测血氧」按键<strong>同一条路径</strong>：
+      短按 = 开始检测；<strong>正在叫人时长按 = 暂不检测</strong>（其它阶段长按等于短按）。
+      状态每 2 秒自动刷新，<strong>只刷新本区域</strong>（不会动下面还没保存的输入）。</div>
+  </fieldset>
+"""
+
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -547,6 +634,7 @@ def render_panel(runtime: Any, store: Any, *, secured: bool = False) -> str:
 <main>
   {unsafe}
   {warn_block}
+  {spo2_section}
   <noscript>
     <div class="banner bad">本页需要 JavaScript 才能保存（表单要拼 JSON 并 POST）。
       没有 JS 时请直接用接口：<code>GET /api/v1/config</code> 看配置，

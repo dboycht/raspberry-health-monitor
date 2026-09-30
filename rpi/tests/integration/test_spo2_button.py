@@ -261,10 +261,196 @@ class TestMeasure(_Base):
         self.assertEqual(self.rt.recent_events(), [])
 
 
+class TestDecline(_Base):
+    """★ 「否决权」（2026-10-01 用户 review 指出的**真实设计缺陷**）。
+
+    修之前：`CLICK` 与 `LONG_PRESS` **都当成"同意"** ⇒ 物理按键上**不存在"拒绝"**，
+    老人不想测时只能干等 `spo2_remind_timeout_s`（默认 60 秒）超时，
+    而这 60 秒里两块屏一直被提示占着。这与 SOS 键的"短按消音 / 长按求助"**不一致** ——
+    是**功能退化**，不是设计取舍。
+    """
+
+    def test_叫人时屏上要写出两种选择(self) -> None:
+        """★ 不说清楚"长按 = 不测"，老人根本不知道该怎么拒绝 —— 屏上必须写出来。"""
+        self._reach_prompt()
+        line2 = self._lcd()[1]
+        self.assertIn("CLICK=Y", line2, f"屏上没写「短按 = 测」：{line2!r}")
+        self.assertIn("HOLD=N", line2, f"屏上没写「长按 = 不测」：{line2!r}")
+        for line in SPO2_PROMPT_LINES:
+            self.assertTrue(line.isascii())
+            self.assertLessEqual(len(line), 16)
+
+    def test_叫人时长按是否决(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self.assertNotIn(SPO2_MEASURE_LINES[0], self._lcd()[0], "长按被当成「同意」了")
+        status = self.rt.spo2_status(self.clock())
+        self.assertEqual(status["state"], "idle")
+        self.assertEqual(status["declined_total"], 1)
+        self.assertEqual(status["accepted_total"], 0, "否决不该被计成接受")
+
+    def test_否决是立刻生效而不是等超时(self) -> None:
+        """★ 否决权的意义就在这：**当场**结束，而不是让老人干等几十秒。"""
+        self._reach_prompt()
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)   # 只推进 0.3 秒
+        self.assertEqual(self.rt.spo2_status(self.clock())["state"], "idle",
+                         "否决必须立刻生效（不能等到 spo2_remind_timeout_s）")
+
+    def test_否决后本轮结束且按正常间隔排下一轮(self) -> None:
+        """否决的是**这一轮**，不是"以后都别问我"。"""
+        self._reach_prompt()
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        before = self._beeps()
+        self._tick(advance=REMIND_S)
+        self.assertGreater(self._beeps(), before, "否决之后应当还会按间隔再叫一次")
+        self.assertEqual(self.rt.spo2_status(self.clock())["state"], "prompt")
+
+    def test_否决后屏幕立刻交还(self) -> None:
+        """★ 否决之后那块屏**同一帧内**就该回到信息页 / 调试面板。
+
+        否则用户说"我现在不测"之后，屏上还挂着"要不要测"—— 那是**没有反馈的反馈**，
+        他会怀疑"我到底按上没按上"。
+        """
+        self._reach_prompt()
+        self.assertIn(SPO2_PROMPT_LINES[0], self._lcd()[0], "前置条件：先在叫人")
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self.assertNotIn(SPO2_PROMPT_LINES[0], self._lcd()[0], "否决后 LCD 还挂着叫人提示")
+        self.assertNotIn(SPO2_PROMPT_LINES[0], self._tft()[0], "否决后彩屏还挂着叫人提示")
+
+    def test_超时放弃后屏幕也立刻交还(self) -> None:
+        self._reach_prompt()
+        self._tick(advance=TIMEOUT_S + 1.0)
+        self.assertNotIn(SPO2_PROMPT_LINES[0], self._lcd()[0], "超时放弃后 LCD 还挂着叫人提示")
+
+    def test_回绝之后还能主动测(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self._press_and_tick(action=ButtonAction.CLICK)
+        self.assertIn(SPO2_MEASURE_LINES[0], self._lcd()[0])
+
+    def test_否决期间不产生报警(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self.assertEqual(self.rt.engine.active_alarms(), {})
+        self.assertEqual(self.rt.recent_events(), [])
+
+    # ---------- 反向钉子：别把"长按"做成"没用" ----------
+
+    def test_待机时长按等于短按(self) -> None:
+        """★ 反向钉子：`LONG_PRESS` **只在 prompt 阶段**是否决。
+
+        其它阶段用户长按同样是"我要测" —— 给他"按了却没反应"的挫败感才是真的错。
+        """
+        self.rt.tick()
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self.assertIn(SPO2_MEASURE_LINES[0], self._lcd()[0],
+                      "待机时长按应当和短按一样开始测量")
+        self.assertEqual(self.rt.spo2_status(self.clock())["declined_total"], 0)
+
+    def test_测量中长按等于短按且提前结束(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick()                              # 短按进入测量
+        self.rt.set_vitals(heart_rate=70.0, spo2=96.0)
+        self._tick(advance=2.0)
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self.assertNotIn(SPO2_MEASURE_LINES[0], self._lcd()[0], "测量中长按应当也能提前结束")
+        self.assertEqual(self.rt.spo2_status(self.clock())["declined_total"], 0)
+
+    def test_结果停留时长按等于短按(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick()
+        self.rt.set_vitals(heart_rate=70.0, spo2=96.0)
+        self._tick(advance=MEASURE_S + 1.0)                  # 出了结果
+        self._press_and_tick(action=ButtonAction.LONG_PRESS)
+        self.assertIn(SPO2_MEASURE_LINES[0], self._lcd()[0], "结果页长按应当马上再测一次")
+        self.assertEqual(self.rt.spo2_status(self.clock())["declined_total"], 0)
+
+    def test_短按叫人时被计成接受(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick()
+        status = self.rt.spo2_status(self.clock())
+        self.assertEqual(status["accepted_total"], 1)
+        self.assertEqual(status["declined_total"], 0)
+
+
+class TestStatusFields(_Base):
+    """`spo2_status()` 的字段与倒计时 —— 面板与 `GET /api/v1/spo2` **共用**它。"""
+
+    def test_待机时的字段(self) -> None:
+        self.rt.tick()
+        status = self.rt.spo2_status(self.clock())
+        self.assertTrue(status["ok"])
+        self.assertTrue(status["enabled"])
+        self.assertEqual(status["state"], "idle")
+        self.assertIsNone(status["prompt_left_s"])
+        self.assertIsNone(status["measure_left_s"])
+        self.assertEqual(status["accepted_total"], 0)
+        self.assertEqual(status["declined_total"], 0)
+        self.assertIsNone(status["last_result"])
+
+    def test_叫人时倒计时递减(self) -> None:
+        self._reach_prompt()
+        first = self.rt.spo2_status(self.clock())["prompt_left_s"]
+        self.assertIsNotNone(first)
+        self.assertLessEqual(first, TIMEOUT_S)
+        self._tick(advance=5.0)
+        second = self.rt.spo2_status(self.clock())["prompt_left_s"]
+        self.assertLess(second, first, "叫人倒计时没有递减")
+        self.assertIsNone(self.rt.spo2_status(self.clock())["measure_left_s"],
+                          "叫人阶段不该同时给出测量倒计时")
+
+    def test_测量时倒计时递减(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick()
+        first = self.rt.spo2_status(self.clock())["measure_left_s"]
+        self.assertIsNotNone(first)
+        self._tick(advance=3.0)
+        second = self.rt.spo2_status(self.clock())["measure_left_s"]
+        self.assertLess(second, first, "测量倒计时没有递减")
+        self.assertIsNone(self.rt.spo2_status(self.clock())["prompt_left_s"],
+                          "测量阶段不该同时给出叫人倒计时")
+
+    def test_测到结果后last_result带数值(self) -> None:
+        self._reach_prompt()
+        self._press_and_tick()
+        self.rt.set_vitals(heart_rate=70.0, spo2=96.0)
+        self._tick(advance=MEASURE_S + 1.0)
+        result = self.rt.spo2_status(self.clock())["last_result"]
+        self.assertIsNotNone(result)
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(result["heart_rate_bpm"], 70.0, delta=2.0)
+        self.assertAlmostEqual(result["spo2_percent"], 96.0, delta=1.5)
+        self.assertGreater(result["ts"], 0)
+
+    def test_没测到时last_result也要记下来(self) -> None:
+        """★ 失败也必须记：否则面板会一直显示**上一次的成功值**，让人以为这次也测到了。"""
+        self._reach_prompt()
+        self._press_and_tick()
+        self.rt.set_vitals(finger=False)
+        self._tick(advance=MEASURE_S + 1.0)
+        result = self.rt.spo2_status(self.clock())["last_result"]
+        self.assertIsNotNone(result)
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["heart_rate_bpm"])
+        self.assertIsNone(result["spo2_percent"])
+
+
 class TestSwitch(_Base):
     """总开关：配置里 `spo2_button.enabled=false` ⇒ 整个功能关掉。"""
 
     spo2_enabled = False
+
+    def test_关掉后状态里enabled为假(self) -> None:
+        self.rt.tick()
+        status = self.rt.spo2_status(self.clock())
+        self.assertFalse(status["enabled"])
+        self.assertEqual(status["state"], "idle")
+
+    def test_关掉后两个动作方法都拒绝(self) -> None:
+        """HTTP 层据此返回 409；这条钉子保证"拒绝"来自 Runtime 而不是 web 层自己判断。"""
+        self.rt.tick()
+        self.assertFalse(self.rt.spo2_measure_now(self.clock()))
+        self.assertFalse(self.rt.spo2_decline(self.clock()))
 
     def test_关掉后到点也不叫人(self) -> None:
         self.rt.tick()

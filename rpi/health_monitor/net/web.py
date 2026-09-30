@@ -135,6 +135,9 @@ class WebApi:
             ("GET", "/api/v1/devices"): self._devices,
             ("GET", "/api/v1/config"): self._config_get,
             ("POST", "/api/v1/config"): self._config_post,
+            ("GET", "/api/v1/spo2"): self._spo2_get,
+            ("POST", "/api/v1/spo2/measure"): self._spo2_measure,
+            ("POST", "/api/v1/spo2/decline"): self._spo2_decline,
             ("POST", "/api/v1/silence"): self._silence,
             ("POST", "/api/v1/sos"): self._sos,
             ("POST", "/api/v1/speak"): self._speak,
@@ -315,6 +318,58 @@ class WebApi:
             "warnings": warnings,
             "backup": backup,
         }
+
+    # ---- 按需测血氧（2026-10-01）----
+    #
+    # ⚠️ 三条都**不自己改状态**，只调 `Runtime` 上那三个方法 ——
+    # 物理按键走的是同一套（`_consume_button_events` → `_drive_spo2` → 同名方法）。
+    # 这是本项目的硬纪律："一个动作只有一条路径"，否则面板/手机端/按键迟早行为分叉。
+
+    def _now(self) -> float:
+        """血氧这几条接口统一取时间：**优先用 Runtime 的时钟**。
+
+        为什么不能用 ``time.time()``（既有 `_silence` / `_sos` 用的是它）：
+        血氧状态机里存的是**"截止时刻"**，它在 `tick()` 里与 Runtime 时钟比较。
+        HTTP 若用墙上时钟，一旦两者不是同一个源（单测注入假时钟、或将来做时间回放），
+        倒计时会变成负数、`measure` 的窗口永远不会到点 —— 而且**测试里根本测不出来**。
+        ⇒ 凡是有"截止时刻"语义的接口，都必须与 tick 共用一个时钟。
+        """
+        clock = getattr(self.runtime, "clock", None)
+        return clock() if callable(clock) else time.time()
+
+    def _spo2_get(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """「测血氧」当前状态（面板每 2 秒轮询它刷新那一节的状态行）。"""
+        return 200, self.runtime.spo2_status(self._now())
+
+    def _spo2_measure(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """等价于**物理短按**那个「测血氧」按键。"""
+        now = self._now()
+        if not self.runtime.spo2_measure_now(now):
+            return 409, {
+                "ok": False,
+                "error": "测血氧功能未启用（配置里 spo2_button.enabled = false）",
+            }
+        return 200, {"ok": True, "state": self.runtime.spo2_status(now)["state"]}
+
+    def _spo2_decline(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """等价于**叫人阶段长按**（= 否决本轮）。
+
+        不在叫人阶段时返回 **409**（而不是"假装成功"）：面板据此把按钮灰掉，
+        脚本也能凭状态码判断"这一下到底有没有意义"。
+        """
+        now = self._now()
+        if not self.runtime.spo2_decline(now):
+            status = self.runtime.spo2_status(now)
+            if not status["enabled"]:
+                return 409, {
+                    "ok": False,
+                    "error": "测血氧功能未启用（配置里 spo2_button.enabled = false）",
+                }
+            return 409, {
+                "ok": False,
+                "error": "当前不在「正在叫人」阶段（state=%s），没有可否决的提醒" % status["state"],
+            }
+        return 200, {"ok": True, "state": self.runtime.spo2_status(now)["state"]}
 
     def _silence(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         now = time.time()
