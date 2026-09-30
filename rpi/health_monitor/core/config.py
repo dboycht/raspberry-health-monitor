@@ -280,6 +280,34 @@ def _deep_merge(base: Dict[str, Any], override: Mapping[str, Any]) -> Dict[str, 
     return result
 
 
+def merge_override(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
+    """公开的深合并入口（:func:`_deep_merge` 的正式包装）。
+
+    Web 配置面板要在**写盘之前**预览"真正会跑起来的那份配置"
+    （= 基础配置 + 本机覆盖），所以把合并器公开出来，
+    免得外面去 import 带下划线的私有函数。
+    """
+    return _deep_merge(dict(base), override)
+
+
+def read_local_overrides() -> Dict[str, Any]:
+    """读取 ``config/devices.local.json``；不存在返回 ``{}``。
+
+    ⚠️ 配置面板**只把它用于校验**（真正跑的是"基础配置 + 本机覆盖"合并后的结果），
+    **绝不写它** —— 密钥/本机引脚属于"每台机器自己的东西"，见 :func:`local_config_path`。
+    """
+    path = local_config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"本机覆盖配置无法读取/解析：{path}：{exc}") from exc
+    if not isinstance(data, Mapping):
+        raise ConfigError(f"本机覆盖配置顶层必须是对象：{path}")
+    return dict(data)
+
+
 def load_config(path: Optional[str | Path] = None, *, use_local: bool = True) -> AppConfig:
     """从 JSON 文件加载配置。
 
@@ -320,13 +348,7 @@ def load_config(path: Optional[str | Path] = None, *, use_local: bool = True) ->
     # 叠加本机覆盖（密钥/口令放这里，**不提交**）
     local = local_config_path()
     if use_local and local.exists() and local.resolve() != target.resolve():
-        try:
-            local_data = json.loads(local.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ConfigError(f"本机覆盖配置无法读取/解析：{local}：{exc}") from exc
-        if not isinstance(local_data, Mapping):
-            raise ConfigError(f"本机覆盖配置顶层必须是对象：{local}")
-        data = _deep_merge(dict(data), local_data)
+        data = merge_override(data, read_local_overrides())
 
     return AppConfig.from_dict(data)
 

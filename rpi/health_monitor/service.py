@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .core.collector import Collector
-from .core.config import AppConfig, load_config
+from .core.config import AppConfig, DeviceConfig, default_config_path, load_config
+from .core.configstore import ConfigStore
 from .core.dispatcher import AlarmDispatcher
 from .core.rules import RuleEngine
 from .core.store import Store
@@ -251,6 +252,10 @@ class Runtime:
         self.clock = clock
         self._sleep = sleep
         self.config_path = config_path
+        #: 配置面板的读写器：**只有本进程确实绑定了配置文件时才有**。
+        #: 空字符串（例如单测直接构造 Runtime）⇒ 面板的写接口会**明确拒绝**，
+        #: 而不是去猜一个路径、把仓库里的配置改掉。
+        self.config_store: Optional[ConfigStore] = ConfigStore(config_path) if config_path else None
         self.version = VERSION
         self.started_at = clock()
         self._device_factory = device_factory or create_device
@@ -427,6 +432,127 @@ class Runtime:
             except Exception as exc:  # noqa: BLE001
                 _LOG.debug("MQTT 关闭异常（已忽略）：%s", exc)
             self.mqtt_started = False
+
+    # ------------------------------------------------------------------
+    # 配置热应用（2026-10-01，Web 配置面板）
+    # ------------------------------------------------------------------
+
+    def apply_config(self, config: AppConfig) -> Tuple[List[str], List[str]]:
+        """把一份新配置**热应用**到正在运行的实例上，返回 ``(applied, warnings)``。
+
+        这是面板能改的全部三件事：**阈值 / 读取周期 / 器件开关**。
+
+        设计取舍（为什么这么做）：
+
+        * **阈值**：规则引擎每一帧都读 ``self.engine.th``，直接换掉那个对象即可 ——
+          下一帧就用新值判定，不必重启、也不必通知任何人；
+        * **周期**：只改 ``_Entry.interval``，并且**只在必要时提前**下次到期时间
+          （``min(原值, now + 新周期)``）。刻意**不无条件重排**：把周期从 1 秒改成 60 秒时，
+          若无条件重排，本来 0.2 秒后就该读的那次会被推后一分钟，现场看起来像"卡死了"；
+        * **开关**：关掉 = ``close()`` + 从**三张表**（runtime.devices / collector.entries /
+          dispatcher.outputs）里摘干净；打开 = 装配 → ``open()`` → 接进这三张表。
+
+        ⚠️ **单个器件打不开不算失败**：没接线是常态，错误进 ``warnings``，
+        该器件记进 ``assembly_errors``（= "已启用但装配失败"），HTTP 照样 200。
+        理由：**配置本身是好的**，只是这台机器上没接 —— 不该让整次保存都失败，
+        否则用户改个阈值会被"另一个器件没接"连带挡住。
+        """
+        applied: List[str] = []
+        warnings: List[str] = []
+        now = self.clock()
+        old = self.config
+
+        # ---- ① 阈值 ----
+        if old.thresholds != config.thresholds:
+            applied.append("报警阈值已更新（规则引擎下一帧起按新值判定）")
+        self.engine.th = config.thresholds
+
+        # ---- ② 读取周期 ----
+        for cfg in config.devices:
+            entry = self.collector.entries.get(cfg.name)
+            if entry is None or entry.interval == cfg.read_interval_s:
+                continue
+            entry.interval = float(cfg.read_interval_s)
+            due = now + entry.interval
+            if entry.next_due_ts is None or entry.next_due_ts > due:
+                entry.next_due_ts = due
+            applied.append(f"{cfg.name}.read_interval_s 改为 {entry.interval:g} 秒")
+
+        # ---- ③ 器件开关 ----
+        #
+        # ⚠️ 这里刻意按**实际运行状态**（`self.devices`）对齐，而不是按"上一份配置里的 enabled"
+        #    对齐：启动时装配失败的器件**从来没进过 `self.devices`**，若按配置差异判断，
+        #    它在面板上会永远显示"已启用"、却永远接不上 —— 只能重启服务才能再试一次。
+        #    按实际状态对齐之后，**修好接线再点一次保存**就把它接回来了（有测试钉住）。
+        should_on = {d.name for d in config.enabled_devices()}
+        is_on = set(self.devices)
+        for name in sorted(is_on - should_on):
+            self._detach_device(name)
+            applied.append(f"已关闭并移除设备 {name}")
+        for name in sorted(should_on - is_on):
+            problem = self._attach_device(config.device(name))
+            if problem:
+                warnings.append(f"设备 {name} 已按配置启用，但本次没能打开：{problem}")
+            else:
+                applied.append(f"已启用设备 {name}")
+
+        # ---- ④ 让采集器与规则引擎看到同一份配置 ----
+        # 采集器会读 config.thresholds.sensor_fault_after（判定"连续失败几次算故障"），
+        # 所以它的 config 引用也必须换掉，否则面板改的那个值在这条路径上不生效。
+        self.config = config
+        self.collector.config = config
+        return applied, warnings
+
+    def _attach_device(self, cfg: Optional[DeviceConfig]) -> str:
+        """装配 + 打开 + 接进三张表。**失败返回错误文本，绝不抛异常。**"""
+        if cfg is None:
+            return "配置里找不到该设备"
+        try:
+            device = self._device_factory(
+                cfg.driver, params=cfg.params, mock=self.mock, name=cfg.name,
+            )
+        except Exception as exc:  # noqa: BLE001 - 驱动缺失/参数错都算"这台机器上开不起来"
+            self.assembly_errors[cfg.name] = f"{type(exc).__name__}: {exc}"
+            _LOG.warning("启用设备 %s（驱动 %s）装配失败：%s", cfg.name, cfg.driver, exc)
+            return f"装配失败（{type(exc).__name__}: {exc}）"
+        try:
+            device.open()
+        except Exception as exc:  # noqa: BLE001
+            # 打不开就**别留半个设备在表里**：半开状态会让 status() 里它显示"正常"，
+            # 却永远读不到数据 —— 那种"看起来在跑其实没跑"最难查。
+            self.assembly_errors[cfg.name] = f"{type(exc).__name__}: {exc}"
+            _LOG.warning("启用设备 %s 打开失败：%s", cfg.name, exc)
+            try:
+                device.close()
+            except Exception:  # noqa: BLE001
+                pass
+            return f"打开失败（{type(exc).__name__}: {exc}）"
+
+        self.devices[cfg.name] = device
+        if isinstance(device, OutputDevice):
+            self.outputs[cfg.name] = device
+            self.dispatcher.add_output(cfg.name, device)
+        else:
+            self.inputs[cfg.name] = device
+        self.collector.add_entry(cfg, device)
+        self.assembly_errors.pop(cfg.name, None)
+        _LOG.info("已启用设备 %s（驱动 %s）", cfg.name, cfg.driver)
+        return ""
+
+    def _detach_device(self, name: str) -> None:
+        """关闭并摘下器件：**三张表都要摘干净**，否则会留下"幽灵器件"。"""
+        device = self.devices.pop(name, None)
+        self.inputs.pop(name, None)
+        if self.outputs.pop(name, None) is not None:
+            self.dispatcher.remove_output(name)
+        self.collector.remove_entry(name)
+        self.assembly_errors.pop(name, None)
+        if device is None:
+            return
+        try:
+            device.close()
+        except Exception as exc:  # noqa: BLE001 - 关不掉也不该影响"它已经被移出系统"这个事实
+            _LOG.debug("关闭设备 %s 异常（已忽略）：%s", name, exc)
 
     # ------------------------------------------------------------------
     # 主循环
@@ -986,7 +1112,10 @@ def build_runtime(
 ) -> Runtime:
     """按配置文件构造运行时（命令行入口用它）。"""
     config = load_config(config_path)
-    path_text = str(config_path) if config_path else ""
+    # 记录**生效的**路径：Web 配置面板要往这个文件里写。
+    # 为 None 时用默认路径（与 load_config 的解析一致）—— 否则会变成
+    # "面板能打开、一保存就说没有配置文件"，纯属自找的坑。
+    path_text = str(config_path) if config_path else str(default_config_path())
     return Runtime(
         config,
         mock=mock,

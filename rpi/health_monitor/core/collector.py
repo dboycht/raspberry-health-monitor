@@ -31,7 +31,7 @@ from ..hal.models import (
     VitalSignsSample,
     now_ts,
 )
-from .config import AppConfig
+from .config import AppConfig, DeviceConfig
 from .rules import ReadingSnapshot
 from .store import Store
 
@@ -134,10 +134,17 @@ class Collector:
         - 单个设备读取失败**不影响**其它设备；
         - 返回的样本里可能带 ``ok=False``（数据不可信），业务层按需处理；
         - 无论成功失败都会重排下次到期时间（失败不重排会导致忙等）。
+
+        ⚠️ 这里遍历的是 ``entries`` 的**快照**（``list(...)``），不是字典视图：
+        2026-10-01 加了 Web 配置面板之后，HTTP 线程会在**运行中**增删设备
+        （`add_entry` / `remove_entry`），直接迭代视图会偶发
+        ``RuntimeError: dictionary changed size during iteration`` ——
+        那种崩溃只在"正好有人在改配置"时出现，事后极难复现。
+        （代价只是每帧复制一份 ≤12 项的列表，可以忽略。）
         """
         now = self.clock()
         results: List[Tuple[str, Sample]] = []
-        for name, entry in self.entries.items():
+        for name, entry in list(self.entries.items()):
             if not entry.ready(now):
                 continue
             sample = self._read_one(entry, now)
@@ -224,7 +231,7 @@ class Collector:
         failures: Dict[str, int] = {}
         errors: Dict[str, str] = {}
 
-        for name, entry in self.entries.items():
+        for name, entry in list(self.entries.items()):
             stale = self._is_stale(entry, now)
             if entry.failures > 0:
                 failures[name] = entry.failures
@@ -303,7 +310,7 @@ class Collector:
         return None
 
     def _find_entry_by_kind(self, kind: str) -> Optional[_Entry]:
-        for entry in self.entries.values():
+        for entry in list(self.entries.values()):
             if getattr(entry.device, "KIND", None) is not None and entry.device.KIND.value == kind:
                 return entry
         return None
@@ -337,6 +344,33 @@ class Collector:
     # 生命周期与诊断
     # ------------------------------------------------------------------
 
+    def add_entry(self, cfg: DeviceConfig, device: Device) -> None:
+        """把一个**运行期新启用**的设备接进调度（2026-10-01，Web 配置面板的热应用用）。
+
+        为什么不是"把 Collector 重建一遍"：重建会把 ``read_counts`` / ``failures`` /
+        已攒下的按键事件全部清零 —— 在面板上点一下器件开关，历史计数就被"洗白"了，
+        而排障时最需要的恰恰是"它之前读了多少次、失败了多少次"。
+        """
+        if cfg.name in self.entries:
+            raise KeyError(f"设备 {cfg.name} 已经在调度里（重复接入会让它每轮被读两次）")
+        self.entries[cfg.name] = _Entry(
+            cfg.name, cfg.driver, device, cfg.read_interval_s, cfg.optional,
+        )
+        self.read_counts.setdefault(cfg.name, 0)
+
+    def remove_entry(self, name: str) -> None:
+        """把一个设备从调度里摘掉（**不负责 close** —— 何时关由调用方决定）。
+
+        连带清掉它的故障/等待标记：留着的话，同一个名字以后再启用会"继承"上一次的
+        故障状态，表现出来就是"刚打开就报传感器故障"。
+        """
+        self.entries.pop(name, None)
+        self.read_counts.pop(name, None)
+        self._faulted.discard(name)
+        self._awaiting.discard(name)
+        self.sensor_failures.pop(name, None)
+        self.sensor_errors.pop(name, None)
+
     def open_all(self) -> Dict[str, str]:
         """打开所有设备。返回 ``{设备名: 错误信息}``（空字典=全部成功）。
 
@@ -344,7 +378,7 @@ class Collector:
         但失败信息必须原样返回，由服务层决定"是否继续"（可选件允许失败）。
         """
         errors: Dict[str, str] = {}
-        for name, entry in self.entries.items():
+        for name, entry in list(self.entries.items()):
             try:
                 entry.device.open()
             except Exception as exc:  # noqa: BLE001
@@ -355,7 +389,7 @@ class Collector:
     def close_all(self) -> None:
         """关闭所有设备（幂等；任何单个关闭失败都不影响其它）。"""
         self._button_events.clear()          # 停机后不该再残留"没处理的按键动作"
-        for entry in self.entries.values():
+        for entry in list(self.entries.values()):
             try:
                 entry.device.close()
             except Exception as exc:  # noqa: BLE001
@@ -365,7 +399,7 @@ class Collector:
         """运行状态（供 ``/api/v1/health`` 与日志）。"""
         now = self.clock()
         devices: Dict[str, Any] = {}
-        for name, entry in self.entries.items():
+        for name, entry in list(self.entries.items()):
             devices[name] = {
                 "driver": entry.driver,
                 "interval_s": entry.interval,

@@ -10,15 +10,31 @@
     GET  /api/v1/history         历史曲线（?metric=ambient_temp_c&limit=120）
     GET  /api/v1/alarms          最近报警事件（?limit=50）
     GET  /api/v1/devices         设备清单与接线说明（describe() 的输出）
+    GET  /api/v1/config          当前配置（全部阈值 + 每个设备的开关/周期）
+    POST /api/v1/config          改配置（**部分合并**；写盘 + 立即生效，不重启）
     POST /api/v1/silence         消音（用户按消音键 / 手机端点"我知道了"）
     POST /api/v1/sos             手机端触发一次紧急求助
     POST /api/v1/speak           让音箱说一句话（调试用）
+
+网页：
+    GET  /                       状态页（只读，自动刷新）
+    GET  /panel                  配置面板（**会改配置**，见下）
 
 安全约定
 --------
 - 只用于**局域网**：不要在公网直接暴露（树莓派上请只在家庭内网使用）；
 - 可选 ``token``：配置了 token 时，所有请求必须带请求头 ``X-Auth-Token``，
-  否则返回 401。**默认不带 token**（局域网演示方便），上公网前务必配。
+  否则被拒绝（**一律 401**）。**默认不带 token**（局域网演示方便），
+  上公网前务必配。
+- ⚠️ **配置写入默认不设防**（用户明确要求的演示取舍）：只要没配 ``--token``，
+  任何能访问到本机 8080 端口的人都能改阈值与器件开关。
+  **`/panel` 页面顶部有醒目提示**，别把它当"内部工具"随便暴露。
+- ⚠️ **配置接口只能改"阈值 + 器件开关 / 读取周期"，不能改引脚**（传 `params` 一律 400）。
+  这条是**故意的**：正因为写操作不设防，就**不能**同时给它改硬件的能力 ——
+  否则同一个 Wi-Fi 下任何人都能把蜂鸣器改到别的脚上，而"该响的不响"在现场极难定位。
+  **引脚请手工改文件**（改完 `validate.py` 会查撞脚）。
+- ``POST /api/v1/config`` 改配置时会**先校验再落盘**（见 `core/configstore.py`）：
+  校验不过一律 400，且**文件一个字节都不改**。
 """
 
 from __future__ import annotations
@@ -28,18 +44,42 @@ import logging
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from ..hal.exceptions import ConfigError
 from ..hal.models import AlarmCode, AlarmEvent, Severity, SpeakCommand
 
 _LOG = logging.getLogger(__name__)
 
 #: 当前线程正在处理的请求体。
-#: 本 API 的参数都走 query string，**只有** ``/api/v1/cloud/callback`` 需要读 body
-#: （OneNET 规则引擎推送的是 JSON 报文）。用 thread-local 传递，避免把 body
+#: 本 API 的参数都走 query string，**只有** ``/api/v1/cloud/callback``（云推送）与
+#: ``/api/v1/config``（改配置）需要读 body。用 thread-local 传递，避免把 body
 #: 塞进所有处理函数的签名里（那会让其它接口的测试也要造 body）。
+#:
+#: 2026-10-01 补：:meth:`WebApi.handle` 现在接受显式的 ``body`` 参数并写进这里 ——
+#: 单测可以直接 ``handle("POST", "/api/v1/config", {}, {}, body=b"...")``，
+#: 不必去构造一个真的 HTTP 服务器。
 _CURRENT_BODY = threading.local()
+
+#: 本进程没绑定配置文件时的统一提示。
+#: **说清原因**比返回一个含糊的 500 重要：这是"启动方式不对"，不是"改配置失败"。
+_NO_CONFIG_STORE = (
+    "本进程没有绑定可写的配置文件（启动时未解析出配置路径），配置面板不可用；"
+    "请用 `python -m health_monitor --config <配置文件路径> serve` 启动"
+)
+
+
+def _current_body() -> bytes:
+    """取当前请求的原始 body（没有就是空字节）。
+
+    ⚠️ ``threading.local`` 实例**没有 ``.get()``**，只能 ``getattr(..., "value", ...)``。
+    2026-10-01 踩到：``_cloud_callback`` 里原本写的是 ``_CURRENT_BODY.get()`` ——
+    那条路径当时**没有被注册进路由**，所以这个写法错误一直没暴露；
+    这次给 ``POST /api/v1/config`` 接 body 时，走真 HTTP 的测试**当场全红**。
+    （教训：`sys.path` 之外的东西也一样 —— **没被走到的代码等于没写**。）
+    """
+    return getattr(_CURRENT_BODY, "value", b"") or b""
 
 
 class WebApi:
@@ -63,12 +103,29 @@ class WebApi:
     # 路由
     # ------------------------------------------------------------------
 
-    def handle(self, method: str, path: str, query: Dict[str, list], headers: Dict[str, str]) -> Tuple[int, Dict[str, Any]]:
-        """返回 ``(状态码, JSON 可序列化对象)``。**这是可单测的纯入口。**"""
+    def handle(self, method: str, path: str, query: Dict[str, list], headers: Dict[str, str],
+               body: bytes = b"") -> Tuple[int, Dict[str, Any]]:
+        """返回 ``(状态码, JSON 可序列化对象)``。**这是可单测的纯入口。**
+
+        Args:
+            body: 请求体原始字节。只有 ``POST /api/v1/config``（改配置）与
+                ``POST /api/v1/cloud/callback``（云推送）用得到它，其余接口走 query string。
+                默认空字节 ⇒ 既有的四参数调用点（单测、手机端）完全不受影响。
+        """
+        _CURRENT_BODY.value = body or b""
+
         if self.token:
             supplied = headers.get("x-auth-token", "")
             if supplied != self.token:
-                return 401, {"ok": False, "error": "缺少或错误的 X-Auth-Token"}
+                # **统一 401（"未认证"）**：本项目所有接口在 token 不匹配时都是 401 ——
+                # 同一种失败只该有一种表达，否则手机端/脚本要写两套分支
+                # （2026-09-30：配置写接口最初写成 403"拒绝执行"，review 时统一成 401）。
+                # ⚠️ 加配置写接口**没有**把 token 保护改弱：拒绝就是拒绝，
+                #    文件一个字节都不会动（有测试断言）。
+                return 401, {
+                    "ok": False,
+                    "error": "缺少或错误的 X-Auth-Token（本服务启用了 --token）",
+                }
 
         routes: Dict[Tuple[str, str], Callable[[Dict[str, list]], Tuple[int, Dict[str, Any]]]] = {
             ("GET", "/api/v1/health"): self._health,
@@ -76,6 +133,8 @@ class WebApi:
             ("GET", "/api/v1/history"): self._history,
             ("GET", "/api/v1/alarms"): self._alarms,
             ("GET", "/api/v1/devices"): self._devices,
+            ("GET", "/api/v1/config"): self._config_get,
+            ("POST", "/api/v1/config"): self._config_post,
             ("POST", "/api/v1/silence"): self._silence,
             ("POST", "/api/v1/sos"): self._sos,
             ("POST", "/api/v1/speak"): self._speak,
@@ -130,7 +189,7 @@ class WebApi:
         要暴露到公网，请同时给 ``serve --token`` 与 OneNET 的推送 URL 配上令牌
         （见 ``docs/11-OneNET云端接入与云云对接.md`` 的"安全"一节）。
         """
-        raw = _CURRENT_BODY.get()
+        raw = _current_body()
         record: Dict[str, Any] = {"ts": time.time(), "query": {k: v[0] for k, v in q.items()}}
         if raw:
             try:
@@ -184,6 +243,78 @@ class WebApi:
                 info = {"error": f"describe() 失败：{exc}"}
             devices[name] = {"driver": entry.driver, "interval_s": entry.interval, "describe": info}
         return 200, {"ok": True, "devices": devices}
+
+    # ------------------------------------------------------------------
+    # 配置读写（Web 面板；落盘与校验细节见 core/configstore.py）
+    # ------------------------------------------------------------------
+
+    def _config_store(self) -> Any:
+        """本进程绑定在哪个配置文件上（没绑定则返回 ``None``）。"""
+        return getattr(self.runtime, "config_store", None)
+
+    def _config_get(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        store = self._config_store()
+        if store is None:
+            return 400, {"ok": False, "error": _NO_CONFIG_STORE}
+        try:
+            return 200, {"ok": True, **store.snapshot()}
+        except ConfigError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    def _config_post(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """改配置：**校验 → 落盘 → 热应用**（顺序有讲究）。
+
+        为什么"先落盘、再热应用"（而不是反过来）：**文件是真相来源** ——
+        落盘成功就意味着"重启后必定是这个状态"。若先热应用再落盘，
+        一旦写盘失败（磁盘满 / 只读挂载），用户看到"保存失败"，
+        但**正在跑的进程其实已经改了**，而重启后又回到旧值 —— 那是最难解释的一种状态。
+        """
+        store = self._config_store()
+        if store is None:
+            return 400, {"ok": False, "error": _NO_CONFIG_STORE}
+        raw = _current_body()
+        if not raw:
+            return 400, {"ok": False, "error": "缺少请求体：POST /api/v1/config 需要 JSON 对象"}
+        try:
+            patch = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return 400, {"ok": False, "error": f"请求体不是合法 JSON：{exc}"}
+        try:
+            result = store.apply_patch(patch)
+        except ConfigError as exc:
+            # ★ 校验不过 ⇒ apply_patch 是"只读"的，文件**一个字节都没动**（测试有断言）
+            return 400, {"ok": False, "error": str(exc)}
+
+        warnings: List[str] = []
+        backup = ""
+        if result.changed:
+            try:
+                backup = store.save(result.raw) or ""
+            except (ConfigError, OSError) as exc:
+                return 500, {
+                    "ok": False,
+                    "error": f"配置校验通过，但写盘失败（文件保持原样）：{type(exc).__name__}: {exc}",
+                }
+        else:
+            # 什么都没变就不写盘：否则每点一次"保存"都多一个备份文件 + 一次全量重写
+            warnings.append("各项取值与当前配置一致，未写盘")
+
+        try:
+            applied, apply_warnings = self.runtime.apply_config(result.config)
+            warnings.extend(apply_warnings)
+        except Exception as exc:  # noqa: BLE001 - 热应用出错不该把"已经存好了"说成失败
+            _LOG.exception("配置热应用失败")
+            applied = []
+            warnings.append(
+                f"配置已写入文件，但热应用出错（重启服务后一定生效）：{type(exc).__name__}: {exc}"
+            )
+        return 200, {
+            "ok": True,
+            "changed": result.changed,
+            "applied": applied,
+            "warnings": warnings,
+            "backup": backup,
+        }
 
     def _silence(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         now = time.time()
@@ -283,13 +414,23 @@ class _Handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
         headers = {k.lower(): v for k, v in self.headers.items()}
 
+        # 配置面板（GET /panel）：给人看的 HTML，不走 JSON 路由。
+        # ⚠️ 它**会改配置**，与只读的状态页是两回事，所以单独一条分支、单独提示。
+        if method == "GET" and parsed.path == "/panel":
+            status_code, page = _render_panel_page(self.api)
+            self._respond_html(status_code, page)
+            return
+
         # 状态网页（GET /）与 /index.html：给人看的 HTML，不走 JSON 路由
         if method == "GET" and parsed.path in ("/", "/index.html", "/status"):
             status_code, page = _render_status_page(self.api)
             self._respond_html(status_code, page)
             return
 
-        status, payload = self.api.handle(method, parsed.path, query, headers)
+        # 请求体显式传给 handle()：单测可以直接调 handle(),
+        # 这里只是把服务器已经读到的字节原样传下去（不再依赖"谁先读 body"的顺序）。
+        body = _current_body()
+        status, payload = self.api.handle(method, parsed.path, query, headers, body)
         self._respond(status, payload)
 
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -320,6 +461,50 @@ def _render_status_page(api: WebApi) -> Tuple[int, str]:
             "<h1>状态页渲染失败</h1>"
             f"<p>原因：{esc(str(exc))}</p>"
             "<p>JSON 接口仍然可用：<code>/api/v1/current</code>、<code>/api/v1/health</code></p>"
+            "</body></html>"
+        )
+
+
+def _render_panel_page(api: WebApi) -> Tuple[int, str]:
+    """渲染**配置面板**（``GET /panel``）—— 与状态页同一套"绝不白屏"纪律。
+
+    ⚠️ 设了 ``--token`` 时本页**同样不提供**（与状态页一致的取舍：
+    不在浏览器里输入口令，避免口令被写进浏览器历史/自动补全）。
+    要改配置请在请求头带 ``X-Auth-Token`` 直接打 ``/api/v1/config``。
+    """
+    if api.token:
+        return 401, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>需要令牌</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>需要访问令牌</h1>"
+            "<p>本服务启用了 <code>--token</code>；<strong>配置面板不提供令牌输入框</strong>"
+            "（与状态页同一取舍：避免把口令写进浏览器历史）。</p>"
+            "<p>请在请求头带 <code>X-Auth-Token</code> 调用 "
+            "<code>GET /api/v1/config</code> 与 <code>POST /api/v1/config</code>。</p>"
+            "</body></html>"
+        )
+    store = getattr(api.runtime, "config_store", None)
+    if store is None:
+        return 400, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>配置面板不可用</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>配置面板不可用</h1>"
+            f"<p>{esc(_NO_CONFIG_STORE)}</p>"
+            "<p>JSON 接口仍然可用：<code>/api/v1/current</code>、<code>/api/v1/health</code></p>"
+            "</body></html>"
+        )
+    try:
+        from .webui import render_panel
+
+        return 200, render_panel(api.runtime, store, secured=bool(api.token))
+    except Exception as exc:  # noqa: BLE001 - 面板渲染失败不能影响 API
+        _LOG.exception("配置面板渲染失败")
+        return 500, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>面板渲染失败</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>配置面板渲染失败</h1>"
+            f"<p>原因：{esc(str(exc))}</p>"
+            "<p>配置接口本身可能仍然可用：<code>GET /api/v1/config</code></p>"
             "</body></html>"
         )
 
