@@ -20,7 +20,12 @@ if str(_RPI_DIR) not in sys.path:
     sys.path.insert(0, str(_RPI_DIR))
 
 from health_monitor.core.config import AppConfig  # noqa: E402
-from health_monitor.hal.models import ButtonAction, ButtonEvent  # noqa: E402
+from health_monitor.hal.models import (  # noqa: E402
+    AlarmCode,
+    ButtonAction,
+    ButtonEvent,
+    RECORD_ONLY_CODES,
+)
 from health_monitor.playback import PlaybackRuntime  # noqa: E402
 from health_monitor.sensors.button import Button  # noqa: E402
 from health_monitor.service import (  # noqa: E402
@@ -253,12 +258,23 @@ class TestMeasure(_Base):
         self.assertNotIn(SPO2_MEASURE_LINES[0], self._lcd()[0], "应当已经结束测量")
 
     def test_测量全程不产生报警(self) -> None:
+        """测量是"请老人配合一下"，**不是出事** ⇒ 不许产生任何报警事件。
+
+        ⚠️ 2026-10-01 起**断言方式变了**（不是放宽，是写准）：测量结束现在会记一条
+        `spo2_measured` **记录类**事件（用户要求后台消息页能看到这次测量），
+        所以不能再拿"事件列表为空"当判据 —— 改为"**除记录类外**没有任何事件"。
+        记录类事件不会点灯/发声（见 `hal.models.RECORD_ONLY_CODES`），
+        "测量不打扰别人"这条性质仍然成立。
+        """
         self._reach_prompt()
         self._press_and_tick()
         self.rt.set_vitals(heart_rate=70.0, spo2=96.0)
         self._tick(advance=MEASURE_S + 1.0)
-        self.assertEqual(self.rt.engine.active_alarms(), {})
-        self.assertEqual(self.rt.recent_events(), [])
+        self.assertEqual(self.rt.engine.active_alarms(), {}, "测量不许触发报警态")
+        alarms = [e for e in self.rt.recent_events() if e.code not in RECORD_ONLY_CODES]
+        self.assertEqual(alarms, [], "测量全程不许产生任何报警事件")
+        # 但"记录"必须留下 —— 否则后台看不到这次测量（用户 2026-10-01 的明确要求）
+        self.assertIn(AlarmCode.SPO2_MEASURED, [e.code for e in self.rt.recent_events()])
 
 
 class TestDecline(_Base):

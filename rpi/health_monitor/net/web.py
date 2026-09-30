@@ -48,7 +48,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from ..hal.exceptions import ConfigError
-from ..hal.models import AlarmCode, AlarmEvent, Severity, SpeakCommand
+from ..hal.models import AlarmCode, AlarmEvent, Severity, SpeakCommand, message_kind
 
 _LOG = logging.getLogger(__name__)
 
@@ -132,6 +132,7 @@ class WebApi:
             ("GET", "/api/v1/current"): self._current,
             ("GET", "/api/v1/history"): self._history,
             ("GET", "/api/v1/alarms"): self._alarms,
+            ("GET", "/api/v1/messages"): self._messages,
             ("GET", "/api/v1/devices"): self._devices,
             ("GET", "/api/v1/config"): self._config_get,
             ("POST", "/api/v1/config"): self._config_post,
@@ -234,6 +235,30 @@ class WebApi:
         events = self.runtime.dispatcher.recent(limit)
         stored = self.runtime.store.recent_alarms(limit=limit) if self.runtime.store else []
         return 200, {"ok": True, "live": events, "history": stored}
+
+    def _messages(self, q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """统一"消息流"：报警 + 老人动作（消音）+ 测量记录 + 系统信息，**按时间正序**。
+
+        与 :meth:`_alarms` 的分工：
+
+        * ``/api/v1/alarms`` 是**报警专用**（``live`` 来自调度器、``history`` 来自历史库）；
+        * ``/api/v1/messages`` 是**给人翻记录**的流，每条多带一个 ``kind``
+          （``alarm`` / ``record`` / ``clear`` / ``info``，见 :func:`message_kind`），
+          后台"消息页"按它分组 —— 用户 2026-10-01 要求
+          "老人短按 A 关警报 / 长按 A 求救 / 测完血氧，**后台消息页都要收到指示**"。
+
+        取数**优先用历史库**（跨重启仍在 —— 用户翻的就是"记录"）；没有库时退回内存最近事件。
+        """
+        limit = _int_param(q, "limit", 50, low=1, high=500)
+        store = self.runtime.store
+        if store is not None:
+            # 历史库按时间**倒序**给（最近的在前），这里翻成正序：**新的在后**，
+            # 与"消息页往下滚动看最新"的阅读习惯一致。
+            raw: List[Dict[str, Any]] = list(reversed(store.recent_alarms(limit=limit)))
+        else:
+            raw = [event.to_dict() for event in self.runtime.recent_events(limit)]
+        messages = [_message_json(row) for row in raw]
+        return 200, {"ok": True, "count": len(messages), "messages": messages}
 
     def _devices(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         devices: Dict[str, Any] = {}
@@ -373,7 +398,8 @@ class WebApi:
 
     def _silence(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         now = time.time()
-        self.runtime.silence(now)
+        # ``by="api"``：让消息流能区分"老人按的实体键"与"后台/手机端点掉的"（见 service.silence）
+        self.runtime.silence(now, by="api")
         return 200, {"ok": True, "silenced_until": self.runtime.dispatcher.status()["silenced_until"]}
 
     def _sos(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
@@ -397,6 +423,26 @@ class WebApi:
 # --------------------------------------------------------------------------
 # 参数解析小工具（越界一律夹紧，而不是报 500）
 # --------------------------------------------------------------------------
+
+
+def _message_json(row: Dict[str, Any]) -> Dict[str, Any]:
+    """把一条历史事件整理成"消息页"要的形状（补上 ``kind``）。
+
+    历史库的行与 ``AlarmEvent.to_dict()`` 的键**基本一致**（ts/code/severity/message/
+    value/unit/source/detail），这里统一成同一个形状 —— 前端不必关心数据来自哪一侧。
+    """
+    code = str(row.get("code") or "")
+    return {
+        "ts": row.get("ts"),
+        "code": code,
+        "kind": message_kind(code),
+        "severity": int(row.get("severity") or 0),
+        "message": row.get("message") or "",
+        "source": row.get("source") or "",
+        "value": row.get("value"),
+        "unit": row.get("unit") or "",
+        "detail": row.get("detail") or {},
+    }
 
 
 def _first(q: Dict[str, list], key: str, default: str) -> str:

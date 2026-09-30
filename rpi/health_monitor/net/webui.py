@@ -25,6 +25,8 @@ from __future__ import annotations
 import html
 from typing import Any, Dict, List, Tuple
 
+from ..hal.models import message_kind
+
 #: 报警码 → 中文（网页用；与安卓端 AlarmCatalog 保持同口径，改一处要改另一处）
 ALARM_LABELS: Dict[str, str] = {
     "hr_too_high": "心率过高",
@@ -40,6 +42,13 @@ ALARM_LABELS: Dict[str, str] = {
     "device_offline": "设备离线",
     "system_start": "系统已启动",
     "all_clear": "已恢复正常",
+    "alarm_silenced": "已消音",
+    "spo2_measured": "血氧测量",
+}
+
+#: 消息类别 → 中文（"最近消息"那一节的分组徽标；判据见 `hal.models.message_kind`）
+KIND_LABELS: Dict[str, str] = {
+    "alarm": "报警", "record": "记录", "clear": "解除", "info": "信息",
 }
 
 _MOTION_LABELS = {"detected": "有活动", "idle": "无活动", "unknown": "未知"}
@@ -211,6 +220,36 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
     if not alarm_rows:
         alarm_rows.append("<tr><td colspan='4'>本次运行还没有报警记录</td></tr>")
 
+    # ---- 最近消息（报警 + 老人动作 + 测量记录；比"最近报警"更全）----
+    # 为什么单独一栏而不是让"最近报警"兼着：用户 2026-10-01 明确要求
+    # "老人短按 A 关警报 / 长按 A 求救 / 测完血氧，**后台消息页都要收到指示**" ——
+    # 那三类里有两类**不是报警**（消音、测量记录），塞进"报警"栏会在语义上骗人。
+    # 与 `/api/v1/messages` 同源：**优先用历史库**（跨重启仍在，用户翻的就是记录）。
+    msg_source: List[Dict[str, Any]] = []
+    _store = getattr(runtime, "store", None)
+    if _store is not None:
+        msg_source = [
+            {"ts": r.get("ts"), "code": str(r.get("code") or ""),
+             "message": r.get("message") or ""}
+            for r in reversed(_store.recent_alarms(limit=15))
+        ]
+    else:
+        msg_source = [
+            {"ts": e.ts, "code": e.code.value, "message": e.message}
+            for e in runtime.recent_events(limit=15)
+        ]
+    message_rows: List[str] = [
+        "<tr>"
+        f"<td>{_esc(_time_text(m['ts']))}</td>"
+        f"<td>{_esc(KIND_LABELS.get(message_kind(m['code']), message_kind(m['code'])))}</td>"
+        f"<td>{_esc(ALARM_LABELS.get(m['code'], m['code']))}</td>"
+        f"<td>{_esc(m['message'])}</td>"
+        "</tr>"
+        for m in msg_source
+    ]
+    if not message_rows:
+        message_rows.append("<tr><td colspan='4'>还没有任何消息</td></tr>")
+
     # ---- 当前报警态 ----
     active_rows = [
         f"<tr><td>{_esc(ALARM_LABELS.get(code, code))}</td>"
@@ -260,9 +299,13 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
   <table><thead><tr><th>时间</th><th>报警</th><th>等级</th><th>说明</th></tr></thead>
   <tbody>{"".join(alarm_rows)}</tbody></table>
 
+  <h2>最近消息（含老人消音与血氧测量记录，最多 15 条）</h2>
+  <table><thead><tr><th>时间</th><th>类别</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>{"".join(message_rows)}</tbody></table>
+
   <footer>
     JSON 接口：<code>/api/v1/current</code> · <code>/api/v1/health</code> ·
-    <code>/api/v1/alarms</code> · <code>/api/v1/history?metric=ambient_temp_c&amp;limit=120</code><br>
+    <code>/api/v1/alarms</code> · <code>/api/v1/messages</code> · <code>/api/v1/history?metric=ambient_temp_c&amp;limit=120</code><br>
     本页面只读，不会修改任何状态（消音与求助请用手机 App 或 POST 接口）。<br>
     数值显示"未知"表示该传感器当前没有有效数据——这是刻意设计：本系统不把"读不到"当作"正常"。
   </footer>

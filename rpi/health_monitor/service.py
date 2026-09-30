@@ -879,6 +879,27 @@ class Runtime:
             "spo2_percent": (round(spo2, 1) if spo2 is not None else None),
             "ts": now,
         }
+        # 进后台"消息页"（用户 2026-10-01：「血氧进行测量后……**后台也能看到相关记录**」）。
+        # ⚠️ **失败也要记**：不记的话后台会一直显示上一次的成功值，让人以为这次也测到了。
+        self._record_event(
+            AlarmEvent(
+                ts=now, code=AlarmCode.SPO2_MEASURED, severity=Severity.NOTICE,
+                message=(
+                    "血氧测量完成：心率 %.0f bpm、血氧 %.0f %%（%d 个有效读数）"
+                    % (hr, spo2, len(usable))
+                    if usable else "血氧测量未取得有效读数"
+                ),
+                value=(round(spo2, 1) if spo2 is not None else None),
+                unit=("%" if usable else ""),
+                source="spo2",
+                detail={
+                    "ok": bool(usable),
+                    "heart_rate_bpm": (round(hr, 1) if hr is not None else None),
+                    "spo2_percent": (round(spo2, 1) if spo2 is not None else None),
+                    "valid_samples": len(usable),
+                },
+            )
+        )
         self._spo2_state = "result"
         self._spo2_deadline = now + SPO2_RESULT_HOLD_S
         self._spo2_last_notice_ts = 0.0
@@ -1117,6 +1138,25 @@ class Runtime:
     # 业务动作（HTTP 接口与按键都走这里，保证行为一致）
     # ------------------------------------------------------------------
 
+    def _record_event(self, event: AlarmEvent) -> AlarmEvent:
+        """记一条**只记录、不下发**的事件（`ERROR.md` 之外的新纪律，2026-10-01）。
+
+        与 :meth:`sos` / 规则引擎报警的区别：**绝不调 dispatcher** ——
+        不点灯、不发声、不刷屏，只**落库 + 进内存历史 + 记一行日志**，供后台"消息页"查询。
+
+        ⚠️ 为什么"不下发"是硬约束（不是省事）：这类事件的典型代表是
+        "老人消音了""刚测完一次血氧" ——
+        一旦走 ``dispatch()``，就会把**正在显示的活动报警**刷掉（那正好毁掉报警最要紧的几秒），
+        或者让蜂鸣器在不该响的时候响（血氧测量本来就有自己的 1/2/5 声暗号，
+        再来一次就是**两次提示互相打架**）。判据见 `hal.models.RECORD_ONLY_CODES`。
+        """
+        if self.store is not None:
+            self.store.save_alarm(event)
+        self._events.append(event)
+        self._events = self._events[-500:]        # 上限与 tick() 里保持一致
+        _LOG.info("[记录] %s %s", event.code.value, event.message)
+        return event
+
     def sos(self, ts: Optional[float] = None) -> AlarmEvent:
         """触发一次紧急求助（按钮按下 / 手机端点"求助"）。"""
         event = AlarmEvent(
@@ -1134,9 +1174,34 @@ class Runtime:
         self._last_alarm_ts = event.ts       # E57：SOS 也要把彩屏"占住"一段时间
         return event
 
-    def silence(self, ts: Optional[float] = None) -> None:
-        """消音：一段时间内只亮灯、不响铃、不播报。"""
-        self.dispatcher.silence(ts if ts is not None else now_ts())
+    def silence(self, ts: Optional[float] = None, by: str = "button") -> None:
+        """消音：一段时间内只亮灯、不响铃、不播报。**并记一条消息**。
+
+        ``by`` 说明**是谁按的**：``"button"`` = 老人按实体键；``"api"`` = 后台/手机端点"消音"。
+
+        为什么要记（用户 2026-10-01 明确要求）：
+        「当环境温度过低之类，进行蜂鸣器报警处理，**老人可以通过短按 A 键进行关闭警报，
+        然后后台相关消息页面收到相关指示**」。
+        原来 `silence()` 只调 `dispatcher.silence()`、**不产生任何事件** ⇒
+        后台**看不到"老人把警报关了"** —— 而这条信息对家属很重要（老人主动响应了）。
+
+        ⚠️ 两种情形都记，但**文案要能区分**："当时正在报警"（老人关掉了一个真的报警）
+        与"当时没有活动报警"（按了但没东西可关）是两件事，混成一句会让后台误判。
+        ⚠️ `sos()` 里会先 `dispatcher.unsilence()`（求救必须能响）——
+        那一步**不走这里**，所以不会被误记成一次消音。
+        """
+        now = ts if ts is not None else now_ts()
+        active = sorted(self.engine.active_alarms())
+        self.dispatcher.silence(now)
+        who = "老人" if by == "button" else "后台"
+        detail_tail = ("、".join(active)) if active else "没有活动报警"
+        self._record_event(
+            AlarmEvent(
+                ts=now, code=AlarmCode.ALARM_SILENCED, severity=Severity.NOTICE,
+                message=f"{who}按下消音键（当时{'正在报警：' if active else ''}{detail_tail}）",
+                source=by, detail={"by": by, "active_alarms": active},
+            )
+        )
 
     # ------------------------------------------------------------------
     # 云云对接：接收 OneNET 规则引擎的 HTTP 推送

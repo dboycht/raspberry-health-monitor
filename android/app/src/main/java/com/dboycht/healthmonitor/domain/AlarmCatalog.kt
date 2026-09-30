@@ -26,6 +26,10 @@ object AlarmCatalog {
         "device_offline" to "设备离线",
         "system_start" to "系统已启动",
         "all_clear" to "已恢复正常",
+        // 记录类（**不是报警**，2026-10-01 加）：老人按 A 键消音 / 一次按需血氧测量。
+        // 它们只是"让人回头看得到"，本机**不会**为它们点灯发声刷屏。
+        "alarm_silenced" to "已消音",
+        "spo2_measured" to "血氧测量完成",
     )
 
     /** code → 默认严重度（0=正常 1=提示 2=警告 3=紧急） */
@@ -43,6 +47,9 @@ object AlarmCatalog {
         "device_offline" to Severity.WARNING,
         "system_start" to Severity.INFO,
         "all_clear" to Severity.NORMAL,
+        // 记录类：默认 1（提示）—— 它们不该在手机端被渲染成警告/紧急横幅
+        "alarm_silenced" to Severity.INFO,
+        "spo2_measured" to Severity.INFO,
     )
 
     /** 报警码 → 中文名；未知码返回 [UNKNOWN_LABEL] + 原码，便于排查。 */

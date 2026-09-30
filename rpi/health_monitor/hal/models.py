@@ -17,7 +17,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 # --------------------------------------------------------------------------
 # 基础工具
@@ -59,7 +59,8 @@ class Severity(int, Enum):
 class AlarmCode(str, Enum):
     """报警/事件类型码。规则引擎与安卓端都按这些字符串判定，**不要随意改名**。
 
-    新增类型时：在本枚举加成员 + 同步 ``docs/03-报警规则表.md`` + 同步安卓端文案表。
+    新增类型时：在本枚举加成员 + 同步 ``docs/手册/08-报警规则表.md`` + 同步安卓端
+    ``AlarmCatalog.kt`` 的文案表（`scripts/check_docs.py` 第 7 项会断言这三处一致）。
     """
 
     HR_TOO_HIGH = "hr_too_high"            # 心率过高
@@ -75,6 +76,48 @@ class AlarmCode(str, Enum):
     DEVICE_OFFLINE = "device_offline"      # 设备离线
     SYSTEM_START = "system_start"          # 系统启动（信息类）
     ALL_CLEAR = "all_clear"                # 恢复正常（解除报警）
+    # ---- 记录类：**只进消息流、绝不下发**（见下面的 RECORD_ONLY_CODES）----
+    ALARM_SILENCED = "alarm_silenced"      # 老人按下消音键（记录类）
+    SPO2_MEASURED = "spo2_measured"        # 一次按需血氧测量完成（记录类）
+
+
+#: **只记录、不下发**的报警码（2026-10-01 加）。
+#:
+#: 为什么必须有这个集合：``sos_pressed`` / ``system_start`` 这类事件是**要下发**的
+#: （点灯、说话、刷屏），它们本身就"是个事件"。而"老人消音了""刚测完一次血氧"
+#: 属于**记录** —— 它们要能在后台查到，但**绝不能**去点灯/刷屏/发声：
+#:
+#: * 一旦下发，会把**正在显示的活动报警**刷掉 —— 那正好毁掉了报警最要紧的几秒；
+#: * 血氧测量**本来就有自己的蜂鸣暗号**（1/2/5 声），再来一次下发就是**两次提示互相打架**；
+#: * "消音"这件事的动作本身就是"别再响了"，再发一次声是自相矛盾。
+#:
+#: ⇒ 判据：**这个码存在的意义是"让人回头看得到"，就放进这个集合。**
+RECORD_ONLY_CODES: FrozenSet[AlarmCode] = frozenset(
+    {AlarmCode.ALARM_SILENCED, AlarmCode.SPO2_MEASURED}
+)
+
+
+def message_kind(code: Any) -> str:
+    """把报警码归到"消息流"里的类别（供后台消息页分组显示）。**纯函数，可单测。**
+
+    分类是给**人看**的，所以判据刻意定成"**宁可把信息显示成报警，也不要把报警降级成信息**"：
+
+    * ``record`` —— 记录类（老人消音 / 一次血氧测量），见 :data:`RECORD_ONLY_CODES`；
+    * ``clear``  —— 报警解除（``all_clear``）；
+    * ``info``   —— 系统信息（``system_start``）；
+    * ``alarm``  —— **其余一律归到这一类**，包括"将来新增却忘了在这里登记"的码。
+
+    为什么默认落在 ``alarm``：漏登记只会让一条信息**多显示一点**，
+    而反过来（默认当信息）会把**真的报警藏起来** —— 两种错的代价完全不对称。
+    """
+    value = code.value if isinstance(code, AlarmCode) else str(code or "")
+    if value in {c.value for c in RECORD_ONLY_CODES}:
+        return "record"
+    if value == AlarmCode.ALL_CLEAR.value:
+        return "clear"
+    if value == AlarmCode.SYSTEM_START.value:
+        return "info"
+    return "alarm"
 
 
 class MotionState(str, Enum):
@@ -355,6 +398,8 @@ __all__ = [
     "DeviceKind",
     "Severity",
     "AlarmCode",
+    "RECORD_ONLY_CODES",
+    "message_kind",
     "MotionState",
     "ButtonAction",
     "CommandType",

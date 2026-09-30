@@ -29,15 +29,17 @@ class AlarmCatalogTest {
             "device_offline" to "设备离线",
             "system_start" to "系统已启动",
             "all_clear" to "已恢复正常",
+            "alarm_silenced" to "已消音",
+            "spo2_measured" to "血氧测量完成",
         )
         expected.forEach { (code, label) ->
             assertEquals("报警码 $code 的中文名不对", label, AlarmCatalog.label(code))
         }
-        // 表里数一数：13 个码，别漏。
+        // 表里数一数：15 个码，别漏。
         // ⚠️ 这个数字**故意写死**：新增报警码时必须同时改三处
-        //    （models.py 的 AlarmCode / docs/08-报警规则表.md / 本文件），
+        //    （models.py 的 AlarmCode / docs/手册/08-报警规则表.md / 本文件），
         //    跨语言的一致性由 `rpi/scripts/check_docs.py` 兜底检查。
-        assertEquals(13, AlarmCatalog.allCodes().size)
+        assertEquals(15, AlarmCatalog.allCodes().size)
     }
 
     @Test

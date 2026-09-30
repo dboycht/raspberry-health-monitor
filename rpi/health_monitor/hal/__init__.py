@@ -39,11 +39,13 @@ from .models import (
     LightCommand,
     MotionSample,
     MotionState,
+    RECORD_ONLY_CODES,
     RangeSample,
     Sample,
     Severity,
     SpeakCommand,
     VitalSignsSample,
+    message_kind,
     now_ts,
 )
 from .registry import (
@@ -91,6 +93,8 @@ __all__ = [
     "DeviceKind",
     "Severity",
     "AlarmCode",
+    "RECORD_ONLY_CODES",
+    "message_kind",
     "MotionState",
     "ButtonAction",
     "CommandType",
