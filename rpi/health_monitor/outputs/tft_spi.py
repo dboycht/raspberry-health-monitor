@@ -786,7 +786,12 @@ class TftSpi(OutputDevice):
         if self.mock:
             return
         try:
-            self._render(lines, self.page)
+            # 有"富帧"就画富帧（彩屏能用满），否则退回两行文字（老行为，向后兼容）。
+            frame = getattr(command, "frame", None)
+            if frame:
+                self._render_frame(frame, self.page)
+            else:
+                self._render(lines, self.page)
         except Exception as exc:  # noqa: BLE001 - 屏幕画不出来不该打断监护
             self._note_fault(exc)
             raise DeviceIOError(f"TFT 绘制失败：{type(exc).__name__}: {exc}") from exc
@@ -815,6 +820,142 @@ class TftSpi(OutputDevice):
         # 页码标签用**英文短名**（屏上只能显示 ASCII）并按屏宽截断（E53/E57）
         self.text(2, self.height - 12, page_label(page, len(PAGE_ASCII), self.width),
                   GRAY, bg=BLACK, scale=1)
+
+    # ------------------------------------------------------------------
+    # 富帧渲染（2026-10-01）：把 128×160 的彩屏用满
+    # ------------------------------------------------------------------
+
+    def _render_frame(self, frame: Dict[str, Any], page: int) -> None:
+        """把一份结构化"富帧"画到彩屏上。
+
+        为什么要有它（用户 2026-10-01 原话：「**那个 TFT 屏幕…上面平时显示的内容好少**」）：
+        老版 `_render()` 只画两行文字 + 一条分隔线 + 页码 ⇒ 128×160 的屏上
+        **两行字只占顶部约 40 px，中间约 100 px 全是黑的**。
+        彩色屏的能力（大字、颜色、图形）基本没用上。
+
+        帧的字段（**全部可选**，缺了就不画那一块，绝不崩）：
+
+        ``label``   顶部小标题（如 ``ROOM``）
+        ``value``   ★ 大字主指标（如 ``23.4``，自动选字号）
+        ``unit``    单位（小字，紧跟大字）
+        ``rows``    最多两行小字（如 ``["HUM 57%", "MOTION IDLE"]``）
+        ``clock``   右上角时钟（如 ``14:32``）
+        ``trend``   ★ 迷你趋势线（数值列表，``None`` = **缺口，会断线**）
+        ``footer``  页脚（如 ``ALARMS 0  DATA 2s``）
+        ``stale``   数据过期 ⇒ **主指标转灰 + 右上角标 ``STALE``**
+
+        ⚠️ 三条纪律（都是这个项目踩出来的）：
+        1. **字符数必须按屏宽算**（2026-09-29 踩过"字被画到屏幕外"）：每字符前进 ``8 × scale``
+           像素，装不下就**降一档字号**；短文案才配用大字；
+        2. **过期必须一眼看出**：主指标转灰 + 显式 ``STALE``，与网页那条
+           "可以显示最后一次记录，但必须一眼看出它旧"是同一约定；
+        3. **趋势线缺口要断线** —— 屏小，但"跨缺口连线等于编造中间那段数据"这条
+           与网页图表同样成立（见 `net/charts.py`）。
+        """
+        width, height = self.width, self.height
+        # ⚠️ 字符上限必须**减去左边距**：每字符前进 8 px，若按 width//8 算，
+        #    x=2 起画 ⇒ 最后一个字符的右边缘落在 width+2 上（**画到屏外**）。
+        #    这正是 2026-09-29 真机踩过的同一类错（见 :meth:`_render` 的 docstring）。
+        chars_per_line = max(1, (width - 2) // 8)
+        stale = bool(frame.get("stale"))
+        value_color = GRAY if stale else WHITE
+
+        self.fill(BLACK)
+
+        # ① 顶部小标题
+        label = str(frame.get("label") or "")
+        if label:
+            self.text(2, 2, label[:chars_per_line], GRAY, bg=BLACK, scale=1)
+
+        # ② 过期标注（右上角，红色 —— 屏上只有 ASCII 字库，所以用 STALE）
+        if stale:
+            self.text(width - 8 * 5 - 2, 2, "STALE", RED, bg=BLACK, scale=1)
+
+        # ③ 大字主指标（装不下就降字号，绝不许画到屏外）
+        value = str(frame.get("value") or "--")
+        unit = str(frame.get("unit") or "")
+        scale = 3
+        while scale > 1 and len(value) * 8 * scale > width - 6:
+            scale -= 1
+        big_y = 12
+        end_x = self.text(2, big_y, value[: max(1, (width - 6) // (8 * scale))],
+                          value_color, bg=BLACK, scale=scale)
+        if unit:
+            # 单位跟在大字**基线附近**（大字高 8×scale，单位只有 8 高 ⇒ 要往下挪）。
+            # ⚠️ 只有**装得下**才画：值很长时（降低字号后仍占满宽度）end_x 已经贴到右边缘，
+            #    再补单位就会画出屏外。
+            unit_text = unit[:3]
+            if end_x + 4 + 8 * len(unit_text) <= width:
+                self.text(end_x + 4, big_y + 8 * scale - 9, unit_text, CYAN, bg=BLACK, scale=1)
+
+        # ④ 小字行 + 时钟
+        rows = [str(r) for r in (frame.get("rows") or [])][:2]
+        rows_y = big_y + 8 * scale + 6
+        for index, row in enumerate(rows):
+            self.text(2, rows_y + index * 12, row[:chars_per_line],
+                      CYAN if index == 0 else WHITE, bg=BLACK, scale=1)
+        clock = str(frame.get("clock") or "")
+        if clock:
+            self.text(max(2, width - 8 * len(clock) - 2), rows_y, clock[:8], GRAY, bg=BLACK, scale=1)
+
+        # ⑤ 迷你趋势线（先算纵向空间，再画）
+        trend = frame.get("trend") or []
+        trend_y = rows_y + 26
+        trend_h = min(40, (height - 30) - trend_y)      # 给页脚与页码留位置
+        if trend and trend_h >= 8:
+            self._draw_trend(2, trend_y, width - 4, trend_h, list(trend),
+                             GRAY if stale else CYAN)
+
+        # ⑥ 页脚 + 页码（页码位置与老版一致，别让用户觉得换了块屏）
+        footer = str(frame.get("footer") or "")
+        if footer:
+            self.text(2, height - 24, footer[:chars_per_line], GRAY, bg=BLACK, scale=1)
+        self.hline(0, height - 14, width, GRAY)
+        self.text(2, height - 12, page_label(page, len(PAGE_ASCII), width), GRAY, bg=BLACK, scale=1)
+
+    def _draw_trend(self, x: int, y: int, w: int, h: int,
+                    values: Sequence[Optional[float]], rgb: RGB) -> None:
+        """画一条迷你折线（整块用**一次** SPI 突发推上去）。
+
+        ⚠️ 逐像素 `fill_rect` 会有上百次 SPI 事务、慢且会拖住主循环 ——
+        而"拖住主循环"正是 **E63** 的病灶。所以这里先在内存里拼好整块像素，
+        再用 ``set_window`` + ``push_pixels`` **一次**送出。
+
+        ``None`` 表示该采样点没有数据 ⇒ **断开**（不许跨缺口连线，理由见 `_render_frame`）。
+        全平的一条线（所有值相同）也要画出来 —— 那正是"很稳定"的表达，不能因为
+        除以 0 就不画。
+        """
+        if w <= 0 or h <= 0 or len(values) < 2:
+            return
+        numeric = [float(v) for v in values if v is not None]
+        if not numeric:
+            return                              # 一个有效点都没有 ⇒ 没内容可画
+        # ⚠️ 只有**一个**有效点时也要点出来（例如刚开机、只采到一次）：
+        #    什么都不画会让人以为"这个区域坏了"，而点一个点是在如实说"我有一次读数"。
+        lo, hi = min(numeric), max(numeric)
+        if hi - lo < 1e-9:
+            lo, hi = lo - 1.0, hi + 1.0        # 全平：给个假量程，别除以 0
+
+        bg = self.color(BLACK)
+        fg = self.color(rgb)
+        buf: List[int] = [bg] * (w * h)
+        total = max(len(values) - 1, 1)
+        prev_y: Optional[int] = None
+        for index, raw in enumerate(values):
+            px = int(index * (w - 1) / total)
+            if raw is None:
+                prev_y = None                  # 缺口：断开
+                continue
+            py = int((hi - float(raw)) / (hi - lo) * (h - 1))
+            py = max(0, min(h - 1, py))
+            if prev_y is None:
+                buf[py * w + px] = fg          # 孤点也点一下，否则看起来像没数据
+            else:
+                for yy in range(min(prev_y, py), max(prev_y, py) + 1):
+                    buf[yy * w + px] = fg      # 相邻两列的竖直连线（迷你图够用）
+            prev_y = py
+        self.set_window(x, y, x + w - 1, y + h - 1)
+        self.push_pixels(buf)
 
     def _draw_boot_screen(self) -> None:
         """开机自检画面：三色条 + 文本 —— **这是判断"控制器对不对"的关键画面**。

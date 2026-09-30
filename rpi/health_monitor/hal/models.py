@@ -386,10 +386,22 @@ LCD_DEBUG_PAGE = -1
 
 @dataclass(frozen=True)
 class DisplayCommand(Command):
-    """LCD 显示内容。``lines`` 最多两行，每行最多 16 字符（驱动负责截断）。"""
+    """显示内容。``lines`` 最多两行，每行最多 16 字符（驱动负责截断）。
+
+    ``frame``：**可选**的"富帧"（2026-10-01 加），给**彩色屏**用的结构化内容
+    （大字主指标 / 小字行 / 时钟 / 迷你趋势 / 页脚 / 是否过期）。
+    为什么要多这一条通道：TFT 是 128×160 的彩屏，而 ``lines`` 只够两行文字 ——
+    用户反馈"**平时显示的内容好少**"，屏中间约 100 px 全是黑的。
+    ⚠️ 它与 ``lines`` **并存**、不是替代：
+    * 黑白 LCD 只认 ``lines``（16×2 放不下别的）；
+    * 不认识 ``frame`` 的驱动会**安全忽略**它（``getattr(command, "frame", None)``）；
+    * ``lines`` 仍然是"这块屏现在显示什么"的**权威摘要**（E57 要求两块屏
+      ``status()/read()`` 同名字段可读，别把它丢了）。
+    """
 
     lines: Tuple[str, str] = ("", "")
     page: int = 0
+    frame: Optional[Dict[str, Any]] = None
 
 
 __all__ = [
