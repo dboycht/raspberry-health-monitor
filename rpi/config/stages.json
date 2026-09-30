@@ -84,7 +84,9 @@
     "T8": {
       "title": "蓝牙音箱语音播报",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker"],
-      "status": "planned"
+      "status": "cancelled",
+      "cancelled_on": "2026-09-30",
+      "note": "❌ 用户决定不做。板上**没有可发声的输出设备**：`aplay -l` 只有两张 HDMI 声卡、Pi 5 **没有 3.5mm 孔**、`bluetoothctl devices` 只配了一只键盘 ⇒ `espeak-ng`/`aplay` 虽在，但播报**无去处**（服务日志每次都报 `aplay: audio open error 524`）。为它单独买音箱不划算：报警链路（蜂鸣器 + 三色 LED + 两块屏）已闭环。**代码与驱动保留**（`bt_speaker` + 单测），报告按「已实现、未真机验证（缺硬件）」写。见 docs/14 的 T8 一节。"
     },
     "T9": {
       "title": "TFT 1.8\" SPI 彩屏",
