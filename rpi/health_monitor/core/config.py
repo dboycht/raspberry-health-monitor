@@ -60,6 +60,14 @@ class Thresholds:
     re_alert_interval_s: float = 15.0
     # 数值回落的迟滞（防止在阈值附近反复抖动）
     hysteresis: float = 3.0
+    # ---- 按需测量血氧（2026-09-30 新增「测血氧开关」）----
+    #: 每隔多少秒"叫人测血氧"（蜂鸣器 + 屏幕提示）。**0 = 不做定期提醒**，
+    #: 只保留"用户主动按键测量"。默认 **2 分钟**（演示友好；真实居家可调大到 30~60 分钟）。
+    spo2_remind_interval_s: float = 120.0
+    #: 叫过人之后等他按键多久；超时则放弃这一轮（**不报警**，等下一轮）。
+    spo2_remind_timeout_s: float = 60.0
+    #: 一次测量的时长（秒）：用户按下按键后开始计时，到点读结果。
+    spo2_measure_s: float = 30.0
 
     def validate(self) -> None:
         """检查阈值自洽性。**启动期必须调用**，错误直接抛 ``ConfigError``。"""
@@ -85,6 +93,14 @@ class Thresholds:
             )
         if self.sensor_fault_after < 1:
             raise ConfigError("sensor_fault_after 至少为 1")
+        if self.spo2_remind_interval_s < 0:
+            raise ConfigError(
+                "spo2_remind_interval_s 不能为负（0 = 不做定期提醒，只保留主动测量）"
+            )
+        if self.spo2_remind_timeout_s <= 0:
+            raise ConfigError("spo2_remind_timeout_s 必须为正数（等人按键的超时时间）")
+        if self.spo2_measure_s <= 0:
+            raise ConfigError("spo2_measure_s 必须为正数（一次测量的时长）")
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Thresholds":
@@ -343,6 +359,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "repeat_cooldown_s": 300,
         "re_alert_interval_s": 15,
         "hysteresis": 3,
+        # 按需测血氧：每 2 分钟叫一次，等人按键 60 秒，测 30 秒
+        "spo2_remind_interval_s": 120,
+        "spo2_remind_timeout_s": 60,
+        "spo2_measure_s": 30,
     },
     "devices": {
         "vitals": {
@@ -422,6 +442,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": True,
             "read_interval_s": 0.2,
             "params": {"pin": 27, "long_press_s": 1.0},
+        },
+        # 「测血氧」按键（2026-09-30）：**GPIO13 / 物理脚 33**，另一端接 GND（脚 34）。
+        # ⚠️ 为什么不用更好记的 GPIO5（脚 29）：那个脚被 `distance`（HC-SR04，**虽然默认关闭**）
+        #    声明着，而 `validate.py` 的撞脚检查**刻意不过滤 enabled**（未启用的器件将来会被启用，
+        #    它的声明现在就作数 —— 这条规矩来自"红灯 GPIO24 与 TFT 的 DC 撞脚"那次现场事故）。
+        #    ⇒ 新器件应当让开已声明的脚，而不是去松掉那条守卫。
+        # ⚠️ **功能总开关就是这个 ``enabled``**：置 False ⇒ 连"定期叫人测血氧"一起关掉。
+        "spo2_button": {
+            "driver": "button",
+            "enabled": True,
+            "read_interval_s": 0.2,
+            "params": {"pin": 13, "long_press_s": 1.0},
         },
         "distance": {
             "driver": "hc_sr04",

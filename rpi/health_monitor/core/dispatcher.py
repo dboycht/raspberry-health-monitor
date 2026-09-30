@@ -347,6 +347,41 @@ class AlarmDispatcher:
             only_driver="lcd1602",
         )
 
+    def show_notice(self, lines: Any, now: Optional[float] = None) -> None:
+        """把一条**临时提示**发给**两块屏**（LCD + 彩屏），不算报警（2026-09-30）。
+
+        用途：按需测血氧的"该测了 / 请把手指放好"这类**要主人当场看到**的交互提示。
+        与 :meth:`dispatch`（报警）的区别：
+
+        * **不进报警流水**、不发声、不点灯、不落库 —— 它只是一句提示；
+        * **两边都发**：这是"要人操作"的时刻，主人看彩屏、操作者看 LCD，谁看到都能照做
+          （对照：信息页只给彩屏、调试面板只给 LCD，那两条是为了互不干扰）。
+
+        ⚠️ **报警优先**：调用方负责在"有活动报警"时**不要**发提示，否则会把报警文案冲掉
+        （`service.py` 里与信息页轮播共用同一套让位规则）。
+        """
+        self._send_kind(
+            DeviceKind.DISPLAY,
+            DisplayCommand(lines=tuple(str(x) for x in (lines or ("", "")))[:2],
+                           page=LCD_DEBUG_PAGE, ts=now or now_ts()),
+        )
+
+    def notice_beep(self, times: int, now: Optional[float] = None) -> None:
+        """为**临时提示**鸣叫（不算报警：不点灯、不进报警流水、不落库）。
+
+        用途：按需测血氧的"该测了 / 开始测 / 测到了 / 没测到"。
+        ⚠️ **刻意不受"消音"影响**：消音管的是**报警**持续提醒（怕吵人），
+        而这里是一次性的、用户自己等着要的交互提示。若不想被打扰，
+        应把 ``spo2_button.enabled`` 关掉（= 关掉整个功能）。
+        """
+        if int(times) <= 0:
+            return
+        self._send_kind(
+            DeviceKind.AUDIO,
+            BeepCommand(times=int(times), on_ms=200, off_ms=150),
+            only_driver="buzzer",
+        )
+
     def _send_kind(self, kind: DeviceKind, command: Any, only_driver: Optional[str] = None) -> None:
         """把指令发给某一大类的所有输出器件。
 

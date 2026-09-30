@@ -332,7 +332,7 @@ TOOL_CHECK_NEEDS: Dict[str, str] = {
 #: 测试会断言"默认配置里的每个设备名要么在这里、要么在 COMPOSED_DEVICE_HINTS 里"。
 CHECKED_DEVICE_NAMES: Set[str] = {
     "vitals", "body_temp", "ambient", "motion", "distance",
-    "display", "status_led", "alarm_buzzer", "speaker", "sos_button",
+    "display", "status_led", "alarm_buzzer", "speaker", "sos_button", "spo2_button",
 }
 
 #: 没有专门检查、但有**别的**验收办法的设备名 → 提示用哪个脚本/为什么
@@ -853,9 +853,15 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 rep.add("蓝牙音箱语音", FAIL, f"{type(exc).__name__}: {exc}", "先确认 espeak-ng 与 aplay 已安装")
 
-        sw = devices.get("sos_button")
-        if sw is not None:
-            print("\n>>> 现在**按下并松开**一次求救按钮")
+        # 所有**按键类**器件都验（2026-09-30：系统里不止一个按键了，
+        # 原来这里写死 `devices.get("sos_button")` —— 新加的 `spo2_button` 会静默漏验）。
+        for btn_name in [d.name for d in config.enabled_devices() if d.driver == "button"]:
+            sw = devices.get(btn_name)
+            if sw is None:          # 被 --only/--exclude 排除了
+                continue
+            label = "求救按键" if btn_name == "sos_button" else f"按键 {btn_name}"
+            btn_pin = (config.device(btn_name).params or {}).get("pin", "?")
+            print(f"\n>>> 现在**按下并松开**一次「{label}」")
             try:
                 sw._require_open()  # noqa: SLF001 - 仅用于确认器件可用
                 input("    按完回车继续...")
@@ -866,15 +872,18 @@ def main() -> int:
                         events.append(ev.action.value)
                     time.sleep(0.2)
                 if events:
-                    rep.add("求救按键", PASS, f"检测到事件：{events}")
+                    rep.add(f"{label}（{btn_name}）", PASS, f"检测到事件：{events}")
                 else:
                     rep.add(
-                        "求救按键", WARN, "没有检测到按键事件",
-                        "按键一端 GPIO27（物理脚 13）、另一端 GND（物理脚 9），驱动默认启用内部上拉\n"
-                        "按下时应读到低电平；若你的模块自带上拉/高电平输出，请在配置里设 pull_up=false",
+                        f"{label}（{btn_name}）", WARN, "没有检测到按键事件",
+                        f"按键一端 GPIO{btn_pin}、另一端 GND，驱动默认启用内部上拉（**不需要外接电阻**）\n"
+                        "按下时应读到低电平；若你的模块自带上拉/高电平输出，请在配置里设 pull_up=false\n"
+                        "另一个常见原因：**这个脚被别的器件驱动着**（撞脚）——\n"
+                        "  `python3 scripts/validate.py` 的第 5 项会把撞脚查出来",
                     )
             except Exception as exc:  # noqa: BLE001
-                rep.add("求救按键", FAIL, f"{type(exc).__name__}: {exc}", "检查 GPIO 权限与引脚配置")
+                rep.add(f"{label}（{btn_name}）", FAIL, f"{type(exc).__name__}: {exc}",
+                        "检查 GPIO 权限与引脚配置")
 
     # ---------------- 7.5 覆盖度提示（哪些器件本脚本还没数值判据） ----------------
     # 为什么要有这一段（2026-09-26）：加了 `--only` 之后，用户可以只验一个器件；

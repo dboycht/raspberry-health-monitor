@@ -16,7 +16,10 @@
     "sensor_fault_after": 3,
     "repeat_cooldown_s": 300,
     "re_alert_interval_s": 15,
-    "hysteresis": 3
+    "hysteresis": 3,
+    "spo2_remind_interval_s": 120,
+    "spo2_remind_timeout_s": 60,
+    "spo2_measure_s": 30
   },
   "devices": {
     "vitals": {
@@ -119,6 +122,15 @@
       "read_interval_s": 0.2,
       "params": {
         "pin": 27,
+        "long_press_s": 1
+      }
+    },
+    "spo2_button": {
+      "driver": "button",
+      "enabled": true,
+      "read_interval_s": 0.2,
+      "params": {
+        "pin": 13,
         "long_press_s": 1
       }
     },

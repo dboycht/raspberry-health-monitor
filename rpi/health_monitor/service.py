@@ -60,6 +60,35 @@ PAGE_DWELL_UNITS: Tuple[int, ...] = (2, 1, 1)
 #: LCD **调试面板**的刷新周期（秒）。0 或负数 = 不刷（LCD 就只当报警屏用）。
 DEBUG_PANEL_INTERVAL_S = 2.0
 
+# --------------------------------------------------------------------------
+# 按需测血氧（2026-09-30 用户要求的「测血氧开关」）
+# --------------------------------------------------------------------------
+
+#: 配置里「测血氧」按键的设备名。**功能总开关就是它的 ``enabled``**：
+#: 置 false ⇒ 连"定期叫人测血氧"一起关掉（不留半开状态）。
+SPO2_BUTTON_NAME = "spo2_button"
+
+#: 「提示 / 测量」文案的重发周期（秒）。必须重发，否则会被别的刷屏操作顶掉。
+SPO2_NOTICE_INTERVAL_S = 2.0
+
+#: 结果（成功读数 / 没测到）在屏上停留多久，再让位给信息页与调试面板。
+SPO2_RESULT_HOLD_S = 8.0
+
+#: 三段文案（每行 ≤16 字符、纯 ASCII）。
+#: ⚠️ 第二段 **就是 `ERROR.md` E60 的产品化处置**：实测"按紧"会把血氧从 96.7 压到
+#: 93.9（物理性伪迹、改预处理去不掉，而本项目**无真值参照**所以**不改公式**），
+#: 于是改成在这里当场提示"轻贴别压" —— 在正确的时候给用户正确的提示。
+SPO2_PROMPT_LINES: Tuple[str, str] = ("SPO2 CHECK?", "PRESS BUTTON")
+SPO2_MEASURE_LINES: Tuple[str, str] = ("FINGER ON PPG", "TOUCH LIGHTLY")
+SPO2_FAIL_LINES: Tuple[str, str] = ("NO READING", "TRY AGAIN LATER")
+
+#: 蜂鸣声数（沿用本项目的"人耳暗号"：1 声 = 注意 / 2 声 = 成功 / 5 声 = 失败）
+SPO2_PROMPT_BEEPS = 2    # 叫人："该测血氧了"
+SPO2_START_BEEPS = 1     # 开始测量
+SPO2_DONE_BEEPS = 2      # 测到了
+SPO2_FAIL_BEEPS = 5      # 没测到
+
+
 def _pir_tag(motion: Any) -> str:
     """人体活动标记：``PIR Y``（检测到人）/ ``PIR N``（没人）/ ``PIR -``（没数据）。
 
@@ -78,7 +107,7 @@ def display_page_lines(
     alarm_count: int = 0,
     last_alarm: str = "",
 ) -> Tuple[str, str]:
-    """四个信息页的文案（**纯函数，可单测**；每行 ≤16 字符、纯 ASCII）。
+    """三个信息页的文案（**纯函数，可单测**；每行 ≤16 字符、纯 ASCII）。
 
     ⚠️ 两条纪律（都是本项目真机踩过的）：
 
@@ -120,6 +149,44 @@ def display_page_lines(
         return ("FAULT %d" % len(failures), "CHECK DEVICE")
     tail = (last_alarm or "NONE")[:10].upper()
     return (("ALARMS %d" % int(alarm_count))[:16], ("LAST " + tail)[:16])
+
+
+def _has_usable_vitals(sample: Any) -> bool:
+    """样本是不是**真的**能拿来报数：``ok=True`` **且**两个数值都在。
+
+    为什么不能只看 ``ok``（2026-09-30 写测血氧时踩到，见 `ERROR.md` **E62**）：
+    ``Sample.ok`` 只是个**标记**，真实驱动与模拟器都可能给出
+    ``ok=True`` 但字段是 ``None`` 的样本（模拟器在"没贴手指"时就是这样）。
+    只信标记 ⇒ ``float(None)`` **当场抛 TypeError**，而这段代码跑在 ``tick()``
+    的调用链里 ⇒ **会把整个采集循环打断**（比报错本身严重得多）。
+
+    ⇒ 判据要看**真值**，不能只看布尔标记。这与 `ERROR.md` E60 那条
+    "没有真值参照就不许改公式"是同一族纪律：先问"这个标记到底保证了什么"。
+    """
+    if sample is None or not getattr(sample, "ok", False):
+        return False
+    return (
+        getattr(sample, "heart_rate_bpm", None) is not None
+        and getattr(sample, "spo2_percent", None) is not None
+    )
+
+
+def _median(values: List[float]) -> float:
+    """中位数（**纯函数，可单测**）。调用方负责先判空。
+
+    为什么测量结果要用中位数而不是"最后一次读数"（2026-09-30 真机教训）：
+    第一次真机验收时，第二轮测量报出了 **HR 111 bpm**（恰好越过 `hr_max=110`）
+    ⇒ 规则引擎**当场报了一次真的 `hr_too_high`** 并持续提醒 4 次。
+    单点读数会把"手刚放上去 / 动了一下"的瞬时值当成结论。
+    `scripts/vitals_check.py`（T7 的官方验收工具）一直用的是**窗口内中位数** ——
+    这里与它统一口径，瞬时不稳就削掉。
+    """
+    ordered = sorted(float(v) for v in values)
+    n = len(ordered)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    return ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def debug_lines(
@@ -196,6 +263,20 @@ class Runtime:
         self._last_debug_ts = 0.0
         #: 上次"发出报警"的时刻（含一次性 SOS）：信息页要给它让够时间（E57）
         self._last_alarm_ts = -float("inf")
+
+        # ---- 「按需测血氧」状态机（2026-09-30）----
+        #: ``idle`` / ``prompt``（叫人等他按键）/ ``measure``（测量窗口）/ ``result``（结果停留）
+        self._spo2_state = "idle"
+        #: 当前阶段的截止时刻（提醒超时 / 测量到点 / 结果停留结束）
+        self._spo2_deadline = 0.0
+        #: 下一次"叫人测血氧"的时刻。**用绝对时刻排下一轮**（不用累加，避免漂移）。
+        self._spo2_next_remind_ts = self.started_at + float(config.thresholds.spo2_remind_interval_s)
+        #: 本帧是否收到「测血氧」按键（由 :meth:`_consume_button_events` 置位）
+        self._spo2_requested = False
+        #: 测量窗口内**所有**有效读数（结尾取中位数报结果，见 :func:`_median`）
+        self._spo2_samples: List[Any] = []
+        #: 上次喂提示的时刻（提示要周期性重发）
+        self._spo2_last_notice_ts = 0.0
 
         # ---- 1. 装配输入设备 ----
         self.devices: Dict[str, Device] = {}
@@ -391,6 +472,9 @@ class Runtime:
         # ---- 报警"持续提醒"（重发 + 灯持续闪 / 消音后常亮）----
         self._drive_persistent_alert(now)
 
+        # ---- 按需测血氧（叫人 → 按键 → 测量 → 报结果；**先于刷屏**，提示优先）----
+        self._drive_spo2(now, snap)
+
         # ---- 彩屏信息页轮播（只在**没有活动报警**时翻页，见 E57）----
         self._rotate_display_page(now, snap)
 
@@ -491,6 +575,8 @@ class Runtime:
         """
         if DISPLAY_PAGE_INTERVAL_S <= 0:
             return
+        if self._spo2_busy():                  # 测血氧提示优先：别把它冲掉
+            return
         if self.engine.active_alarms():        # 报警优先：有活动报警就不翻页
             return
         if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
@@ -520,6 +606,8 @@ class Runtime:
         """
         if DEBUG_PANEL_INTERVAL_S <= 0:
             return
+        if self._spo2_busy():                  # 测血氧提示优先（与信息页轮播对称）
+            return
         if self.engine.active_alarms():
             return
         if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
@@ -534,6 +622,144 @@ class Runtime:
             alarm_count=len(self.engine.active_alarms()),
         )
         self.dispatcher.show_debug(lines, now)
+
+    # ------------------------------------------------------------------
+    # 按需测血氧（2026-09-30：蜂鸣器叫人 → 按键 → 测量 → 报结果）
+    # ------------------------------------------------------------------
+
+    def _spo2_enabled(self) -> bool:
+        """「测血氧」功能是否开启。
+
+        **总开关 = 配置里 ``spo2_button`` 的 ``enabled``**（用户 2026-09-30 定的口径）：
+        关掉它就把"专用按键"和"定期叫人"**一起**关掉，不留半开状态。
+        """
+        cfg = self.config.device(SPO2_BUTTON_NAME)
+        if cfg is None or not getattr(cfg, "enabled", False):
+            return False
+        return SPO2_BUTTON_NAME in self.devices
+
+    def _spo2_busy(self) -> bool:
+        """是否正处在"提示 / 测量 / 结果"阶段 —— 这三段时间要让开两块屏。"""
+        return self._spo2_state != "idle"
+
+    def _spo2_show(self, lines: Tuple[str, str], now: float, force: bool = False) -> None:
+        """喂一条提示。**报警优先**：有活动报警时绝不覆盖报警文案。"""
+        if self.engine.active_alarms():
+            return
+        if not force and (now - self._spo2_last_notice_ts) < SPO2_NOTICE_INTERVAL_S:
+            return
+        self._spo2_last_notice_ts = now
+        self.dispatcher.show_notice(lines, now)
+
+    def _spo2_schedule_next(self, now: float) -> None:
+        """排下一轮"叫人"。``spo2_remind_interval_s <= 0`` ⇒ 不再定期叫人（只留主动测）。"""
+        interval = float(self.config.thresholds.spo2_remind_interval_s)
+        self._spo2_next_remind_ts = (now + interval) if interval > 0 else float("inf")
+
+    def _spo2_begin_prompt(self, now: float) -> None:
+        """叫人"该测血氧了"（蜂鸣 + 屏上提示），然后等他按键。"""
+        th = self.config.thresholds
+        self._spo2_state = "prompt"
+        self._spo2_deadline = now + float(th.spo2_remind_timeout_s)
+        self._spo2_last_notice_ts = 0.0
+        self.dispatcher.notice_beep(SPO2_PROMPT_BEEPS, now)
+        _LOG.info("[测血氧] 该测血氧了：蜂鸣 %d 声 + 屏上提示，等按键（%.0f 秒超时）",
+                  SPO2_PROMPT_BEEPS, float(th.spo2_remind_timeout_s))
+        self._spo2_show(SPO2_PROMPT_LINES, now, force=True)
+
+    def _spo2_begin_measure(self, now: float) -> None:
+        """开始测量窗口（用户按键了）。屏上那句提示**就是 E60 的产品化处置**。"""
+        th = self.config.thresholds
+        self._spo2_state = "measure"
+        self._spo2_deadline = now + float(th.spo2_measure_s)
+        self._spo2_samples = []
+        self._spo2_last_notice_ts = 0.0
+        self.dispatcher.notice_beep(SPO2_START_BEEPS, now)
+        _LOG.info("[测血氧] 开始测量（%.0f 秒）：请把食指指腹轻贴 MAX30102、"
+                  "**别用力压**（按紧会让血氧偏低，见 ERROR.md E60）", float(th.spo2_measure_s))
+        self._spo2_show(SPO2_MEASURE_LINES, now, force=True)
+
+    def _spo2_finish_measure(self, now: float) -> None:
+        """测量结束：有有效读数就报**窗口中位数**，没有就如实说"没测到"（**不报警**）。"""
+        usable = [s for s in self._spo2_samples if _has_usable_vitals(s)]
+        if usable:
+            hr = _median([float(s.heart_rate_bpm) for s in usable])
+            spo2 = _median([float(s.spo2_percent) for s in usable])
+            lines = ("HR %3.0f BPM" % hr, "SPO2 %3.0f %%" % spo2)
+            beeps = SPO2_DONE_BEEPS
+            _LOG.info("[测血氧] 测量完成：心率 %.0f bpm、血氧 %.0f %%（%d 个有效读数取中位数）",
+                      hr, spo2, len(usable))
+        else:
+            lines = SPO2_FAIL_LINES
+            beeps = SPO2_FAIL_BEEPS
+            _LOG.info("[测血氧] 测量结束但没拿到有效读数（手指没贴好 / 中途移开）")
+        self._spo2_state = "result"
+        self._spo2_deadline = now + SPO2_RESULT_HOLD_S
+        self._spo2_last_notice_ts = 0.0
+        self.dispatcher.notice_beep(beeps, now)
+        self._spo2_show(lines, now, force=True)
+        self._spo2_schedule_next(now)
+
+    def _spo2_give_up(self, now: float) -> None:
+        """本轮没测成（叫人后没人按）⇒ 回到待机并排下一轮。**不报警。**"""
+        self._spo2_state = "idle"
+        self._spo2_samples = []
+        self._spo2_schedule_next(now)
+
+    def _drive_spo2(self, now: float, snap: Any) -> None:
+        """推进「按需测血氧」状态机（每帧调一次）。
+
+        状态流：``idle`` --(到点叫人)--> ``prompt`` --(按键)--> ``measure``
+        --> ``result`` --(停留够)--> ``idle``。
+
+        任一步都可能"没成"，而且**都不报警**：
+        ``prompt`` 超时 ⇒ 直接回 ``idle``；``measure`` 没读到 ⇒ 屏上说"没测到"。
+        （设计取舍：这是"请老人配合量一下"的**提示**，不是"出事了"的**报警**；
+        混进报警流水只会污染 `/api/v1/alarms` 与报警历史。）
+
+        ⚠️ 与报警的关系：**报警优先** —— 有活动报警时不覆盖报警文案，
+        但状态机本身继续走（不会因为"正好报了个警"就把这次测量废掉）。
+        """
+        if not self._spo2_enabled():
+            self._spo2_state = "idle"
+            self._spo2_requested = False
+            return
+
+        requested = self._spo2_requested
+        self._spo2_requested = False
+        th = self.config.thresholds
+
+        if self._spo2_state == "idle":
+            if requested:
+                self._spo2_begin_measure(now)        # 主动测：不必等叫人
+            elif float(th.spo2_remind_interval_s) > 0 and now >= self._spo2_next_remind_ts:
+                self._spo2_begin_prompt(now)
+            return
+
+        if self._spo2_state == "prompt":
+            if requested:
+                self._spo2_begin_measure(now)
+            elif now >= self._spo2_deadline:
+                _LOG.info("[测血氧] 叫人后 %.0f 秒内没有按键，本轮放弃（**不报警**）",
+                          float(th.spo2_remind_timeout_s))
+                self._spo2_give_up(now)
+            else:
+                self._spo2_show(SPO2_PROMPT_LINES, now)
+            return
+
+        if self._spo2_state == "measure":
+            vitals = getattr(snap, "vitals", None)
+            if _has_usable_vitals(vitals):
+                self._spo2_samples.append(vitals)    # 攒窗口内的样本，结尾取中位数
+            if requested or now >= self._spo2_deadline:
+                self._spo2_finish_measure(now)
+            else:
+                self._spo2_show(SPO2_MEASURE_LINES, now)
+            return
+
+        # state == "result"：让结果在屏上停够时间，再交给信息页 / 调试面板
+        if now >= self._spo2_deadline:
+            self._spo2_state = "idle"
 
     def _consume_button_events(self, now: float) -> List[AlarmEvent]:
         """把采集器攒下的实体按键事件变成动作：**短按消音 / 长按求助**。
@@ -554,6 +780,19 @@ class Runtime:
             return produced
         for event in drain():
             action = getattr(event, "action", None)
+            who = getattr(event, "device", "") or ""
+            if who == SPO2_BUTTON_NAME:
+                # 「测血氧」按键（2026-09-30）：它**只**表达"用户想现在测血氧"。
+                # - 待机时按 ⇒ 立刻开始测（不必等叫人）；
+                # - 叫人提示中按 ⇒ 接受提示，开始测；
+                # - 测量中按 ⇒ 提前结束（不用等满 30 秒）。
+                if action in (ButtonAction.CLICK, ButtonAction.LONG_PRESS):
+                    self._spo2_requested = True
+                    _LOG.info("[按键] 「测血氧」按键按下（%s）",
+                              getattr(action, "value", action))
+                # ⚠️ **必须 continue**：绝不能让这个按键落到下面的"消音 / 求救"分支里去
+                #    （否则"想测血氧"会变成"消音"甚至"SOS"）。这就是 E61 的教训。
+                continue
             if action is ButtonAction.LONG_PRESS:
                 _LOG.info("[按键] 长按 %.1fs：触发紧急求助", getattr(event, "pressed_for_s", 0.0))
                 produced.append(self.sos(now))

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Deque, Dict, Optional
 
 from ..hal.device import Device
@@ -225,9 +225,26 @@ class Button(Device):
 
         self._note_ok()
         if events:
-            self._pending.extend(events[1:])
-            return events[0]
+            stamped = [self._stamp(ev) for ev in events]
+            self._pending.extend(stamped[1:])
+            return stamped[0]
         return ButtonEvent(device=self.name, action=ButtonAction.NONE)
+
+    def _stamp(self, event: ButtonEvent) -> ButtonEvent:
+        """给**去抖器**产出的事件补上设备名。
+
+        为什么必须有它（2026-09-30 加第二个按键时发现，见 `ERROR.md` **E61**）：
+        :class:`ButtonDebouncer` 是纯逻辑、**不认识设备名** —— 它构造事件时
+        （``ButtonEvent(ts=..., action=..., pressed_for_s=...)``）没有 ``device=``，
+        于是真机上 CLICK / LONG_PRESS 事件的 ``device`` 字段是**空串**。
+
+        只有一个按键时没人会注意；一旦系统里有**两个**按键（本项目的 ``sos_button``
+        与 ``spo2_button``），业务层就**无法区分是谁按的** —— 会把"要测血氧"当成
+        "求救"（或反过来）。所以这里在**离开驱动**时统一盖章。
+        """
+        if event.device:
+            return event
+        return replace(event, device=self.name)
 
     def close(self) -> None:
         """释放 GPIO（幂等，不抛异常）。"""
