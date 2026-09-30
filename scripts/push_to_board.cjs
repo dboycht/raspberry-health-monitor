@@ -350,6 +350,16 @@ function main(argv) {
     console.log(`  ${same ? '[OK]' : '[X ]'} ${rel} = ${after}（推前 ${before.get(rel)}）`);
   }
   console.log(ok ? '完成：板子本机配置未被改动 ✅' : '⚠️ 板子本机配置发生了变化，请立刻核对！');
+
+  // ⚠️ 漂移提醒**必须放在最后一行**（2026-10-01，ERROR.md E73）：
+  //    上一版的漂移报告打在中段，而我（和任何用 `tail` / `Select-Object -Last 3` 的人）
+  //    只看末尾几行 ⇒ **把那条警告截掉了**，于是"板子上有仓库已删的旧文件"没被发现，
+  //    白白在板子上验了一轮"Python 3.13 跑测试失败"（其实是残留文件导入失败）。
+  //    判据：**给人看的警告要出现在输出末尾**，否则它等于没打印。
+  if (staleAll.length && !prune) {
+    console.log(`⚠️ 还有 ${staleAll.length} 个残留代码文件（见上方 [漂移]）：`
+      + '板子上跑测试会被它们干扰 ⇒ 确认后加 --prune 清理。');
+  }
   return ok ? 0 : 2;
 }
 
