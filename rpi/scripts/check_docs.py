@@ -75,6 +75,14 @@ ALLOW_MISSING = {
     "~/Desktop/lab1a_bmp280.py",          # 同上
     "lab1a_bmp280.py",
     "lab1b_bmp_iot_clean.py",
+    # 开发副本 `_scratch/` 里的**一次性真机探针**：按设计不入库（是排坑现场工具），
+    # 但真机文档（docs/13）需要点名"这条结论是哪支探针跑出来的"才能追溯。
+    # ⚠️ 这些名字只在开发副本里存在 ⇒ 不写进来，板子上的文档自检会**假红**
+    #    （2026-09-30 实测踩到：开发机 PASS、板子 FAIL，与 E56 同族）。
+    "probe_vitals_acceptance.py",         # 四阶段验收 + 血氧按压夹具（docs/13 引用）
+    "probe_max30102_nofinger.py",         # 空房/环境光/手指三态
+    "probe_max30102_distance.py",         # 距离扫描（E59 标定依据）
+    "probe_e58_acceptance.py",            # E58 三阶段验收（含 --old 对照）
     # ⚠️ 本机覆盖配置：**按设计不入库**（含 OneNET 密钥等凭据，.gitignore 已忽略），
     #    所以仓库里永远找不到它 —— 文档里必须能讨论它，检查器不该报悬空。
     "config/devices.local.json",
