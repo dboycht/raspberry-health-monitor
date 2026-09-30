@@ -174,18 +174,6 @@ def _fmt(value: Any, unit: str = "", digits: int = 0) -> Tuple[str, bool]:
     return text, False
 
 
-def _card(title: str, value: Any, unit: str = "", subtitle: str = "", digits: int = 0,
-          state: str = "") -> str:
-    text, unknown = _fmt(value, unit, digits)
-    cls = "card" + (f" {state}" if state else "")
-    vcls = "v unknown" if unknown else "v"
-    sub = f'<div class="s">{_esc(subtitle)}</div>' if subtitle else ""
-    return (
-        f'<div class="{cls}"><div class="k">{_esc(title)}</div>'
-        f'<div class="{vcls}">{_esc(text)}</div>{sub}</div>'
-    )
-
-
 #: 三个面板的统一导航：``(标签, 路径)``。当前页按路径高亮。
 _NAV_ITEMS: Tuple[Tuple[str, str], ...] = (
     ("数据", "/"),
