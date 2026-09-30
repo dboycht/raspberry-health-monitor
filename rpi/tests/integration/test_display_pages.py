@@ -35,8 +35,19 @@ from tests.core.fakes import FakeAmbientSensor, FakeVitalSensor  # noqa: E402
 
 #: 最小可用配置（与 `test_status_page.py` 同源）：**必须含 display 与 tft**，
 #: 因为本组测试的核心判据就是"信息页只发给彩屏、不碰 LCD"。
+#:
+#: ⚠️⚠️ `night_start_hour = night_end_hour = 0` **不是随手写的**（2026-10-01，ERROR.md **E71**）：
+#: 本文件用**假时钟**（`_Clock` 从 `1000.0` 秒起算 = 1970-01-01T00:16:40Z），
+#: 而"夜间起夜"（`night_frequent_wake`）是按**时间戳的本地小时**判定的
+#: ⇒ 同一份假时钟在不同时区的机器上落在**不同的小时**：
+#:     · `TZ=UTC`（**CI 就是**）→ 本地 0 点 → **落在夜间窗口 22:00~06:00 内** → 多出起夜报警
+#:     · `TZ=UTC+8`（开发机）→ 本地 8 点 → 不在窗口内 → 没有这条报警
+#: ⇒ 于是**同一个提交在 CI 红、在本机绿**，而且报错看着像产品缺陷（"期待 SOS、实到 WAKE TOO OFTEN"）。
+#: 把夜间窗口设成**空区间**（start == end ⇒ `start <= hour < end` 恒为假）就与时区无关了。
+#: 起夜规则**本身的**行为由 `tests/core/test_rules.py` 用显式阈值专门覆盖 ✅（不靠这里）。
 DEMO = {
-    "thresholds": {"no_motion_timeout_s": 60, "repeat_cooldown_s": 0},
+    "thresholds": {"no_motion_timeout_s": 60, "repeat_cooldown_s": 0,
+                   "night_start_hour": 0, "night_end_hour": 0},
     "devices": {
         "vitals": {"driver": "max30102", "read_interval_s": 1.0},
         "ambient": {"driver": "dht11", "read_interval_s": 3.0},
