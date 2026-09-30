@@ -1,11 +1,11 @@
-"""状态网页（``GET /``）测试。
+"""状态网页（``GET /``，2026-10-01 起是**数据展示面板**）测试。
 
 为什么值得测：这个页面是**答辩现场与排查时第一眼看到的东西**，
 但它最容易悄悄坏掉（模板字符串里少个花括号、数值为 None 时格式化抛异常），
 而且坏了只在"人打开浏览器"时才被发现。所以把关键渲染规则钉进单测：
 
 1. 页面能渲染出来，且是 HTML（不是 JSON）；
-2. **缺失值显示"未知"，绝不显示 0**（与协议同一条硬要求）；
+2. **缺失值显示「暂无数据」/「请将手指放好」，绝不显示 0**（与协议同一条硬要求）；
 3. 报警态与非报警态有不同的横幅；
 4. 有设备装配失败时要把失败原因显示出来（不能静默）；
 5. 渲染函数对"什么都没有"的空快照也不能崩。
@@ -85,9 +85,11 @@ class TestStatusPage(unittest.TestCase):
         self.assertNotIn("https://cdn", page)
         self.assertNotIn("<script src", page)
 
-    def test_五张指标卡都在(self) -> None:
+    def test_六张指标卡都在(self) -> None:
+        """2026-10-01 起由 5 张扩到 6 张：原来「室温 / 湿度」合成一张，现在拆成两张
+        （用户要求"专门用来展示数据"，拆开后各自的趋势图与过期判断才能分开算）。"""
         page = render_page(self.rt)
-        for title in ("心率", "血氧", "室温 / 湿度", "活动状态", "数据年龄"):
+        for title in ("心率", "血氧", "室温", "湿度", "活动状态", "数据年龄"):
             self.assertIn(title, page, f"缺少指标卡：{title}")
 
     def test_正常状态显示正常横幅(self) -> None:
@@ -102,15 +104,21 @@ class TestStatusPage(unittest.TestCase):
         self.assertIn("正在报警", page)
         self.assertIn(ALARM_LABELS["hr_too_high"], page)
 
-    def test_缺失值显示未知而不是0(self) -> None:
-        """与协议同一条硬要求：读不到就是"未知"，显示 0 会吓人。"""
+    def test_缺失值显示暂无数据而不是0(self) -> None:
+        """与协议同一条硬要求：读不到就是「暂无数据」，显示 0 会吓人。
+
+        ⚠️ 2026-10-01：文案由「未知」改成「暂无数据」（用户规格里写死的三态之一：
+        新鲜 / 过期但有历史 / **从来没有 ⇒ 暂无数据**）。这条测试**钉住的意图没变** ——
+        仍然是"**绝不用 0 冒充没有数据**"，所以下面两条 `assertNotIn` 一个字都不能松。
+        """
         rt = make_runtime()
         rt.open()
         page = render_page(rt)
-        self.assertIn("未知", page)
+        self.assertIn("暂无数据", page)
         # 心率/血氧都没数据时，卡片里不应出现 "0 bpm"
         self.assertNotIn(">0 bpm<", page)
         self.assertNotIn(">0 %<", page)
+        self.assertNotIn(">0 ℃<", page)
         rt.close()
 
     def test_未贴合手指时提示请将手指放好(self) -> None:

@@ -231,6 +231,40 @@ class Store:
         rows.reverse()
         return rows
 
+    def last_reading(self, metric: str) -> Optional[Dict[str, Any]]:
+        """取该指标**最近一次有效读数**（``value`` 非空），**不限窗口**。
+
+        为什么不能用 :meth:`recent_readings` 顶替（2026-10-01 真机验出来的）：
+        历史库是**每秒一行**，``limit=120`` 只覆盖**约 2 分钟**；
+        而"测不到时显示最后一次记录"要的恰恰是"**可能很久以前**"的那次读数 ——
+        拿窗口查询去实现它，只要上次测量超过两分钟，页面就会错报"暂无数据"，
+        那个需求等于没做。
+        """
+        sql = ("SELECT ts, value, ok, device FROM readings "
+               "WHERE metric = ? AND value IS NOT NULL ORDER BY ts DESC LIMIT 1")
+        with self._lock, self._connect() as conn:
+            row = conn.execute(sql, (metric,)).fetchone()
+        return dict(row) if row is not None else None
+
+    #: :meth:`last_vitals_value` 允许的列名（**白名单**：列名要拼进 SQL，
+    #:  绝不能直接接受调用方传来的任意字符串）。
+    VITALS_VALUE_COLUMNS = ("heart_rate_bpm", "spo2_percent")
+
+    def last_vitals_value(self, column: str) -> Optional[Dict[str, Any]]:
+        """取某一路生命体征（心率 / 血氧）**最近一次有效值**，**不限窗口**。
+
+        为什么按**列**查而不是"最近一条 vitals"：一次记录可能只有心率没有血氧
+        （或反之，见 E62 那种"标记为 ok 但值为 None"的样本）——
+        两张卡片必须各查各的，否则会出现"血氧有值、心率却说没有"这种自相矛盾。
+        """
+        if column not in self.VITALS_VALUE_COLUMNS:
+            raise ValueError(f"不支持的列名 {column!r}（只允许 {self.VITALS_VALUE_COLUMNS}）")
+        sql = (f"SELECT ts, {column} AS value FROM vitals "
+               f"WHERE {column} IS NOT NULL ORDER BY ts DESC LIMIT 1")
+        with self._lock, self._connect() as conn:
+            row = conn.execute(sql).fetchone()
+        return dict(row) if row is not None else None
+
     def recent_alarms(self, limit: int = 50, since: Optional[float] = None) -> List[Dict[str, Any]]:
         """取最近的报警事件（按时间**倒序**，最近的在前）。"""
         import json

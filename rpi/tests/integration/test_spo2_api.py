@@ -135,6 +135,10 @@ class _ApiCase(unittest.TestCase):
     def panel_html(self) -> str:
         return webui.render_panel(self.rt, self.rt.config_store)
 
+    def control_html(self) -> str:
+        """功能面板（``GET /control``，2026-10-01）——【血氧检测】一节 2026-10-01 搬到了这里。"""
+        return webui.render_control(self.rt)
+
 
 class TestStatus(_ApiCase):
     def test_待机时的字段(self) -> None:
@@ -301,39 +305,51 @@ class TestDisabled(_ApiCase):
 
 
 class TestPanelSection(_ApiCase):
-    """面板上的【血氧检测】一节。"""
+    """【血氧检测】一节（2026-10-01 从 ``/panel`` **搬到功能面板** ``/control``）。
+
+    搬家的理由（用户 2026-10-01 划的三面板分工）：``/panel`` 只管**改数字**，
+    ``/control`` 才管**触发动作**。血氧检测是"触发一次测量"⇒ 归功能面板。
+    ⚠️ 所以这里既有**正向钉子**（``/control`` 必须有），也有**反向钉子**
+    （``/panel`` 必须**没有**）—— 只钉一头的话，两边都留一份也不会被发现。
+    """
 
     def test_有两个按钮(self) -> None:
-        html = self.panel_html()
+        html = self.control_html()
         self.assertIn("【血氧检测】", html)
         self.assertIn(">血氧检测<", html)
         self.assertIn(">暂不检测<", html)
         self.assertIn("spo2Act('measure')", html)
         self.assertIn("spo2Act('decline')", html)
 
-    def test_放在阈值表单之前(self) -> None:
-        """★ 它是"当下要不要量一次"的即时操作，比调阈值更常用 ⇒ 必须在阈值表单之前。"""
-        html = self.panel_html()
-        self.assertLess(html.index("【血氧检测】"), html.index("<h2>报警阈值</h2>"),
-                        "血氧检测一节没有排在阈值表单前面")
+    def test_配置面板上不再有血氧检测一节(self) -> None:
+        """★ 反向钉子：搬完就必须**搬干净**。
 
-    def test_轮询只刷自己那一节_绝不整页刷新(self) -> None:
-        """★★ 面板顶部早就写了"刻意不做自动刷新"的理由：整页刷新会抹掉没保存的输入。
-
-        血氧那节要 2 秒轮询 ⇒ **最容易**在这里破例（顺手写一句 location.reload 就完了），
-        所以要有机器判据把它钉死。
+        一个动作只能有一个入口 —— 两页各留一份，迟早"一边改了、另一边忘了"
+        （本项目"一个动作只有一条路径"的纪律，血氧那条路径本身就吃过类似的亏）。
         """
         html = self.panel_html()
-        self.assertNotIn("location.reload", html)
-        self.assertNotIn("location.href", html)
-        self.assertNotIn('http-equiv="refresh"', html)
+        self.assertNotIn("【血氧检测】", html)
+        self.assertNotIn("spo2Act", html)
+        self.assertNotIn("spo2state", html)
+
+    def test_轮询只刷自己那一节_绝不整页刷新(self) -> None:
+        """★★ 轮询**只更新血氧那一节自己的 DOM**，绝不整页刷新。
+
+        功能面板上有"屏显控制"的结果要留着给用户看、配置面板上还有没保存的输入 ——
+        顺手写一句 ``location.reload`` 就会把它们全抹掉。所以要有机器判据钉死。
+        """
+        for html in (self.control_html(), self.panel_html()):
+            self.assertNotIn("location.reload", html)
+            self.assertNotIn("location.href", html)
+            self.assertNotIn('http-equiv="refresh"', html)
+        html = self.control_html()
         # 只更新这一节自己的 DOM：状态行 + 两个按钮
         self.assertIn("spo2state", html)
         self.assertIn("setInterval(spo2Poll, 2000)", html)
 
     def test_暂不检测默认是灰的(self) -> None:
         """非"正在叫人"时按钮必须灰掉 —— 不让用户点了才拿到 409。"""
-        html = self.panel_html()
+        html = self.control_html()
         marker = 'id="spo2no"'
         self.assertIn(marker, html)
         self.assertIn("disabled", html.split(marker)[1][:80])
@@ -399,12 +415,31 @@ class TestSpo2OverRealHttp(_ApiCase):
         _, text, _ = self._get("/api/v1/spo2")
         self.assertEqual(json.loads(text)["declined_total"], 1)
 
-    def test_真HTTP上面板含血氧检测一节(self) -> None:
-        status, text, ctype = self._get("/panel")
+    def test_真HTTP上功能面板含血氧检测一节(self) -> None:
+        """走真 socket 验证路由：``/control`` 是新的功能面板。"""
+        status, text, ctype = self._get("/control")
         self.assertEqual(status, 200)
         self.assertIn("text/html", ctype)
         self.assertIn("【血氧检测】", text)
         self.assertIn(">暂不检测<", text)
+
+    def test_真HTTP上配置面板已不含血氧检测(self) -> None:
+        """反向钉子（真 socket 版）：搬完必须搬干净。"""
+        status, text, ctype = self._get("/panel")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", ctype)
+        self.assertNotIn("【血氧检测】", text)
+        self.assertNotIn("spo2Act", text)
+
+    def test_真HTTP上三个面板都在且都是HTML(self) -> None:
+        """三个面板（数据 / 功能 / 配置）都能打开、都是 HTML、都带同一套导航。"""
+        for path in ("/", "/control", "/panel"):
+            status, text, ctype = self._get(path)
+            self.assertEqual(status, 200, path)
+            self.assertIn("text/html", ctype, path)
+            self.assertIn('nav class="tabs"', text, path)
+            self.assertIn('href="/control"', text, path)
+            self.assertIn('href="/panel"', text, path)
 
 
 if __name__ == "__main__":

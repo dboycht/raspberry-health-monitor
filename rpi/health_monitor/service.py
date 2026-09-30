@@ -61,6 +61,23 @@ PAGE_DWELL_UNITS: Tuple[int, ...] = (2, 1, 1)
 #: LCD **调试面板**的刷新周期（秒）。0 或负数 = 不刷（LCD 就只当报警屏用）。
 DEBUG_PANEL_INTERVAL_S = 2.0
 
+#: 面板上手动指定屏显后，**多少秒内不许自动刷新把它抢回去**（2026-10-01）。
+#:
+#: 为什么需要这个"保持时间"（而不是只把 `_last_page_ts` 清零）：
+#: LCD 的调试面板**每 2 秒**就会重刷一次。若只清零计时器，用户在面板上点
+#: "LCD 显示环境页"，**2 秒后就被调试面板顶掉了** —— 点击看起来像没生效。
+#: 给一个 30 秒的保持窗口，点一下就能实实在在看一会儿。
+#:
+#: ⚠️ 它**只挡"闲着轮播"**，不挡报警：报警走 `dispatcher.dispatch()`，
+#: 那条路径**不看**这个窗口 ⇒ 报警文案照样能立刻抢屏（这是必须的）。
+MANUAL_SCREEN_HOLD_S = 30.0
+
+# ⚠️ 「屏显控制」允许的 target / page 是 **`Runtime` 的类属性**（见
+# :attr:`Runtime.SCREEN_PAGES`），**不是**模块级常量 —— 因为 `net/web.py` 需要一个
+# 权威来源做参数校验，而本模块**在模块级 import 了 `net.web`**
+# （`from .net.web import WebApi`）⇒ web.py 反过来 import 本模块就是**循环导入**。
+# 挂在类上，web 层用 `self.runtime.SCREEN_PAGES` 读，谁也不欠谁。
+
 # --------------------------------------------------------------------------
 # 按需测血氧（2026-09-30 用户要求的「测血氧开关」）
 # --------------------------------------------------------------------------
@@ -253,6 +270,19 @@ class Runtime:
             从而在**不改动任何业务逻辑**的前提下替换数据来源。
     """
 
+    #: 面板「屏显控制」允许的 ``target`` → 该屏幕的**驱动名**（用来判断这块屏在不在）。
+    SCREEN_DRIVERS: Dict[str, str] = {"lcd": "lcd1602", "tft": "tft_spi"}
+
+    #: 面板「屏显控制」允许的页名。**只列真的实现了的页**；页名不合法调用方回 400。
+    #:
+    #: * LCD 本职是"开发/调试面板"，但它**也能显示环境页** —— `display_page_lines()`
+    #:   的两行本就按 **LCD 的 16 字符上限**写的，同一份文案两块屏共用（E53 的教训）；
+    #: * TFT 能直接跳到**报警页**（页 2），方便演示时"点一下就看到报警记录长什么样"。
+    SCREEN_PAGES: Dict[str, Tuple[str, ...]] = {
+        "lcd": ("env", "debug"),
+        "tft": ("env", "alarm"),
+    }
+
     def __init__(
         self,
         config: AppConfig,
@@ -283,6 +313,10 @@ class Runtime:
         self._last_page_ts = 0.0
         #: LCD 调试面板的上次刷新时刻（2026-09-30；**只发 LCD**，不碰彩屏）
         self._last_debug_ts = 0.0
+        #: 面板"屏显控制"的保持截止时刻（2026-10-01）：在此之前闲着的信息页轮播与
+        #: 调试面板刷新**都要让位**（否则用户点一下，2 秒后就被自动刷新顶掉）。
+        #: ⚠️ 报警不走这里（见 :data:`MANUAL_SCREEN_HOLD_S` 的说明）。
+        self._manual_screen_until = -float("inf")
         #: 上次"发出报警"的时刻（含一次性 SOS）：信息页要给它让够时间（E57）
         self._last_alarm_ts = -float("inf")
 
@@ -735,6 +769,8 @@ class Runtime:
             return
         if self._spo2_busy():                  # 测血氧提示优先：别把它冲掉
             return
+        if now < self._manual_screen_until:    # 面板刚手动指定过屏显：让它停够（MANUAL_SCREEN_HOLD_S）
+            return
         if self.engine.active_alarms():        # 报警优先：有活动报警就不翻页
             return
         if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
@@ -766,6 +802,8 @@ class Runtime:
             return
         if self._spo2_busy():                  # 测血氧提示优先（与信息页轮播对称）
             return
+        if now < self._manual_screen_until:    # 面板刚手动指定过屏显（含"LCD 显示环境页"）
+            return                             # ★ 没有这一条，点的"环境页"会被 2 秒后的调试面板顶掉
         if self.engine.active_alarms():
             return
         if (now - self._last_alarm_ts) < DISPLAY_PAGE_HOLD_AFTER_ALARM_S:
@@ -982,6 +1020,84 @@ class Runtime:
             "declined_total": self._spo2_declined_total,
             "last_result": dict(self._spo2_last_result) if self._spo2_last_result else None,
         }
+
+    # ------------------------------------------------------------------
+    # 屏显控制（2026-10-01：面板上点一下 ⇒ 指定屏幕立刻弹出对应面板）
+    # ------------------------------------------------------------------
+
+    def _screen_present(self, driver: str) -> bool:
+        """这块屏**真的接在系统里**吗（按 ``dispatcher.outputs`` 判断）。
+
+        为什么按 dispatcher 的输出表、而不是按配置里的 ``enabled``：
+        配置里写着启用的器件**也可能装配失败**（没接线是常态）。那种情况下点按钮
+        应当老实得到"这块屏不在"，而不是"假装成功"然后什么都不发生。
+        """
+        return any(
+            getattr(dev, "NAME", "") == driver
+            for dev in getattr(self.dispatcher, "outputs", {}).values()
+        )
+
+    def show_screen(self, target: str, page: str, now: Optional[float] = None) -> bool:
+        """让指定屏幕**立刻**显示指定面板（面板「屏显控制」用它）。
+
+        Args:
+            target: ``"lcd"`` 或 ``"tft"``（不认识的取值 ⇒ ``False``）。
+            page: 见 :attr:`Runtime.SCREEN_PAGES`（不认识的取值 ⇒ ``False``）。
+            now: 注入时钟（测试用）。
+
+        Returns:
+            ``True`` = 已经发给那块屏；``False`` = 参数不认识**或这块屏不在系统里**。
+            调用方据此回 **400**（参数问题）或 **409**（屏不在）—— **不假装成功**。
+
+        复用的是**已有的两条路径**，没有新协议：
+
+        * LCD ⇒ :meth:`AlarmDispatcher.show_debug`（只发 ``lcd1602``）；
+        * TFT ⇒ :meth:`AlarmDispatcher.show_page`（只发 ``tft_spi``）。
+
+        文案也复用已有的两个纯函数：环境页用 :func:`display_page_lines`（它的两行本就按
+        **LCD 的 16 字符上限**写的，两块屏共用同一份），调试面板用 :func:`debug_lines`。
+
+        ⚠️ 顺带把 :data:`MANUAL_SCREEN_HOLD_S` 之前的自动刷新挡掉 —— 否则用户点一下
+        "LCD 显示环境页"，**2 秒后就被调试面板顶掉**，点击看起来像没生效。
+        """
+        now = self.clock() if now is None else float(now)
+        target = str(target or "").strip().lower()
+        page = str(page or "").strip().lower()
+
+        driver = self.SCREEN_DRIVERS.get(target)
+        if driver is None or page not in self.SCREEN_PAGES.get(target, ()):
+            return False                    # 参数不认识（调用方本应先回 400，这里兜底）
+        if not self._screen_present(driver):
+            return False                    # 这块屏不在系统里 ⇒ 调用方回 409
+
+        snap = self.collector.snapshot()
+        if target == "lcd":
+            if page == "env":
+                lines = display_page_lines(0, snap)
+            else:
+                lines = debug_lines(
+                    snap,
+                    ticks=self.ticks,
+                    failures=len(getattr(snap, "sensor_failures", None) or {}),
+                    alarm_count=len(self.engine.active_alarms()),
+                )
+            self.dispatcher.show_debug(lines, now)
+            self._last_debug_ts = now
+        else:
+            index = 0 if page == "env" else 2      # 页 2 = 状态/报警记录页
+            last = self._events[-1].code.value if self._events else ""
+            lines = display_page_lines(
+                index, snap,
+                alarm_count=len(self.engine.active_alarms()),
+                last_alarm=last,
+            )
+            self.dispatcher.show_page(lines, index, now)
+            self._page = index                     # 轮播从这里接着走，而不是跳回旧页
+            self._last_page_ts = now
+
+        self._manual_screen_until = max(self._manual_screen_until, now + MANUAL_SCREEN_HOLD_S)
+        _LOG.info("[屏显] 面板指定：%s 显示 %s ⇒ %s / %s", target, page, lines[0], lines[1])
+        return True
 
     def _drive_spo2(self, now: float, snap: Any) -> None:
         """推进「按需测血氧」状态机（每帧调一次）。

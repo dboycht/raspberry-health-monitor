@@ -130,6 +130,43 @@ class TestFrameLayout(unittest.TestCase):
             self.assertTrue(0 <= x0 <= x1 < tft.width, f"窗口 x 越界 {(x0, x1)}")
             self.assertTrue(0 <= y0 <= y1 < tft.height, f"窗口 y 越界 {(y0, y1)}")
 
+    def test_同一行上的文字不许重叠(self) -> None:
+        """★ 2026-10-01 预览图发现的缺陷：第一行文案与右上角时钟叠在一起
+        （`FAULT ambient` + `14:32` 画成了 `FAULT ambi14:32`）。
+
+        这条是**通用不变量**：任何两段文字只要 y 落在同一行（区间相交）且 x 区间相交，
+        就是画糊了 —— 以后再加内容也会被它挡住。
+        """
+        frames = [
+            FULL_FRAME,
+            {**FULL_FRAME, "rows": ["FAULT ambient", "ALARM ambient_temp_high"]},
+            {**FULL_FRAME, "rows": ["AAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBB"]},
+            {**FULL_FRAME, "rows": ["HUM 57%"], "clock": "23:59"},
+        ]
+        for frame in frames:
+            with self.subTest(rows=frame["rows"]):
+                tft = _RecordingTft().open_for_draw()
+                tft._render_frame(frame, 0)
+                texts = tft.visible_texts()
+                boxes = [(x, y, x + 8 * sc * len(s), y + 8 * sc) for x, y, s, _c, sc in texts]
+                for i in range(len(boxes)):
+                    for j in range(i + 1, len(boxes)):
+                        ax0, ay0, ax1, ay1 = boxes[i]
+                        bx0, by0, bx1, by1 = boxes[j]
+                        same_row = ay0 < by1 and by0 < ay1
+                        overlap_x = ax0 < bx1 and bx0 < ax1
+                        self.assertFalse(
+                            same_row and overlap_x,
+                            f"{texts[i][2]!r} 与 {texts[j][2]!r} 重叠了",
+                        )
+
+    def test_长文案给时钟让位而不是叠上去(self) -> None:
+        tft = _RecordingTft().open_for_draw()
+        tft._render_frame({**FULL_FRAME, "rows": ["FAULT ambient", "x"]}, 0)
+        row0 = next(t for t in tft.visible_texts() if t[2].startswith("FAULT"))
+        clock = next(t for t in tft.visible_texts() if t[2] == "14:32")
+        self.assertLessEqual(row0[0] + 8 * len(row0[2]), clock[0], "第一行必须在时钟左边结束")
+
     def test_主指标装不下时会降字号而不是截断(self) -> None:
         tft = _RecordingTft().open_for_draw()
         tft.send(DisplayCommand(lines=("x", "y"), page=0,
@@ -232,6 +269,28 @@ class TestTrend(unittest.TestCase):
         fg = tft.color(CYAN)
         buf = self._draw([25.0] * 6, w=6, h=9)
         self.assertTrue(any(v == fg for v in buf))
+
+    def test_相邻点之间必须横向连起来(self) -> None:
+        """★ 2026-10-01 预览图发现的缺陷：点比列少时，只画竖线会变成**一串离散小竖条**。
+
+        典型场景：16 个采样铺在 124 列上 ⇒ 中间大量空列，看起来不像趋势线。
+        这里用 3 个点铺在 11 列上，断言从第一列到最后一列**连续有墨**。
+        """
+        tft = _RecordingTft().open_for_draw()
+        fg = tft.color(CYAN)
+        buf = self._draw([1.0, 5.0, 9.0], w=11, h=9)
+        cols = self._columns_with_ink(buf, 11, 9, fg)
+        self.assertEqual(cols, list(range(11)), f"11 列都该有墨，实际只有 {cols}")
+
+    def test_缺口两侧不许被横向连起来(self) -> None:
+        """反向钉子：横向连线**不能**跨过缺口。"""
+        tft = _RecordingTft().open_for_draw()
+        fg = tft.color(CYAN)
+        buf = self._draw([1.0, 9.0, None, 1.0, 9.0], w=5, h=9)
+        cols = self._columns_with_ink(buf, 5, 9, fg)
+        self.assertIn(1, cols)
+        self.assertIn(3, cols)
+        self.assertNotIn(2, cols)
 
     def test_只用一次SPI突发(self) -> None:
         """★ E63 的教训：逐像素会有上百次 SPI 事务、拖住主循环。整块必须一次推完。"""

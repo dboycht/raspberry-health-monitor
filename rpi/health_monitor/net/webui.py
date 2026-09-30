@@ -23,9 +23,10 @@
 from __future__ import annotations
 
 import html
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, NamedTuple, Tuple
 
 from ..hal.models import message_kind
+from .charts import line_chart, sparkline
 
 #: 报警码 → 中文（网页用；与安卓端 AlarmCatalog 保持同口径，改一处要改另一处）
 ALARM_LABELS: Dict[str, str] = {
@@ -88,6 +89,64 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pill.bad { background: #fdeceb; color: #8a2b28; }
 footer { margin-top: 24px; font-size: 12px; color: #6b7480; }
 code { background: #eef1f4; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+/* 三个面板的统一导航（2026-10-01）。放在 header 里，三页都看得见、当前页高亮。 */
+nav.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+nav.tabs a.tab { padding: 6px 14px; border-radius: 999px; text-decoration: none;
+                 color: #e8f1ff; font-size: 13px; background: rgba(255,255,255,.16); }
+nav.tabs a.tab.on { background: #fff; color: #1f6feb; font-weight: 600; }
+
+/* 图表区：SVG 由 net/charts.py 生成（内联、离线可用、可被无头浏览器截图） */
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.chartbox { background: #fff; border: 1px solid #dfe3e8; border-radius: 10px; padding: 10px 12px; }
+.chartbox .t { font-size: 13px; font-weight: 600; color: #45505c; margin-bottom: 6px; }
+.chartbox .cap { font-size: 12px; color: #6b7480; margin-top: 6px; }
+.chartbox .cap.stale { color: #9aa0a6; }
+svg.chart { max-width: 100%; }
+
+/* 过期/旧值的视觉：**值变灰**，并给一行小字说清"这是几点的事" */
+.card .v.stale { color: #9aa0a6; }
+.card .s.stale { color: #9aa0a6; }
+.card.stale { border-color: #dfe3e8; background: #fbfbfc; }
+.tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px;
+       background: #eef1f4; color: #6b7480; }
+
+/* ⚠️ 长路径必须能断行（2026-10-01 用 390px 无头截图实测到的真实缺陷）：
+   `/home/pi/raspberry-health-monitor/rpi/config/devices.json` 是一串**没有空格**的字符，
+   默认**不换行** ⇒ 在 360~390px 手机上会把整页撑宽、右侧内容被裁掉、出现横向滚动。 */
+code, .path { overflow-wrap: anywhere; word-break: break-all; }
+header .meta, .hint, td, .card .s, .chartbox .cap { overflow-wrap: anywhere; }
+
+/* ---------------- 双端适配（PC + 手机）----------------
+   断点取 720px：比它窄就当成"手机/竖屏平板"处理。三件事必须发生：
+   ① 指标卡降列（否则一列只有半张卡宽，数字被挤断行）；
+   ② **表格转卡片**（6 列宽表在 360px 上根本没法看 —— 横向滚动也会把整页拖宽）；
+   ③ 按钮变大（老人 + 手指点在手机上）。
+   判据：**360px 宽时页面不许出现横向滚动**。 */
+@media (max-width: 720px) {
+  header { padding: 12px 14px; }
+  header h1 { font-size: 17px; }
+  main { padding: 12px 12px 32px; }
+  .cards { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .card .v { font-size: 22px; }
+  .charts { grid-template-columns: 1fr; }
+  .fields { grid-template-columns: 1fr; }
+  button { padding: 12px 18px; font-size: 15px; width: 100%; }
+  .actions { flex-direction: column; align-items: stretch; gap: 10px; }
+  .spo2btns { flex-direction: column; }
+
+  /* 表格转卡片：每个 <tr> 一张小卡，每个 <td> 前面用 data-label 补出列名 */
+  table { border: 0; background: transparent; font-size: 13px; }
+  thead { display: none; }
+  tbody tr { display: block; background: #fff; border: 1px solid #dfe3e8;
+             border-radius: 10px; margin-bottom: 10px; padding: 6px 12px; }
+  tbody td { display: flex; gap: 10px; border: 0; padding: 5px 0; }
+  tbody td::before { content: attr(data-label); flex: 0 0 82px; color: #5b6673;
+                     font-size: 12px; }
+  tbody td.num { text-align: left; }
+  tbody td[colspan] { justify-content: center; color: #6b7480; }
+  tbody td[colspan]::before { content: none; }
+}
 """
 
 #: 页面可见性感知的刷新（不可用时退化为 meta refresh）
@@ -127,10 +186,227 @@ def _card(title: str, value: Any, unit: str = "", subtitle: str = "", digits: in
     )
 
 
+#: 三个面板的统一导航：``(标签, 路径)``。当前页按路径高亮。
+_NAV_ITEMS: Tuple[Tuple[str, str], ...] = (
+    ("数据", "/"),
+    ("功能", "/control"),
+    ("配置", "/panel"),
+)
+
+
+def _nav(current: str) -> str:
+    """统一的三标签导航（三页共用；当前页高亮）。
+
+    为什么放 header 里而不是页面底部：手机上一屏就一屏，底部链接得先滚到底才看得到 ——
+    那等于没有。放在抬头，任何一页都能一步跳到另外两页。
+    """
+    tabs = "".join(
+        f'<a class="tab{" on" if path == current else ""}" href="{path}">{_esc(label)}</a>'
+        for label, path in _NAV_ITEMS
+    )
+    return f'<nav class="tabs">{tabs}</nav>'
+
+
+def _age_text(seconds: float) -> str:
+    """把"多久以前"说成人话（秒 → 秒 / 分钟 / 小时）。"""
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{seconds:.0f} 秒前"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f} 分钟前"
+    return f"{seconds / 3600:.1f} 小时前"
+
+
+def _span_text(seconds: float) -> str:
+    """时间跨度（用于图表下方那行小字）。"""
+    seconds = max(0.0, float(seconds))
+    if seconds < 120:
+        return f"{seconds:.0f} 秒"
+    if seconds < 7200:
+        return f"{seconds / 60:.0f} 分钟"
+    return f"{seconds / 3600:.1f} 小时"
+
+
+def _fresh_window(interval_s: Any, *, factor: float = 3.0, floor_s: float = 10.0) -> float:
+    """多久没有新数据就算"过期"：``max(3 × 该器件读取周期, 10 秒)``。
+
+    ⚠️ 那个 **10 秒下限是必须的**，不是随手写的：
+
+    * 乘 3 是给"偶尔漏一拍"留余量（DHT11 本身有 2 秒下限，还会偶发读取失败）；
+    * **没有下限就会闹笑话**：按键（``sos_button`` / ``spo2_button``）的读取周期是
+      0.2 秒，照 3 倍算只有 0.6 秒 —— 一个**完全正常**的按键会被永远判成"过期"，
+      "数据已过期"这个标记也就彻底没人信了（狼来了）。
+      与此同时 10 秒仍然足够抓住"真的断流几十秒"。
+    """
+    try:
+        interval = float(interval_s)
+    except (TypeError, ValueError):
+        interval = 1.0
+    if interval <= 0:
+        interval = 1.0
+    return max(factor * interval, floor_s)
+
+
+class _Metric(NamedTuple):
+    """一个指标的**全部口径**：卡片与图表共用一份，避免两处对不上。
+
+    为什么要合到一处：卡片写"血氧下限 93"、图表却画一条 95 的虚线 ——
+    这种自相矛盾只要出现一次，整页数字就没人敢信了（与血氧那次"同一个量两处口径不同"
+    是同一族问题）。
+    """
+
+    key: str                                   # health_summary() 与历史行里的字段名
+    title: str
+    unit: str
+    digits: int
+    device: str                                # 用来查读取周期与"距上次成功"
+    thresholds: Tuple[Tuple[str, str], ...]    # (阈值字段名, 图上标签)
+
+
+#: 四个**有历史曲线**的生理/环境指标。顺序按"人关心的顺序"，与卡片一致。
+_METRICS: Tuple[_Metric, ...] = (
+    _Metric("heart_rate_bpm", "心率", " bpm", 0, "vitals",
+            (("hr_min", "心率下限"), ("hr_max", "心率上限"))),
+    _Metric("spo2_percent", "血氧", " %", 0, "vitals",
+            (("spo2_min", "血氧下限"),)),
+    _Metric("ambient_temp_c", "室温", " ℃", 1, "ambient",
+            (("ambient_temp_min", "室温下限"), ("ambient_temp_max", "室温上限"))),
+    _Metric("humidity_percent", "湿度", " %", 1, "ambient",
+            (("humidity_max", "湿度上限"),)),
+)
+
+
+def _stateful_card(metric: _Metric, *, value: Any, now: float,
+                   last_value: Any = None, last_ts: Any = None,
+                   subtitle: str = "", state: str = "", spark: str = "",
+                   empty_note: str = "还没有读到过这个指标") -> str:
+    """指标卡的**三态**渲染（缺一不可，这是全页最容易骗人的地方）。
+
+    1. **新鲜**          ⇒ 大字显示当前值；
+    2. **不新鲜但有历史** ⇒ 值**变灰** + 「最后一次 HH:MM（N 分钟前）· 数据已过期」；
+    3. **从来没有**       ⇒ 「暂无数据」。
+
+    ⚠️ 两条硬纪律：
+
+    * **绝不显示 0 来冒充"没有数据"**（项目既有要求：**"读不到" 与 "读数是 0" 必须能分开**，
+      见 `ERROR.md` E58）；
+    * 显示旧值时**必须同时给出时间与"已过期"**：只甩一个旧数字，等于把几小时前的心率
+      当成此刻的报给子女看 —— 那比不显示更糟。
+    """
+    if value is not None:
+        text, _ = _fmt(value, metric.unit, metric.digits)
+        sub = f'<div class="s">{_esc(subtitle)}</div>' if subtitle else ""
+        cls = "card" + (f" {state}" if state else "")
+        return (
+            f'<div class="{cls}"><div class="k">{_esc(metric.title)}</div>'
+            f'<div class="v">{_esc(text)}</div>{spark}{sub}</div>'
+        )
+
+    if last_value is not None and last_ts is not None:
+        text, _ = _fmt(last_value, metric.unit, metric.digits)
+        age = _age_text(now - float(last_ts))
+        return (
+            f'<div class="card stale"><div class="k">{_esc(metric.title)}</div>'
+            f'<div class="v stale">{_esc(text)}</div>{spark}'
+            f'<div class="s stale">最后一次 {_esc(_time_text(last_ts))}（{_esc(age)}）'
+            f' · <span class="tag">数据已过期</span></div></div>'
+        )
+
+    return (
+        f'<div class="card"><div class="k">{_esc(metric.title)}</div>'
+        f'<div class="v unknown">暂无数据</div>'
+        f'<div class="s">{_esc(empty_note)}</div></div>'
+    )
+
+
+def _reading_points(rows: List[Dict[str, Any]]) -> List[Tuple[float, Any]]:
+    """环境读数的历史行 → 图表点列。**``ok=False`` 的行必须变成 ``None``（缺口）**。
+
+    为什么：``ok=False`` 的意思是"这一次读失败"。把它的值画进曲线（哪怕值是上一次的
+    残留）等于凭空造出"那段时间有数据" —— 与 `charts.py` 开头那条"缺口必须断线"
+    是同一条纪律：**图表不许替数据说话**。
+    """
+    out: List[Tuple[float, Any]] = []
+    for row in rows:
+        value = row.get("value")
+        ok = row.get("ok")
+        if value is None or ok in (0, False):
+            out.append((float(row["ts"]), None))
+        else:
+            out.append((float(row["ts"]), float(value)))
+    return out
+
+
+def _vitals_points(rows: List[Dict[str, Any]], key: str) -> List[Tuple[float, Any]]:
+    """心率/血氧历史行 → 图表点列。**没贴手指（或没测出值）就是缺口**。"""
+    out: List[Tuple[float, Any]] = []
+    for row in rows:
+        value = row.get(key)
+        finger = row.get("finger_detected")
+        if value is None or finger in (0, False):
+            out.append((float(row["ts"]), None))
+        else:
+            out.append((float(row["ts"]), float(value)))
+    return out
+
+
+def _last_pair(points: List[Tuple[float, Any]]) -> Tuple[Any, Any]:
+    """点列里**最后一个非缺口**的值与时刻（没有就返回 ``(None, None)``）。"""
+    for ts, value in reversed(points):
+        if value is not None:
+            return value, ts
+    return None, None
+
+
+def _insert_time_gaps(points: List[Tuple[float, Any]], max_gap_s: float) -> List[Tuple[float, Any]]:
+    """相邻两点相隔太久 ⇒ 中间插一个 ``None``，让图**断开**。
+
+    为什么必须自己插（2026-10-01 实测发现的真问题）：`charts.py` 的断线**只在值为
+    ``None`` 时**发生，而 `Store.save_sample()` 对读取失败的样本**根本不落库**
+    （实测确认：ok=False 的样本连行都不写）⇒ "值缺失"这条路在真实数据里**不会出现**，
+    能出现的只有"**整段没有记录**"（器件掉线十分钟）。
+
+    若不插 None，图会把断流前后**直接连成一条直线**，视觉上等于说"这段时间一直有数据" ——
+    正是 `charts.py` 开头那条"缺口必须断线、图表不许说谎"要防的事。
+    （时间断点画在缺口正中，纯粹是为了让线看起来从两个点中间断开。）
+    """
+    out: List[Tuple[float, Any]] = []
+    prev_ts: Any = None
+    for ts, value in points:
+        if prev_ts is not None and float(ts) - float(prev_ts) > float(max_gap_s):
+            out.append(((float(prev_ts) + float(ts)) / 2.0, None))
+        out.append((ts, value))
+        prev_ts = ts
+    return out
+
+
+def _chart_box(title: str, points: List[Tuple[float, Any]], metric: _Metric, *,
+               thresholds: List[Tuple[float, str]], now: float,
+               stale_after_s: float) -> str:
+    """一张图 + 图下一行小字（数据点数 / 跨度 / 最后更新；过期就标出来）。"""
+    svg = line_chart(
+        points, unit=metric.unit.strip(), thresholds=thresholds,
+        now=now, stale_after_s=stale_after_s,
+    )
+    values = [(ts, v) for ts, v in points if v is not None]
+    if not values:
+        cap, cap_cls = "还没有数据点", " cap"
+    else:
+        first_ts, last_ts = values[0][0], values[-1][0]
+        stale = (now - last_ts) > stale_after_s
+        cap = (f"{len(values)} 个数据点 · 跨度 {_span_text(last_ts - first_ts)} · "
+               f"最后更新 {_time_text(last_ts)}")
+        if stale:
+            cap += ' · <span class="tag">数据已过期</span>'
+        cap_cls = " cap stale" if stale else " cap"
+    return (
+        f'<div class="chartbox"><div class="t">{_esc(title)}</div>{svg}'
+        f'<div class="{cap_cls.strip()}">{cap}</div></div>'
+    )
+
+
 def render_page(runtime: Any, refresh_s: int = 5) -> str:
     """渲染整页 HTML。
-
-    Args:
         runtime: :class:`~health_monitor.service.Runtime`（只读使用）。
         refresh_s: 自动刷新周期（秒）。
     """
@@ -149,40 +425,151 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
     else:
         banner_cls, banner_text = "ok", "状态正常，监护中"
 
-    # ---- 六张指标卡 ----
-    # 说明：复合值（室温/湿度、数据年龄）直接放进 value，说明文字放 subtitle。
+    # ---- 历史数据：**指标卡的兜底与图表共用同一份**（一处口径，两处使用）----
+    # 为什么不各查各的：同一个量在两处用了不同的取数口径，迟早会出现
+    # "卡片说最后一次 21:30、图表最后一点是 21:35"这种自相矛盾。
+    store = getattr(runtime, "store", None)
+    series: Dict[str, List[Tuple[float, Any]]] = {}
+    #: 「最后一次有效读数」：**独立于图表窗口**（可能很久以前），见下面 `last_reading` 的说明。
+    last_known: Dict[str, Tuple[Any, float]] = {}
+    history_note = ""
+    if store is None:
+        history_note = ("未启用历史存储（启动时没给 store_path）⇒ 趋势图不可用；"
+                        "上面的指标卡仍然照常工作，只是没有「最后一次记录」可回退。")
+    else:
+        try:
+            ambient_rows = store.recent_readings("ambient_temp_c", limit=120)
+            humidity_rows = store.recent_readings("humidity_percent", limit=120)
+            vitals_rows = store.recent_vitals(limit=120)
+            series["heart_rate_bpm"] = _vitals_points(vitals_rows, "heart_rate_bpm")
+            series["spo2_percent"] = _vitals_points(vitals_rows, "spo2_percent")
+            series["ambient_temp_c"] = _reading_points(ambient_rows)
+            series["humidity_percent"] = _reading_points(humidity_rows)
+            # ⚠️ **"最后一次记录"必须跳出上面那个窗口去查**（2026-10-01 真机验出来的）：
+            #    历史库每秒一行 ⇒ `limit=120` 只有约 2 分钟；而上一次测血氧可能在几十分钟前。
+            #    用窗口里的最后一个点当"最后一次记录"，只要过了两分钟就会错报"暂无数据"，
+            #    而"测不到就显示最后一次记录"正是用户点名要的功能。
+            for metric_key in ("ambient_temp_c", "humidity_percent"):
+                row = store.last_reading(metric_key)
+                if row and row.get("value") is not None:
+                    last_known[metric_key] = (row["value"], float(row["ts"]))
+            for column in store.VITALS_VALUE_COLUMNS:
+                row = store.last_vitals_value(column)
+                if row and row.get("value") is not None:
+                    last_known[column] = (row["value"], float(row["ts"]))
+        except Exception as exc:  # noqa: BLE001 - 历史库出问题不该让整页打不开
+            history_note = f"读取历史库失败（{type(exc).__name__}: {exc}）⇒ 趋势图不可用。"
+
+    thresholds = getattr(getattr(runtime, "config", None), "thresholds", None)
+
+    def _thresholds_for(metric: _Metric) -> List[Tuple[float, str]]:
+        """从**当前**配置取这张图的阈值虚线（改配置后图上的虚线要跟着变）。"""
+        pairs: List[Tuple[float, str]] = []
+        for field_name, label in metric.thresholds:
+            value = getattr(thresholds, field_name, None)
+            if value is not None:
+                pairs.append((float(value), label))
+        return pairs
+
+    # ---- 指标卡（三态：新鲜 / 过期但有历史 / 从来没有）----
+    # 六项：心率、血氧、室温、湿度、活动状态、数据年龄。前四项有历史曲线（带迷你趋势线），
+    # 后两项没有曲线，但**同样**要遵守"绝不显示 0"与"没有就说没有"。
     finger = summary.get("finger_detected")
     hr_note = "请将手指放好" if finger is False else ("已贴合" if finger else "皮肤贴合状态未知")
+    cards: List[str] = []
+    for metric in _METRICS:
+        points = series.get(metric.key) or []
+        # 「最后一次记录」优先用**跳出窗口**查到的那一次；查不到才退回窗口里的最后一个点。
+        # （窗口只有约 2 分钟，"上次测血氧"通常比这久得多 —— 那正是这个功能存在的意义。）
+        known = last_known.get(metric.key)
+        if known is not None:
+            last_value, last_ts = known
+        else:
+            last_value, last_ts = _last_pair(points)
+        if metric.key == "heart_rate_bpm":
+            subtitle = hr_note
+        elif metric.key == "spo2_percent":
+            subtitle = "未测出（未贴合手指）" if finger is False else ""
+        elif metric.key == "ambient_temp_c":
+            subtitle = "DHT11"
+        else:
+            subtitle = "DHT11"
+        # 「从来没有」那一态的说明文字：**该告诉用户怎么做就告诉他**。
+        # 心率/血氧没数据时，最有用的一句话不是"还没有读到过"，而是"请将手指放好" ——
+        # 前者只是在陈述事实，后者能让人当场把问题解决掉。
+        if metric.device == "vitals" and finger is False:
+            empty_note = "请将手指放好（食指指腹轻贴 MAX30102，也可在「功能」页按需测一次）"
+        elif metric.device == "vitals":
+            empty_note = "还没有测量过（可在「功能」页按需测一次）"
+        else:
+            empty_note = "还没有读到过这个指标"
+        cards.append(_stateful_card(
+            metric,
+            value=summary.get(metric.key),
+            now=now,
+            last_value=last_value,
+            last_ts=last_ts,
+            subtitle=subtitle,
+            state="warn" if (metric.device == "vitals" and finger is False) else "",
+            empty_note=empty_note,
+            # 迷你趋势线：只取最近 40 个点，卡片里放得下、也不抢大图的戏。
+            # ⚠️ `sparkline()` 全无数据时返回**空串**（不是空 SVG），这里直接用它的返回值。
+            spark=sparkline([value for _, value in points[-40:]]),
+        ))
+
     motion_state = summary.get("motion_state")
     motion_silent = summary.get("motion_silent_s")
+    motion_text = _MOTION_LABELS.get(motion_state or "")
+    if motion_text:
+        motion_sub = ("上次检测到人：{:.0f} 秒前".format(motion_silent)
+                      if motion_silent is not None else "距上次检测到人的时间未知")
+        cards.append(
+            f'<div class="card"><div class="k">活动状态</div>'
+            f'<div class="v">{_esc(motion_text)}</div>'
+            f'<div class="s">{_esc(motion_sub)}</div></div>'
+        )
+    else:
+        cards.append(
+            '<div class="card"><div class="k">活动状态</div>'
+            '<div class="v unknown">暂无数据</div>'
+            '<div class="s">还没有读到过人体红外</div></div>'
+        )
+
     data_age = summary.get("data_age_s")
     data_stale = bool(summary.get("data_stale"))
-    cards = [
-        _card("心率", summary.get("heart_rate_bpm"), " bpm", hr_note,
-              state="warn" if finger is False else ""),
-        _card("血氧", summary.get("spo2_percent"), " %",
-              "未测出（未贴合手指）" if finger is False else ""),
-        _card(
-            "室温 / 湿度",
-            f"{_fmt(summary.get('ambient_temp_c'), '', 1)[0]} ℃ / "
-            f"{_fmt(summary.get('humidity_percent'), '', 1)[0]} %",
-            subtitle="DHT11（读取间隔 ≥2 秒）",
-        ),
-        _card(
-            "活动状态",
-            _MOTION_LABELS.get(motion_state or "", "未知"),
-            subtitle=("上次检测到人：{:.0f} 秒前".format(motion_silent)
-                      if motion_silent is not None else "距上次检测到人的时间未知"),
-        ),
-        _card(
-            "数据年龄",
-            ("已过期" if data_stale
-             else f"{data_age:.1f} 秒" if data_age is not None
-             else "未知"),
-            subtitle="最近一次成功读取距今",
-            state="warn" if data_stale else "",
-        ),
-    ]
+    if data_age is not None:
+        cards.append(
+            f'<div class="card{" warn" if data_stale else ""}">'
+            f'<div class="k">数据年龄</div>'
+            f'<div class="v">{"已过期" if data_stale else _esc(_age_text(data_age))}</div>'
+            f'<div class="s">最近一次成功读取距今</div></div>'
+        )
+    else:
+        cards.append(
+            '<div class="card"><div class="k">数据年龄</div>'
+            '<div class="v unknown">暂无数据</div>'
+            '<div class="s">还没有成功读取过任何设备</div></div>'
+        )
+
+    # ---- 图表区：四张趋势图（缺口断线 / 阈值虚线 / 过期变灰都在 charts.py 里）----
+    if history_note:
+        charts_html = f'<div class="banner warn">{_esc(history_note)}</div>'
+    else:
+        boxes: List[str] = []
+        for metric in _METRICS:
+            interval = (status.get(metric.device) or {}).get("interval_s")
+            window = _fresh_window(interval)
+            boxes.append(_chart_box(
+                metric.title,
+                # ⚠️ 先补时间缺口再画：`charts.py` 只认"值为 None"的缺口，
+                #    而真实的断流是"整段没有记录"（见 `_insert_time_gaps`）。
+                _insert_time_gaps(series.get(metric.key) or [], window),
+                metric,
+                thresholds=_thresholds_for(metric),
+                now=now,
+                stale_after_s=window,
+            ))
+        charts_html = f'<div class="charts">{"".join(boxes)}</div>'
 
     # ---- 设备状态表 ----
     rows: List[str] = []
@@ -194,15 +581,20 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
         else:
             pill_cls, pill_text = "ok", "正常"
         age = entry.get("last_ok_age_s")
+        # 「最后错误」那一列原来会把**整段排查提示**（几百字）塞进表格 —— 宽屏把表格撑得
+        # 极丑、窄屏更是灾难。截断到 120 字，全文放进 title（悬停可见）。
+        last_error = str(entry.get("last_error") or "")
+        error_short = last_error if len(last_error) <= 120 else last_error[:119] + "…"
         rows.append(
             "<tr>"
-            f"<td>{_esc(name)}<br><span class='s'><code>{_esc(entry.get('driver'))}</code></span></td>"
-            f"<td class='num'>{_fmt(entry.get('interval_s'), '', 1)[0]} 秒</td>"
-            f"<td class='num'>{_esc(entry.get('reads'))}</td>"
-            f"<td class='num'>{_esc(failures)}</td>"
-            f"<td>{'—' if age is None else _fmt(age, ' 秒', 1)[0]}</td>"
-            f"<td><span class='pill {pill_cls}'>{pill_text}</span></td>"
-            f"<td>{_esc(entry.get('last_error') or '')}</td>"
+            f"<td data-label='设备'>{_esc(name)}<br>"
+            f"<span class='s'><code>{_esc(entry.get('driver'))}</code></span></td>"
+            f"<td class='num' data-label='周期'>{_fmt(entry.get('interval_s'), '', 1)[0]} 秒</td>"
+            f"<td class='num' data-label='读取次数'>{_esc(entry.get('reads'))}</td>"
+            f"<td class='num' data-label='连续失败'>{_esc(failures)}</td>"
+            f"<td data-label='距上次成功'>{'—' if age is None else _fmt(age, ' 秒', 1)[0]}</td>"
+            f"<td data-label='状态'><span class='pill {pill_cls}'>{pill_text}</span></td>"
+            f"<td data-label='最后错误' title='{_esc(last_error)}'>{_esc(error_short)}</td>"
             "</tr>"
         )
 
@@ -211,10 +603,10 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
     for event in reversed(runtime.recent_events(limit=15)):
         alarm_rows.append(
             "<tr>"
-            f"<td>{_esc(_time_text(event.ts))}</td>"
-            f"<td>{_esc(ALARM_LABELS.get(event.code.value, event.code.value))}</td>"
-            f"<td>{_SEVERITY_NAMES.get(int(event.severity), int(event.severity))}</td>"
-            f"<td>{_esc(event.message)}</td>"
+            f"<td data-label='时间'>{_esc(_time_text(event.ts))}</td>"
+            f"<td data-label='报警'>{_esc(ALARM_LABELS.get(event.code.value, event.code.value))}</td>"
+            f"<td data-label='等级'>{_SEVERITY_NAMES.get(int(event.severity), int(event.severity))}</td>"
+            f"<td data-label='说明'>{_esc(event.message)}</td>"
             "</tr>"
         )
     if not alarm_rows:
@@ -240,10 +632,10 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
         ]
     message_rows: List[str] = [
         "<tr>"
-        f"<td>{_esc(_time_text(m['ts']))}</td>"
-        f"<td>{_esc(KIND_LABELS.get(message_kind(m['code']), message_kind(m['code'])))}</td>"
-        f"<td>{_esc(ALARM_LABELS.get(m['code'], m['code']))}</td>"
-        f"<td>{_esc(m['message'])}</td>"
+        f"<td data-label='时间'>{_esc(_time_text(m['ts']))}</td>"
+        f"<td data-label='类别'>{_esc(KIND_LABELS.get(message_kind(m['code']), message_kind(m['code'])))}</td>"
+        f"<td data-label='类型'>{_esc(ALARM_LABELS.get(m['code'], m['code']))}</td>"
+        f"<td data-label='说明'>{_esc(m['message'])}</td>"
         "</tr>"
         for m in msg_source
     ]
@@ -252,8 +644,9 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
 
     # ---- 当前报警态 ----
     active_rows = [
-        f"<tr><td>{_esc(ALARM_LABELS.get(code, code))}</td>"
-        f"<td>{_esc(code)}</td><td>{_esc(_time_text(ts))}</td></tr>"
+        f"<tr><td data-label='报警'>{_esc(ALARM_LABELS.get(code, code))}</td>"
+        f"<td data-label='代码'>{_esc(code)}</td>"
+        f"<td data-label='首次触发'>{_esc(_time_text(ts))}</td></tr>"
         for code, ts in sorted(active.items())
     ] or ["<tr><td colspan='3'>当前没有处于报警状态的项目</td></tr>"]
 
@@ -269,7 +662,7 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="{int(refresh_s)}">
-<title>居家老人健康监护 · 状态</title>
+<title>居家老人健康监护 · 数据</title>
 <style>{_CSS}</style>
 </head>
 <body>
@@ -278,13 +671,15 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
   <div class="meta">版本 {_esc(runtime.version)} · {"模拟模式（无硬件）" if runtime.mock else "真实硬件模式"}
     · 运行 {_fmt(round(now - runtime.started_at, 1), ' 秒', 1)[0]} · 页面每 {int(refresh_s)} 秒自动刷新 ·
     本地时间 {_esc(_time_text(now))}</div>
-  <div class="meta"><a href="/panel" style="color:#fff;font-weight:600">→ 打开配置面板</a>
-    （改报警阈值与器件开关；<strong>会写入配置文件</strong>）</div>
+  {_nav("/")}
 </header>
 <main>
   <div class="banner {banner_cls}">{_esc(banner_text)}</div>
   {warn_block}
   <div class="cards">{"".join(cards)}</div>
+
+  <h2>趋势图（最近 120 个点；缺口处断线，虚线是报警阈值）</h2>
+  {charts_html}
 
   <h2>当前报警态</h2>
   <table><thead><tr><th>报警</th><th>代码</th><th>首次触发</th></tr></thead>
@@ -306,8 +701,9 @@ def render_page(runtime: Any, refresh_s: int = 5) -> str:
   <footer>
     JSON 接口：<code>/api/v1/current</code> · <code>/api/v1/health</code> ·
     <code>/api/v1/alarms</code> · <code>/api/v1/messages</code> · <code>/api/v1/history?metric=ambient_temp_c&amp;limit=120</code><br>
-    本页面只读，不会修改任何状态（消音与求助请用手机 App 或 POST 接口）。<br>
-    数值显示"未知"表示该传感器当前没有有效数据——这是刻意设计：本系统不把"读不到"当作"正常"。
+    本页面只读，不会修改任何状态（要动手请去「功能」页，要改配置请去「配置」页）。<br>
+    数值显示「暂无数据」表示该传感器当前没有有效数据——这是刻意设计：本系统不把"读不到"当作"正常"。
+    显示灰色旧值时<strong>一定会同时给出时间并标注「数据已过期」</strong>，绝不把旧值当成此刻的值。
   </footer>
 </main>
 {_SCRIPT % (int(refresh_s) * 1000)}
@@ -377,7 +773,14 @@ button[disabled] { opacity: .55; cursor: progress; }
 .result ul { margin: 6px 0 0 18px; padding: 0; }
 .result li { margin: 2px 0; }
 .hint { font-size: 12px; color: #6b7480; }
-/* 「血氧检测」一节：它放在阈值表单**之前**（最显眼），所以给它一圈更重的边框 */
+"""
+
+#: **功能面板**才用得上的样式（2026-10-01 从 `_PANEL_CSS` 拆出来）。
+#: 为什么值得拆：配置面板上已经没有血氧那一节了，却还带着它的 CSS ——
+#: 不只是白带几行，更会让"**搬干净了没有**"这件事没法用机器判定
+#: （反向钉子测试本来想检查配置面板里不含 `spo2state`，结果被这几行 CSS 挡住）。
+_CONTROL_CSS = """
+/* 「血氧检测」一节：放最上面（最常用），所以给它一圈更重的边框 */
 .spo2box { border: 2px solid #1f6feb; }
 .spo2state { font-size: 14px; font-weight: 600; margin: 2px 0 10px; color: #1b3a63; }
 .spo2btns { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -484,11 +887,39 @@ async function save() {
   }
 }
 
-// ---------------- 【血氧检测】一节（2026-10-01）----------------
-// ⚠️ 这里的轮询**只更新这一节自己的 DOM**（状态行 + 两个按钮的可用性），
-// **绝不整页刷新** —— 整页刷新会把用户还没保存的阈值输入全部抹掉。
-// 这正是本脚本开头那条"刻意不做自动刷新"的理由，别在这里破例。
+// ---------------- 血氧检测那一节**已搬到功能面板**（2026-10-01）----------------
+// 连同它的轮询脚本一起搬去了 `_CONTROL_SCRIPT`（`GET /control`）。
+// 为什么不留一份在这里：**一个动作只能有一个入口** —— 两页各放一套 JS，
+// 迟早出现"一边改了、另一边没改"。本页从此只负责"改数字并保存"。
+// ⚠️ 这里刻意**不写出那个方括号标题**：反向钉子测试会检查本页不含它，
+//    注释里带上就会让"搬干净了没有"这件事没法用机器判定。
+</script>
+"""
 
+
+#: **功能面板**（``GET /control``）的脚本：血氧那一节（从配置面板搬来）+ 屏显控制。
+#:
+#: ⚠️ 与配置面板同一条纪律：这里的轮询**只更新血氧那一节自己的 DOM**，
+#: **绝不整页刷新** —— 功能面板上还有"屏显控制"的结果要留着给用户看。
+_CONTROL_SCRIPT = """
+<script>
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function show(cls, title, items) {
+  var box = document.getElementById('result');
+  box.className = 'result ' + cls;
+  var html = '<strong>' + title + '</strong>';
+  if (items && items.length) {
+    html += '<ul>';
+    items.forEach(function (line) { html += '<li>' + line + '</li>'; });
+    html += '</ul>';
+  }
+  box.innerHTML = html;
+}
+
+// ---------------- 【血氧检测】（2026-10-01 从配置面板搬到这里）----------------
 function spo2Line(st) {
   if (!st.enabled) { return '功能已关闭（配置里 spo2_button.enabled = false）'; }
   if (st.state === 'prompt') {
@@ -544,6 +975,31 @@ async function spo2Act(what) {
   spo2Poll();
 }
 
+// ---------------- 【屏显控制】（2026-10-01）----------------
+// 点一下 ⇒ POST /api/v1/screen ⇒ 板上那块屏**立刻**换成指定面板。
+// 后端三种状态码都有各自的理由（400 参数 / 409 那块屏不在），**原样显示**，
+// 不要在这里自作聪明地猜原因。
+async function screenAct(target, page) {
+  var box = document.getElementById('result');
+  try {
+    var res = await fetch('/api/v1/screen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: target, page: page })
+    });
+    var data = await res.json();
+    if (!data.ok) {
+      show('bad', '屏显未改变（HTTP ' + res.status + '）：' + esc(data.error || '未知错误'));
+      return;
+    }
+    var who = (target === 'lcd' ? 'LCD 字符屏' : 'TFT 彩屏');
+    show('ok', '已让 ' + who + ' 显示「' + esc(page) + '」',
+         ['这块屏会保持该画面约 30 秒（报警仍然会立刻抢屏）。']);
+  } catch (err) {
+    show('bad', '请求失败：' + esc(err));
+  }
+}
+
 spo2Poll();
 setInterval(spo2Poll, 2000);
 </script>
@@ -559,6 +1015,90 @@ def _num_text(value: Any) -> str:
     if number == int(number) and abs(number) < 1e15:
         return str(int(number))
     return repr(number)
+
+
+#: 屏显控制按钮上的中文名（**只用来显示**；合法取值以前端从 runtime 读到的表为准）
+_TARGET_LABELS = {"lcd": "LCD 字符屏", "tft": "TFT 彩屏"}
+_PAGE_LABELS = {"env": "环境页", "debug": "调试面板", "alarm": "报警页"}
+
+
+def render_control(runtime: Any) -> str:
+    """渲染**功能面板**（``GET /control``，2026-10-01）。
+
+    用户 2026-10-01 对后台的划分是三个面板：**数据展示** / **功能操作** / **配置**。
+    这一页就是"功能操作" —— 它的共同点是**点一下会让板子上的东西发生变化**：
+
+    * 【血氧检测】⇒ 板上按需测一次（与物理按键**同一条路径**）；
+    * 【屏显控制】⇒ 让 LCD / TFT **立刻**换成指定面板（用户在手机上远程指挥屏上显示什么）。
+
+    为什么血氧那一节要从 ``/panel`` **搬过来**而不是两处都放：一处动作只有一个入口，
+    否则两页各改一半、迟早分叉（本项目"一个动作只有一条路径"的纪律）。
+    ``/panel`` 只管"改数字"，不再管"触发动作"。
+
+    与另两页一样：**不依赖任何外部 CSS/JS/CDN**（演示现场可能没外网）。
+    """
+    # ---- 屏显控制：按钮**从 runtime 的表里生成**，而不是写死 4 个 ----
+    # 好处：合法页名只有一处定义（`Runtime.SCREEN_PAGES`），按钮与后端校验不可能对不上。
+    drivers = getattr(runtime, "SCREEN_DRIVERS", {}) or {}
+    pages = getattr(runtime, "SCREEN_PAGES", {}) or {}
+    screen_buttons: List[str] = []
+    for target in ("lcd", "tft"):
+        if target not in drivers:
+            continue
+        for page in pages.get(target, ()):
+            screen_buttons.append(
+                '<button type="button" class="ghost" '
+                f"onclick=\"screenAct('{_esc(target)}', '{_esc(page)}')\">"
+                f"{_esc(_TARGET_LABELS.get(target, target))}："
+                f"{_esc(_PAGE_LABELS.get(page, page))}</button>"
+            )
+    if not screen_buttons:
+        screen_buttons.append('<span class="hint">当前配置里没有任何显示屏</span>')
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>居家老人健康监护 · 功能</title>
+<style>{_CSS}{_PANEL_CSS}{_CONTROL_CSS}</style>
+</head>
+<body>
+<header>
+  <h1>功能面板（按需测量 / 屏显控制）</h1>
+  <div class="meta">版本 {_esc(runtime.version)} · {"模拟模式（无硬件）" if runtime.mock else "真实硬件模式"}
+    · 真实硬件模式下这些按钮会<strong>直接作用到板子上</strong></div>
+  {_nav("/control")}
+</header>
+<main>
+  <fieldset class="spo2box">
+    <legend>【血氧检测】</legend>
+    <div class="spo2state" id="spo2state">状态读取中…</div>
+    <div class="spo2btns">
+      <button type="button" id="spo2go" onclick="spo2Act('measure')">血氧检测</button>
+      <button type="button" id="spo2no" class="ghost" onclick="spo2Act('decline')" disabled>暂不检测</button>
+    </div>
+    <div class="hint">与板上那个「测血氧」按键<strong>同一条路径</strong>：
+      短按 = 开始检测；<strong>正在叫人时长按 = 暂不检测</strong>（其它阶段长按等于短按）。
+      状态每 2 秒自动刷新，<strong>只刷新本区域</strong>。测完的结果会同时出现在
+      TFT/LCD 屏上、并记进「最近消息」。</div>
+  </fieldset>
+
+  <fieldset>
+    <legend>【屏显控制】让板子上的屏立刻换成指定画面</legend>
+    <div class="spo2btns">{''.join(screen_buttons)}</div>
+    <div class="hint">点一下 ⇒ 那块屏立刻切换，并<strong>保持约 30 秒</strong>
+      （否则 LCD 的调试面板每 2 秒刷新一次，会把刚切过去的画面顶掉）。<br>
+      ⚠️ <strong>报警优先</strong>：真出报警时，报警文案会立刻抢屏，手动指定的画面会让位。<br>
+      页名合法性由后端判定：参数不认识回 <code>400</code>，那块屏没接/被关掉回 <code>409</code>。</div>
+  </fieldset>
+
+  <div id="result"></div>
+</main>
+{_CONTROL_SCRIPT}
+</body>
+</html>
+"""
 
 
 def render_panel(runtime: Any, store: Any, *, secured: bool = False) -> str:
@@ -633,43 +1173,28 @@ def render_panel(runtime: Any, store: Any, *, secured: bool = False) -> str:
         items = "".join(f"<li>{_esc(w)}</li>" for w in store_warnings)
         warn_block = f'<div class="banner warn">本机覆盖（devices.local.json）影响了面板正在编辑的项：<ul>{items}</ul></div>'
 
-    # 【血氧检测】（2026-10-01）：放在**阈值表单之前** —— 它是"当下要不要量一次"的
-    # 即时操作，比调阈值更常用，也更能体现"这块板子真的在监护"。
-    # 内容由 JS 每 2 秒轮询 `/api/v1/spo2` 填充；这里只出骨架，
-    # 所以**不需要**服务端先知道状态（也就不用担心渲染期与运行期不一致）。
-    spo2_section = """
-  <fieldset class="spo2box">
-    <legend>【血氧检测】</legend>
-    <div class="spo2state" id="spo2state">状态读取中…</div>
-    <div class="spo2btns">
-      <button type="button" id="spo2go" onclick="spo2Act('measure')">血氧检测</button>
-      <button type="button" id="spo2no" class="ghost" onclick="spo2Act('decline')" disabled>暂不检测</button>
-    </div>
-    <div class="hint">与板上那个「测血氧」按键<strong>同一条路径</strong>：
-      短按 = 开始检测；<strong>正在叫人时长按 = 暂不检测</strong>（其它阶段长按等于短按）。
-      状态每 2 秒自动刷新，<strong>只刷新本区域</strong>（不会动下面还没保存的输入）。</div>
-  </fieldset>
-"""
-
+    # ⚠️ 2026-10-01：原来放在这里的【血氧检测】一节**已搬到功能面板**（`/control`）。
+    # 为什么必须搬走而不是两页都放：一个动作只能有一个入口 —— 两页各放一份，
+    # 迟早出现"一边改了、另一边忘了"（本项目"一个动作只有一条路径"的纪律）。
+    # 本页从此只管一件事：**改数字**。
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>居家老人健康监护 · 配置面板</title>
+<title>居家老人健康监护 · 配置</title>
 <style>{_CSS}{_PANEL_CSS}</style>
 </head>
 <body>
 <header>
   <h1>配置面板（报警阈值 / 器件开关）</h1>
   <div class="meta">版本 {_esc(runtime.version)} · {"模拟模式（无硬件）" if runtime.mock else "真实硬件模式"}
-    · 配置文件 {_esc(snap.get("config_path", ""))} ·
-    <a href="/" style="color:#fff;font-weight:600">← 返回状态页</a></div>
+    · 配置文件 <code class="path">{_esc(snap.get("config_path", ""))}</code></div>
+  {_nav("/panel")}
 </header>
 <main>
   {unsafe}
   {warn_block}
-  {spo2_section}
   <noscript>
     <div class="banner bad">本页需要 JavaScript 才能保存（表单要拼 JSON 并 POST）。
       没有 JS 时请直接用接口：<code>GET /api/v1/config</code> 看配置，
@@ -706,10 +1231,21 @@ def render_panel(runtime: Any, store: Any, *, secured: bool = False) -> str:
 
 
 def _time_text(ts: float) -> str:
-    """Unix 秒 → 本地时间字符串（网页显示用）。"""
+    """Unix 秒 → 本地时间字符串（网页显示用）。
+
+    ⚠️ **不许因为一个离谱的时间戳把整页打崩**（2026-10-01）：本函数的调用方在
+    `render_page` 里逐个渲染历史库的行，而 `time.localtime()` 对负数/越界值会抛
+    `OSError`（Windows 上实测 `-800` 就抛）⇒ 库里只要有一行脏时间戳，
+    **整张数据面板就 500**。而这一段代码的既定立场是"历史库出问题不该让整页打不开"
+    （见上面读历史的那圈 try/except）—— 一个格式化函数不该成为那个例外。
+    """
     import time as _time
 
-    return _time.strftime("%H:%M:%S", _time.localtime(ts))
+    try:
+        return _time.strftime("%H:%M:%S", _time.localtime(float(ts)))
+    except (OSError, OverflowError, ValueError):
+        return "--:--:--"
 
 
-__all__ = ["render_page", "render_panel", "ALARM_LABELS", "THRESHOLD_GROUPS"]
+__all__ = ["render_page", "render_control", "render_panel", "ALARM_LABELS",
+           "KIND_LABELS", "THRESHOLD_GROUPS"]

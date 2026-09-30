@@ -139,6 +139,7 @@ class WebApi:
             ("GET", "/api/v1/spo2"): self._spo2_get,
             ("POST", "/api/v1/spo2/measure"): self._spo2_measure,
             ("POST", "/api/v1/spo2/decline"): self._spo2_decline,
+            ("POST", "/api/v1/screen"): self._screen,
             ("POST", "/api/v1/silence"): self._silence,
             ("POST", "/api/v1/sos"): self._sos,
             ("POST", "/api/v1/speak"): self._speak,
@@ -396,6 +397,66 @@ class WebApi:
             }
         return 200, {"ok": True, "state": self.runtime.spo2_status(now)["state"]}
 
+    # ---- 屏显控制（2026-10-01：功能面板上"点一下 ⇒ 屏上弹出对应面板"）----
+    #
+    # ⚠️ 与血氧那三条同一条纪律：**不自己碰屏幕**，只调 `Runtime.show_screen()`。
+    # "该显示哪几行文案"由 service 层决定（那里才有 snapshot 与页文案函数），
+    # HTTP 只负责参数校验与状态码。
+
+    def _screen(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """让指定屏幕**立刻**显示指定面板。
+
+        Args:
+            body: ``{"target": "lcd"|"tft", "page": "<页名>"}``（**用请求体而不是
+                query string**：它与 ``/api/v1/config`` 一样是"带结构的写动作"，
+                放在 body 里以后加字段不用改 URL）。
+
+        三种结果分得很清楚（**都不假装成功**）：
+
+        * ``400`` —— 参数不认识（``target`` 不在允许表里，或 ``page`` 不是该类允许的页）；
+        * ``409`` —— 参数没问题，但**这块屏当前不在系统里**（没接线 / 装配失败 / 被关掉了）；
+        * ``200`` —— 真的已经发出去了。
+
+        为什么非法 target 要回 400 而不是"静默忽略"：功能面板上只有 4 个写死的按钮，
+        能打出非法 target 的只可能是**手写请求或前端 bug** —— 静默忽略会让那类问题
+        永远不暴露（与配置接口拒绝未知字段是同一条理由）。
+        """
+        raw = _current_body()
+        if not raw:
+            return 400, {
+                "ok": False,
+                "error": '缺少请求体：需要 JSON 对象 {"target": "lcd"|"tft", "page": "<页名>"}',
+            }
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return 400, {"ok": False, "error": f"请求体不是合法 JSON：{exc}"}
+        if not isinstance(payload, dict):
+            return 400, {"ok": False, "error": "请求体必须是 JSON 对象"}
+
+        drivers = getattr(self.runtime, "SCREEN_DRIVERS", {}) or {}
+        pages = getattr(self.runtime, "SCREEN_PAGES", {}) or {}
+        target = str(payload.get("target") or "").strip().lower()
+        page = str(payload.get("page") or "").strip().lower()
+
+        if target not in drivers:
+            return 400, {
+                "ok": False,
+                "error": "target 只能是 %s（收到 %r）" % ("、".join(sorted(drivers)), target),
+            }
+        allowed = tuple(pages.get(target) or ())
+        if page not in allowed:
+            return 400, {
+                "ok": False,
+                "error": "%s 的 page 只能是 %s（收到 %r）" % (target, "、".join(allowed), page),
+            }
+        if not self.runtime.show_screen(target, page, self._now()):
+            return 409, {
+                "ok": False,
+                "error": "%s 这块屏当前不在系统里（未接线 / 装配失败 / 已被关闭）" % target,
+            }
+        return 200, {"ok": True, "target": target, "page": page}
+
     def _silence(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         now = time.time()
         # ``by="api"``：让消息流能区分"老人按的实体键"与"后台/手机端点掉的"（见 service.silence）
@@ -528,6 +589,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._respond_html(status_code, page)
             return
 
+        # 功能面板（GET /control，2026-10-01）：**会触发动作**（测血氧 / 指定屏显），
+        # 与只读的状态页分开，理由与 /panel 一样。
+        if method == "GET" and parsed.path in ("/control", "/control.html"):
+            status_code, page = _render_control_page(self.api)
+            self._respond_html(status_code, page)
+            return
+
         # 请求体显式传给 handle()：单测可以直接调 handle(),
         # 这里只是把服务器已经读到的字节原样传下去（不再依赖"谁先读 body"的顺序）。
         body = _current_body()
@@ -562,6 +630,44 @@ def _render_status_page(api: WebApi) -> Tuple[int, str]:
             "<h1>状态页渲染失败</h1>"
             f"<p>原因：{esc(str(exc))}</p>"
             "<p>JSON 接口仍然可用：<code>/api/v1/current</code>、<code>/api/v1/health</code></p>"
+            "</body></html>"
+        )
+
+
+def _render_control_page(api: WebApi) -> Tuple[int, str]:
+    """渲染**功能面板**（``GET /control``，2026-10-01）。
+
+    它与另外两页的分工（用户 2026-10-01 明确划的）：
+
+    * ``/``        **数据展示**：图表 + 可视化（只读）；
+    * ``/control`` **功能操作**：让屏上弹出面板 / 按需测一次血氧（**会触发动作**）；
+    * ``/panel``   **配置**：改阈值与器件开关（**会写文件**）。
+
+    ⚠️ 设了 ``--token`` 时本页与另两页一样不提供（同一取舍：不在浏览器里输入口令）。
+    """
+    if api.token:
+        return 401, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>需要令牌</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>需要访问令牌</h1>"
+            "<p>本服务启用了 <code>--token</code>；功能面板不提供令牌输入框"
+            "（与状态页同一取舍：避免把口令写进浏览器历史）。</p>"
+            "<p>请在请求头带 <code>X-Auth-Token</code> 调用 "
+            "<code>POST /api/v1/spo2/measure</code> 与 <code>POST /api/v1/screen</code>。</p>"
+            "</body></html>"
+        )
+    try:
+        from .webui import render_control
+
+        return 200, render_control(api.runtime)
+    except Exception as exc:  # noqa: BLE001 - 功能面板渲染失败不能影响 API
+        _LOG.exception("功能面板渲染失败")
+        return 500, (
+            "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+            "<title>面板渲染失败</title></head><body style='font-family:sans-serif;padding:24px'>"
+            "<h1>功能面板渲染失败</h1>"
+            f"<p>原因：{esc(str(exc))}</p>"
+            "<p>JSON 接口仍然可用：<code>/api/v1/spo2</code>、<code>POST /api/v1/screen</code></p>"
             "</body></html>"
         )
 

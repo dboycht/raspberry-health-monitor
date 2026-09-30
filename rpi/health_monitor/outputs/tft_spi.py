@@ -891,12 +891,18 @@ class TftSpi(OutputDevice):
         # ④ 小字行 + 时钟
         rows = [str(r) for r in (frame.get("rows") or [])][:2]
         rows_y = big_y + 8 * scale + 6
+        clock = str(frame.get("clock") or "")[:8]
+        clock_x = max(2, width - 8 * len(clock) - 2) if clock else width
         for index, row in enumerate(rows):
-            self.text(2, rows_y + index * 12, row[:chars_per_line],
+            limit = chars_per_line
+            if index == 0 and clock:
+                # ⚠️ 第一行必须给右上角的时钟**让位**：否则长文案会与时钟叠在一起
+                #    （2026-10-01 预览图发现：`FAULT ambient` + `14:32` 画成了 `FAULT ambi14:32`）。
+                limit = min(limit, max(1, (clock_x - 2 - 4) // 8))
+            self.text(2, rows_y + index * 12, row[:limit],
                       CYAN if index == 0 else WHITE, bg=BLACK, scale=1)
-        clock = str(frame.get("clock") or "")
         if clock:
-            self.text(max(2, width - 8 * len(clock) - 2), rows_y, clock[:8], GRAY, bg=BLACK, scale=1)
+            self.text(clock_x, rows_y, clock, GRAY, bg=BLACK, scale=1)
 
         # ⑤ 迷你趋势线（先算纵向空间，再画）
         trend = frame.get("trend") or []
@@ -940,20 +946,40 @@ class TftSpi(OutputDevice):
         fg = self.color(rgb)
         buf: List[int] = [bg] * (w * h)
         total = max(len(values) - 1, 1)
-        prev_y: Optional[int] = None
+
+        def put(px: int, py: int) -> None:
+            if 0 <= px < w and 0 <= py < h:
+                buf[py * w + px] = fg
+
+        prev: Optional[Tuple[int, int]] = None
         for index, raw in enumerate(values):
             px = int(index * (w - 1) / total)
             if raw is None:
-                prev_y = None                  # 缺口：断开
+                prev = None                    # 缺口：断开
                 continue
             py = int((hi - float(raw)) / (hi - lo) * (h - 1))
             py = max(0, min(h - 1, py))
-            if prev_y is None:
-                buf[py * w + px] = fg          # 孤点也点一下，否则看起来像没数据
+            if prev is None:
+                put(px, py)                    # 孤点也点一下，否则看起来像没数据
             else:
-                for yy in range(min(prev_y, py), max(prev_y, py) + 1):
-                    buf[yy * w + px] = fg      # 相邻两列的竖直连线（迷你图够用）
-            prev_y = py
+                ppx, ppy = prev
+                if px == ppx:
+                    for yy in range(min(ppy, py), max(ppy, py) + 1):
+                        put(px, yy)
+                else:
+                    # ⚠️ **相邻两点之间必须横向连起来**：点数常少于列数
+                    #    （如 16 个采样铺在 124 列上），只在不同列各画一条竖线的话，
+                    #    看起来是**一串离散的小竖条**而不是趋势线（2026-10-01 预览图发现）。
+                    step = 1 if px > ppx else -1
+                    columns = [(xx, int(round(ppy + (xx - ppx) / (px - ppx) * (py - ppy))))
+                               for xx in range(ppx, px + step, step)]
+                    for xx, yy in columns:
+                        put(xx, max(0, min(h - 1, yy)))
+                    # 陡峭段：把相邻两列之间的竖直空隙填满，别留断点
+                    for (xa, ya), (xb, yb) in zip(columns, columns[1:]):
+                        for yy in range(min(ya, yb), max(ya, yb) + 1):
+                            put(xb, yy)
+            prev = (px, py)
         self.set_window(x, y, x + w - 1, y + h - 1)
         self.push_pixels(buf)
 
