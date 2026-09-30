@@ -55,7 +55,9 @@ from health_monitor.sensors.max30102 import (
     Max30102,
     PpgParams,
     _bandpass,
+    _dc_ac,
     _rms,
+    _spo2_from_ratio,
     _to_18bit,
     analyze_ppg,
 )
@@ -1435,6 +1437,118 @@ class TestNearHandRegression(unittest.TestCase):
 
         with self.assertRaises(ConfigError):
             Max30102(mock=True, led_current="0mA")
+
+
+class TestSpO2PressureSensitivity(unittest.TestCase):
+    """★★ **同一个手指、只改按压力度**，血氧就会移动约 3 个点（`ERROR.md` **E60**）。
+
+    两份夹具来自**同一次真机会话、同一根手指、同一套配置**，唯一差别是接触压力：
+
+    ======================  ==========  ===========  ======  ======
+    夹具                     红外直流     红光/红外     血氧    质量分
+    ======================  ==========  ===========  ======  ======
+    `ppg_real_light.csv`       136936      1.0351     96.7    1.0
+    `ppg_real_press.csv`       158483      0.9207     93.9    1.0
+    ======================  ==========  ===========  ======  ======
+
+    ⚠️ **真值没变，只是按紧了**。机制：比值法 ``R=(AC_red/DC_red)/(AC_ir/DC_ir)``
+    必须用**直流**做归一化，而按压会改变红光/红外两路的**直流配比**（实测 −11 %），
+    这半边**改预处理也去不掉**（真实血氧仪同样要求"轻贴别压"）。
+
+    ⚠️⚠️ **本项目没有血氧真值参照**（未与标准血氧仪对照标定，`docs/07` H7 早已声明）
+    ⇒ **不许靠"换个算法"去修**：最后那条测试记录了实测过的**反例**。
+    """
+
+    @staticmethod
+    def _load(name: str):
+        path = Path(__file__).resolve().parent.parent / "fixtures" / name
+        ir: list[float] = []
+        red: list[float] = []
+        rate = 25.0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                if "analysis_rate_hz=" in line:
+                    rate = float(line.split("analysis_rate_hz=")[1].split()[0])
+                continue
+            if line.startswith("index"):
+                continue
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            ir.append(float(parts[1]))
+            red.append(float(parts[2]))
+        return ir, red, rate
+
+    def test_两份压力夹具都在且组数对得上(self) -> None:
+        light, _, _ = self._load("ppg_real_light.csv")
+        press, _, _ = self._load("ppg_real_press.csv")
+        self.assertEqual(len(light), 250)
+        self.assertEqual(len(press), 177)
+
+    def test_轻贴夹具落在已验证的验收区间里(self) -> None:
+        """轻贴（正常用法）仍必须给出验收区间内的血氧（95~100 %）。"""
+        ir, red, rate = self._load("ppg_real_light.csv")
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertTrue(result.finger_detected, result.reason)
+        self.assertIsNotNone(result.spo2_percent)
+        self.assertGreaterEqual(result.spo2_percent, 95.0,
+                                "轻贴就这么低，说明血氧路径被改坏了")
+        self.assertLessEqual(result.spo2_percent, 100.0)
+
+    def test_按紧夹具不许跌破报警线(self) -> None:
+        """按紧会让血氧掉约 3 个点，但**当前实现下不许跌破 93 % 报警线**。
+
+        这是个**性质**断言（不钉死具体数值）：将来谁改了血氧路径，只要把"按紧"
+        这一例推到 93 以下，这里当场红 —— 而那正是现场会误报的情形。
+        """
+        ir, red, rate = self._load("ppg_real_press.csv")
+        result = analyze_ppg(ir, rate, red, PpgParams())
+        self.assertTrue(result.finger_detected, result.reason)
+        self.assertIsNotNone(result.spo2_percent)
+        self.assertGreaterEqual(
+            result.spo2_percent, 93.0,
+            "按紧这一例血氧 %s%% 已跌破报警线（真值没变！）" % result.spo2_percent,
+        )
+
+    def test_按压力度的实测特征必须还在(self) -> None:
+        """把机制钉住：按紧 = 直流**升高** + 红光/红外直流比**下降**。
+
+        这两条是"按压改变了光路/直流配比"的直接证据；若哪天预处理改动让它们不再
+        成立，说明这一路的前提变了，应当重新量一遍再下结论。
+        """
+        l_ir, l_red, _ = self._load("ppg_real_light.csv")
+        p_ir, p_red, _ = self._load("ppg_real_press.csv")
+        l_dc, p_dc = sum(l_ir) / len(l_ir), sum(p_ir) / len(p_ir)
+        l_ratio = (sum(l_red) / len(l_red)) / l_dc
+        p_ratio = (sum(p_red) / len(p_red)) / p_dc
+        self.assertGreater(p_dc, l_dc * 1.10, "按紧应当让红外直流明显升高")
+        self.assertLess(p_ratio, l_ratio * 0.95, "按紧应当让红光/红外直流比明显下降")
+
+    def test_血氧改用带通交流会把已验证的T7夹具打到95以下(self) -> None:
+        """⚠️ **反例留档**：候选修法"血氧改用带通后的交流"实测会**伤到已验证的夹具**。
+
+        实测（2026-09-30，同一段代码只换 AC 的来源）：
+
+        * T7 真机夹具（轻贴、已验收）血氧 **99.7 → 94.6**（−5.1，跌破 95 % 验收下限）
+        * 今天的"按紧"夹具 93.9 → 95.4（+1.5，这一例确实变好）
+
+        本项目**没有血氧真值参照**，无法判定 99.7 与 94.6 哪个对 ⇒ **不能这样改**。
+        这条测试把那次实测结论**留在 CI 里**：谁要再走这条路，必须先解释 T7 夹具掉
+        5 个点（或拿出与标准血氧仪的对照数据）再决定删除本测试。
+        """
+        t7_ir, t7_red, rate = self._load("ppg_real_capture.csv")
+        ir_dc, _ = _dc_ac(t7_ir)
+        red_dc, _ = _dc_ac(t7_red)
+        params = PpgParams()
+        ir_ac_bp = _rms(_bandpass(t7_ir, rate, params))
+        red_ac_bp = _rms(_bandpass(t7_red, rate, params))
+        spo2_bp = _spo2_from_ratio(ir_dc, ir_ac_bp, red_dc, red_ac_bp)
+        self.assertIsNotNone(spo2_bp)
+        self.assertLess(
+            spo2_bp, 95.0,
+            "若这条不再成立（带通交流也能让 T7 夹具 ≥95），说明前提变了，"
+            "请重新做完整对照再决定是否删除本测试",
+        )
 
 
 if __name__ == "__main__":
