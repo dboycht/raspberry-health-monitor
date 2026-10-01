@@ -127,6 +127,9 @@ class Store:
     def save_sample(self, sample: Any) -> int:
         """按样本类型自动分派写入，返回写入行数（失败返回 0 并记日志）。
 
+        ⚠️ 返回 0 **不等于出错**：它也可能是"这次没有值得写的值"
+        （例如心率血氧都没测到的 `VitalSignsSample`，见 :meth:`_save_vitals`）。
+
         **绝不抛异常给采集循环**——历史库写不进去不该让监护停摆。
         """
         try:
@@ -159,9 +162,24 @@ class Store:
             return 1
 
     def _save_vitals(self, v: VitalSignsSample) -> int:
-        # ⚠️ 没检测到手指时值必须是 NULL：存 0 会让历史曲线出现"心率掉到 0"的假象
+        """写一条心率/血氧记录；**没有任何值就不写行**（返回 0）。
+
+        ⚠️ 两条口径，各有理由：
+
+        1. **没检测到手指时值必须是 NULL**：存 0 会让历史曲线出现"心率掉到 0"的假象。
+        2. ★ **一行值都没有就整行不写**（2026-10-01 用户拍板，`DEVELOPMENT.md` 待办第 6 条）：
+           改动之前是"**每 5 秒写一行 NULL**"——真机实测 32 小时 **22893 行**、绝大多数为空，
+           纯属拿 SD 卡写入换一个空值。省掉的这些行对"分析"没有任何损失：
+           `last_vitals_value()` 本来就是 `WHERE <列> IS NOT NULL`，
+           `recent_vitals()` 的消费方（`webui._vitals_points`）也只看有值的行；
+           而**"什么时候测的"由 `_spo2_last_result` / 消息记录（`spo2_measured`）回答**，
+           不依赖空行。图表上的"空档"另有**按时间间隔断线**的机制兜底
+           （`net/charts.py::_auto_max_gap`）—— 那比"空行"更可靠，因为它不依赖写库成不成功。
+        """
         hr = v.heart_rate_bpm if v.finger_detected else None
         spo2 = v.spo2_percent if v.finger_detected else None
+        if hr is None and spo2 is None:
+            return 0
         with self._lock, self._connect() as conn:
             conn.execute(
                 "INSERT INTO vitals (ts, device, heart_rate_bpm, spo2_percent, finger_detected, quality)"

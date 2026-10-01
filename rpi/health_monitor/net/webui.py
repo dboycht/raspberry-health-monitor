@@ -731,6 +731,7 @@ THRESHOLD_GROUPS: List[Tuple[str, List[Tuple[str, str, str]]]] = [
     ]),
     ("久无活动 / 夜间", [
         ("no_motion_timeout_s", "久无活动阈值", "秒"),
+        ("night_no_motion_factor", "夜间久无活动宽限倍数", "倍"),
         ("night_start_hour", "夜间起始小时", "时"),
         ("night_end_hour", "夜间结束小时", "时"),
         ("night_wake_count", "夜间起夜次数阈值", "次"),
@@ -746,6 +747,7 @@ THRESHOLD_GROUPS: List[Tuple[str, List[Tuple[str, str, str]]]] = [
         ("spo2_remind_interval_s", "提醒间隔（0=不提醒）", "秒"),
         ("spo2_remind_timeout_s", "叫人后等按键超时", "秒"),
         ("spo2_measure_s", "一次测量时长", "秒"),
+        ("spo2_read_interval_s", "测量期采样周期", "秒"),
     ]),
 ]
 

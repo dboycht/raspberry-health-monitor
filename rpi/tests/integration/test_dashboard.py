@@ -389,13 +389,15 @@ class TestResponsiveStructure(_Base):
 class TestLastKnownBeyondWindow(_Base):
     """★「最后一次记录」必须**跳出图表窗口**去找（2026-10-01 真机验出来的真问题）。
 
-    `vitals` 表是**每秒一行**的：`_save_vitals()` 对"没贴手指"的样本**照样写行**
-    （值写 NULL —— 那是刻意的，见它的注释：存 0 会让曲线出现"心率掉到 0"的假象）。
-    于是 `recent_vitals(limit=120)` 只覆盖**约 2 分钟**，而且这 120 行**全是 NULL**。
-
+    ⚠️ 2026-10-01 口径变了：`_save_vitals()` 现在**一行值都没有就整行不写**
+    （用户拍板，省 SD 卡写入：改动前"每 5 秒一行 NULL"，真机 32 小时 22893 行、绝大多数为空）。
+    但这条测试要守的东西**没变**：`recent_vitals(limit=120)` 这个窗口仍然只覆盖约 2 分钟，
     而血氧是**按需测量** ⇒ 上一次真实测量很可能在几十分钟前 ⇒
     若拿"窗口里的最后一个点"当最后一次记录，卡片就会错报「暂无数据」——
     **用户点名要的那个功能等于没做**。
+
+    本类因此**保留**"往窗口里灌 200 条没有值的样本"这个手法（现在它们根本写不进去），
+    用来证明"最后一次记录"是**独立于窗口**查出来的 —— 而不是靠窗口里恰好有行。
     """
 
     def setUp(self) -> None:
@@ -407,6 +409,7 @@ class TestLastKnownBeyondWindow(_Base):
         self.clock.t = 1_700_000_000.0
 
     def _fill_window_with_null_vitals(self, count: int = 200) -> None:
+        """灌一批"没测到值"的样本（**现在它们不会写进库**，见类文档）。"""
         for i in range(count):
             self.rt.store.save_sample(VitalSignsSample(
                 ts=self.clock() - count + i, device="max30102", ok=False,
@@ -450,6 +453,32 @@ class TestLastKnownBeyondWindow(_Base):
         spo2_row = self.rt.store.last_vitals_value("spo2_percent")
         self.assertAlmostEqual(hr_row["value"], 71.0)
         self.assertAlmostEqual(spo2_row["value"], 95.0)
+
+    def test_没有值的样本不再写行(self) -> None:
+        """★ 判据（用户 2026-10-01 拍板）：**没测到值就一行都不写**。
+
+        改动前是"每 5 秒一行 NULL"（真机 32 小时 22893 行、绝大多数为空），
+        纯粹拿 SD 卡写入换一个空值。⚠️ 这条同时钉住"别又退回去"。
+        """
+        before = self.rt.store.count("vitals")
+        self._fill_window_with_null_vitals(count=50)
+        self.assertEqual(self.rt.store.count("vitals"), before,
+                         "一行值都没有的样本不该写进 vitals 表")
+
+    def test_有值就照旧写行(self) -> None:
+        """反向钉子：**不许**为了省写入把真有值的记录也丢掉。"""
+        before = self.rt.store.count("vitals")
+        wrote = self.rt.store.save_sample(VitalSignsSample(
+            ts=self.clock(), device="max30102", ok=True,
+            heart_rate_bpm=70.0, spo2_percent=97.0, finger_detected=True, quality=0.9))
+        self.assertEqual(wrote, 1)
+        self.assertEqual(self.rt.store.count("vitals"), before + 1)
+
+    def test_没手指时不写行所以不会出现心率0的假点(self) -> None:
+        """既有的红线不变：没贴手指的读数**绝不能**在曲线上变成 0。"""
+        self._fill_window_with_null_vitals(count=30)
+        points = [r for r in self.rt.store.recent_vitals(limit=50)]
+        self.assertEqual(points, [], "库里不该有这类空行（更不该有 0 值）")
 
     def test_非法列名被拒绝(self) -> None:
         """列名要拼进 SQL ⇒ **白名单**，绝不接受调用方传来的任意字符串。"""
