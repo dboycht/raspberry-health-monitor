@@ -83,6 +83,10 @@ ALLOW_MISSING = {
     "probe_max30102_nofinger.py",         # 空房/环境光/手指三态
     "probe_max30102_distance.py",         # 距离扫描（E59 标定依据）
     "probe_e58_acceptance.py",            # E58 三阶段验收（含 --old 对照）
+    # 2026-10-01 晚（本轮）：E63 的"慢输出不阻塞主循环"判据 —— 真机上用一个
+    # **真的会睡 8 秒**的假音箱量 `dispatch()` 用时（板子上音频是永久坏的、
+    # `aplay` 立刻失败，所以真机不存在"25 秒盲区"这个复现条件，只能靠注入式探针）。
+    "probe_session_acceptance.py",
     # ⚠️ 2026-10-01 **又踩了同一族**（E56/E70），这次不只是板子假红 —— **CI 一直是红的**：
     #    docs/14 引用了 `_scratch/preview_tft_frames.py`（TFT 帧预览器，开发副本专属），
     #    而 CI 跑在 checkout 出来的仓库上（没有 `_scratch/`）⇒ `validate.py` 第 7 项 FAIL
