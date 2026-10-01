@@ -33,6 +33,8 @@ class FakeClient:
 
     instances: List["FakeClient"] = []
     raise_on_publish: bool = False
+    #: ``publish`` 返回的 rc（0 = 成功；非 0 = "现在发不出去"，例如未连接）
+    publish_rc: int = 0
 
     def __init__(self, client_id: str = "", clean_session: bool = True) -> None:
         self.client_id = client_id
@@ -64,7 +66,7 @@ class FakeClient:
         if FakeClient.raise_on_publish:
             raise OSError("模拟 broker 断开")
         self.published.append((topic, message, qos))
-        return FakePublishInfo(rc=0)
+        return FakePublishInfo(rc=FakeClient.publish_rc)
 
 
 def install_fake_paho() -> None:
@@ -275,6 +277,192 @@ class TestMqttPublisherWithFakePaho(unittest.TestCase):
             self.assertEqual(published[0][0], "health/room2/reading")
         finally:
             publisher.stop()
+
+
+class TestOfflinePausePolicy(unittest.TestCase):
+    """★ **断网即暂停入队**（用户 2026-10-01 拍板）。
+
+    三条口径（本组把它们钉死，防止以后有人把三态"优化"成布尔量）：
+
+    | ``connected`` | 含义 | 入队吗 |
+    | --- | --- | --- |
+    | ``None`` | 还不知道（刚启动，没连上也没失败过） | **入队**（启动初期那几条仍有机会发出去） |
+    | ``True`` | 已连上 | 入队 |
+    | ``False`` | **已知**离线 | **不入队**，只累加 ``skipped_offline`` |
+
+    ⚠️ 为什么必须是三态而不是 `bool`：paho 对"**首次**连接失败"是否回调、
+    回调 `on_connect` 还是 `on_disconnect`，各版本行为不一致 —— 若拿"还没连上"当"断网"，
+    启动初期会被误判成离线（把本该发出去的启动状态/读数全丢掉）。
+    "已知离线"只由**我们自己的观测**产生：发布返回 ``rc != 0``、或明确收到断开通知。
+    """
+
+    def setUp(self) -> None:
+        FakeClient.instances.clear()
+        FakeClient.raise_on_publish = False
+        FakeClient.publish_rc = 0
+        install_fake_paho()
+        self.cfg = MqttConfig(
+            enabled=True, host="broker.example", port=1883,
+            topic_prefix="health/room1", client_id="raspi-test", interval_s=1.0,
+        )
+        self.publisher = MqttPublisher(self.cfg)
+        self.assertTrue(self.publisher.start())
+        self.client = FakeClient.instances[-1]
+
+    def tearDown(self) -> None:
+        self.publisher.stop()
+        uninstall_fake_paho()
+
+    @staticmethod
+    def _wait(pred, timeout: float = 2.0) -> bool:
+        import time
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if pred():
+                return True
+            time.sleep(0.02)
+        return bool(pred())
+
+    # ---------- 三态语义 ----------
+
+    def test_还不知道连接状态时照旧入队(self) -> None:
+        """启动初期（`connected is None`）**不许**被当成断网 —— 否则状态/读数全丢。"""
+        self.assertIsNone(self.publisher.connected, "刚 start() 时应当是'还不知道'")
+        self.publisher.publish_reading({"ts": 1.0, "ambient_temp_c": 23.0})
+        self.assertTrue(self._wait(lambda: self.client.published), "应当照旧入队并被发布")
+
+    def test_发布成功会把状态确定为已连上(self) -> None:
+        """反向钉子：三态里的 `None` 必须能被"一次成功的发布"确定下来。"""
+        self.publisher.publish_reading({"ts": 1.0})
+        self.assertTrue(self._wait(lambda: self.publisher.connected is True))
+        self.assertEqual(self.publisher.offline_episodes, 0, "从没失败过，不算离线过")
+
+    # ---------- 暂停入队 ----------
+
+    def test_已知离线时不入队且计数(self) -> None:
+        self.client.on_disconnect(self.client, None, 1)      # broker 断了
+        self.assertIs(self.publisher.connected, False)
+        before = len(self.client.published)
+        for _ in range(3):
+            self.publisher.publish_reading({"ts": 1.0})
+        self.assertEqual(self.publisher.skipped_offline, 3, "断网期间不该入队，但要计数")
+        self.assertEqual(self.publisher._queue.qsize(), 0, "队列里不许攒东西")
+        self.assertEqual(len(self.client.published), before, "断网期间不该发出任何消息")
+
+    def test_断网不清空已有计数口径(self) -> None:
+        """断网期间**不再累加 failed**（那是"试了发不出去"的计数），改由 skipped_offline 表达。
+
+        为什么要分开：`failed` 涨说明"我们在空转地重试"，而暂停之后我们**根本不再尝试** ——
+        两个数字混在一起，就分不清"断网多久"与"重试了多少次"。
+        """
+        self.client.on_disconnect(self.client, None, 1)
+        failed_before = self.publisher.failed
+        for _ in range(5):
+            self.publisher.publish_reading({"ts": 1.0})
+        self.assertEqual(self.publisher.failed, failed_before, "暂停入队后不该再有发布失败")
+        self.assertEqual(self.publisher.skipped_offline, 5)
+
+    # ---------- 恢复 ----------
+
+    def test_恢复后继续上报并记下离线时长与次数(self) -> None:
+        class Clock:
+            t = 1000.0
+
+            def __call__(self) -> float:
+                return self.t
+
+        clock = Clock()
+        pub = MqttPublisher(self.cfg, clock=clock)
+        FakeClient.instances.clear()
+        self.assertTrue(pub.start())
+        client = FakeClient.instances[-1]
+        try:
+            client.on_disconnect(client, None, 1)         # t=1000 断
+            pub.publish_reading({"ts": 1.0})
+            self.assertEqual(pub.skipped_offline, 1)
+            self.assertAlmostEqual(pub.offline_s() or 0.0, 0.0, places=1)
+
+            clock.t = 1015.0                              # 离线 15 秒
+            self.assertAlmostEqual(pub.offline_s() or 0.0, 15.0, places=1)
+            client.on_connect(client, None, None, 0)      # 恢复
+            self.assertIs(pub.connected, True)
+            self.assertIsNone(pub.offline_s(), "恢复后不该还显示'离线段'")
+            self.assertAlmostEqual(pub.offline_total_s, 15.0, places=1)
+            self.assertEqual(pub.offline_episodes, 1)
+
+            pub.publish_reading({"ts": 2.0})              # 恢复后照常上报
+            self.assertTrue(self._wait(lambda: client.published), "恢复后必须继续上报")
+        finally:
+            pub.stop()
+
+    def test_发布失败会自动转入已知离线(self) -> None:
+        """★ 这条是"断网"的**主要入口**：broker 不可达时 paho 的回调语义因版本而异，
+        所以我们用**自己的发布结果**判定 —— `rc != 0` ⇒ 已知离线 ⇒ 后续不再入队。"""
+        FakeClient.publish_rc = 4                             # 4 = 发不出去
+        self.publisher.publish_reading({"ts": 1.0})
+        self.assertTrue(self._wait(lambda: self.publisher.connected is False),
+                        "发布返回非 0 后应当转入'已知离线'")
+        self.assertGreaterEqual(self.publisher.failed, 1)
+        self.publisher.publish_reading({"ts": 2.0})
+        self.assertEqual(self.publisher.skipped_offline, 1, "之后就不该再入队了")
+        self.assertEqual(self.publisher.offline_episodes, 1)
+
+    def test_发布抛异常也算已知离线(self) -> None:
+        FakeClient.raise_on_publish = True
+        self.publisher.publish_reading({"ts": 1.0})
+        self.assertTrue(self._wait(lambda: self.publisher.connected is False))
+
+    # ---------- A/B 与边界 ----------
+
+    def test_关掉开关就回到旧行为(self) -> None:
+        """A/B 对照：`pause_when_offline=False` ⇒ 断网仍入队（旧行为）。
+
+        留着它是为了**能对照**：万一将来有人说"暂停入队把数据搞丢了"，
+        这条能立刻证明"开关关掉就是以前那样"。
+        """
+        self.publisher.pause_when_offline = False
+        self.client.on_disconnect(self.client, None, 1)
+        self.publisher.publish_reading({"ts": 1.0})
+        self.assertEqual(self.publisher.skipped_offline, 0, "关掉开关后不该跳")
+        self.assertEqual(self.publisher._queue.qsize(), 1, "旧行为：照旧入队（等着重试/失败）")
+
+    def test_主动断开不算一次离线事故(self) -> None:
+        """我们自己调 `disconnect()`（正常停机）不该被算成"断网了一次"。"""
+        self.client.on_disconnect(self.client, None, 0)
+        self.assertIs(self.publisher.connected, False)
+        self.assertEqual(self.publisher.offline_episodes, 0)
+        self.assertIsNone(self.publisher.offline_s())
+
+    def test_停机时把仍在离线的那一段结掉(self) -> None:
+        """否则 `offline_total_s` 会永远少最后一段（诊断数字对不上现场）。"""
+        class Clock:
+            t = 500.0
+
+            def __call__(self) -> float:
+                return self.t
+
+        clock = Clock()
+        pub = MqttPublisher(self.cfg, clock=clock)
+        FakeClient.instances.clear()
+        self.assertTrue(pub.start())
+        client = FakeClient.instances[-1]
+        client.on_disconnect(client, None, 1)
+        clock.t = 512.0
+        pub.stop()
+        self.assertAlmostEqual(pub.offline_total_s, 12.0, places=1)
+        self.assertIsNone(pub.offline_s(), "停机后不该还留着'正在离线'")
+
+    # ---------- 可见性 ----------
+
+    def test_状态快照暴露离线指标(self) -> None:
+        self.client.on_disconnect(self.client, None, 1)
+        status = self.publisher.status()
+        for key in ("offline_s", "offline_episodes", "offline_total_s",
+                    "skipped_offline", "pause_when_offline"):
+            self.assertIn(key, status, f"离线指标 {key} 必须能被 /api/v1/health 看到")
+        self.assertEqual(status["offline_episodes"], 1)
+        self.assertTrue(status["pause_when_offline"])
 
 
 class TestRuntimeMqttIntegration(unittest.TestCase):

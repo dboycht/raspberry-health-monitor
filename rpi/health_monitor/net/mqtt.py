@@ -41,7 +41,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 _LOG = logging.getLogger(__name__)
 
@@ -97,21 +97,50 @@ class MqttPublisher:
     线程模型：
     - :meth:`start` 起一个**后台工作线程**，从有界队列取消息发布；
     - ``publish_*`` 只是入队（非阻塞）；队列满时丢最旧的并累加 ``dropped``。
+
+    ⚠️ **断网即暂停入队**（用户 2026-10-01 拍板）
+    ------------------------------------------------
+    原来"未连接"只体现在"发布失败计数一直涨"上：断网期间我们**照旧入队**、
+    照旧空转尝试、队列满了丢最旧。现在改成：
+
+    * ``connected`` 是**三态**：``None`` = 还不知道（启动初期）/ ``True`` = 已连上 /
+      ``False`` = **已知断开**；
+    * **只在 `connected is False`（确定离线）时暂停入队**，并累加 ``skipped_offline``；
+      恢复（``connected is True``）后从**当前值**继续上报 —— 断网期间的读数**不补传**
+      （它们本来就没有意义了；本地报警与消息流仍完整保留）；
+    * ``None``（还没连上过）**照旧入队**：启动瞬间的那几条状态/读数仍有机会发出去，
+      而且**不依赖 paho 回调的时机**（paho 对"首次连接失败"是否回调、回调哪个函数，
+      各版本行为不一致，不能拿它当判据）；
+    * "已知离线"由**我们自己的发布结果**判定（``rc != 0`` / 抛异常 ⇒ 转 False，
+      成功 ⇒ 转 True），所以它不依赖底层库的通知语义 —— 这也是它能被单测钉死的原因；
+    * 新增指标：``offline_s``（当前这段离线多久）、``offline_episodes``（离线了几次）、
+      ``offline_total_s``（累计离线时长）、``skipped_offline``（因离线而没入队的条数）。
+      它们都在 ``status()`` 里，因此 ``/api/v1/health`` 直接看得到。
     """
 
-    def __init__(self, config: MqttConfig, queue_size: int = 200) -> None:
+    def __init__(self, config: MqttConfig, queue_size: int = 200,
+                 clock: Callable[[], float] = time.time) -> None:
         self.config = config
+        self.clock = clock
         self._queue: "queue.Queue[tuple]" = queue.Queue(maxsize=queue_size)
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._client: Any = None
-        self.connected = False
+        #: **三态**：``None`` 还不知道 / ``True`` 已连上 / ``False`` 已知断开（见类文档）
+        self.connected: Optional[bool] = None
         self.published = 0
         self.dropped = 0
         self.failed = 0
         self.last_error: Optional[str] = None
         self.available = False          # 依赖是否就绪（paho 是否装上）
         self.reason = ""                # 不可用/关闭的原因（给人看）
+        #: 断网即暂停入队（用户 2026-10-01 拍板）；置 False 可回到"照旧入队"的旧行为（做 A/B 用）
+        self.pause_when_offline = True
+        #: 当前这段离线的起点（``None`` = 不在离线中）
+        self.offline_since: Optional[float] = None
+        self.offline_episodes = 0       # 离线了几次（非离线 → 离线 才算一次）
+        self.offline_total_s = 0.0      # 累计离线时长（秒）
+        self.skipped_offline = 0        # 因"已知离线"而没入队的条数
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -163,6 +192,8 @@ class MqttPublisher:
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=timeout)
         self._thread = None
+        # 收尾把"这一段离线"结掉，否则 offline_total_s 会从"还在离线"变成"永远差一段"
+        self._close_offline_episode()
         if self._client is not None:
             try:
                 self._client.loop_stop()
@@ -172,21 +203,70 @@ class MqttPublisher:
             self._client = None
 
     # ------------------------------------------------------------------
+    # 连接状态（三态）与离线指标
+    # ------------------------------------------------------------------
+
+    def _mark_offline(self, reason: str = "") -> None:
+        """记录"**已知**离线"：``connected=False``，并开一段离线区间（幂等）。
+
+        ⚠️ 只允许**我们自己的观测**来调它（发布失败 / 明确收到断开通知），
+        绝不用"还没连上"来猜 —— 那会把启动初期误判成断网（见类文档的三态说明）。
+        """
+        if reason:
+            self.last_error = reason
+        already = self.connected is False
+        self.connected = False
+        if self.offline_since is None:
+            self.offline_since = float(self.clock())
+            self.offline_episodes += 1
+            _LOG.warning("上云已断开：%s（断网期间**暂停上报**，恢复后从当前值继续）",
+                         reason or "未说明原因")
+        elif not already:
+            # 理论上到不了（False 时 offline_since 必然非 None），留个兜底避免重复计数
+            self.offline_episodes += 1
+
+    def _mark_online(self) -> None:
+        """记录"已连上"：``connected=True``，并结掉当前离线区间（幂等）。"""
+        if self.connected is not True and self.offline_since is not None:
+            gap = max(0.0, float(self.clock()) - self.offline_since)
+            self.offline_total_s += gap
+            self.offline_since = None
+            _LOG.info("上云已恢复：本次离线 %.1f 秒（期间跳过 %d 条未入队）",
+                      gap, self.skipped_offline)
+        self.connected = True
+
+    def _close_offline_episode(self) -> None:
+        """把"仍在离线"的那一段计入累计时长（停机收尾用；幂等）。"""
+        if self.offline_since is not None:
+            self.offline_total_s += max(0.0, float(self.clock()) - self.offline_since)
+            self.offline_since = None
+
+    def offline_s(self) -> Optional[float]:
+        """当前这段离线已持续多少秒（在线或"还不知道" ⇒ ``None``）。"""
+        if self.connected is False and self.offline_since is not None:
+            return max(0.0, float(self.clock()) - self.offline_since)
+        return None
+
+    # ------------------------------------------------------------------
     # 回调
     # ------------------------------------------------------------------
 
     def _on_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
-        self.connected = (rc == 0)
         if rc == 0:
+            self._mark_online()
             _LOG.info("MQTT 已连接：%s:%s", self.config.host, self.config.port)
         else:
-            self.last_error = f"连接被拒绝 rc={rc}"
+            self._mark_offline(f"连接被拒绝 rc={rc}")
             _LOG.warning("MQTT 连接被拒绝：rc=%s", rc)
 
     def _on_disconnect(self, client: Any, userdata: Any, rc: int) -> None:
-        self.connected = False
         if rc != 0:
             _LOG.warning("MQTT 意外断开 rc=%s（paho 会自动重连）", rc)
+            self._mark_offline(f"意外断开 rc={rc}")
+        else:
+            # 主动断开（我们调 disconnect()）：不算"离线事故"，但状态必须翻成 False
+            self.connected = False
+            self._close_offline_episode()
 
     # ------------------------------------------------------------------
     # 发布入口（都是非阻塞入队）
@@ -241,6 +321,13 @@ class MqttPublisher:
     def _enqueue(self, kind: str, payload: Dict[str, Any]) -> None:
         if self._client is None:
             return
+        if self.pause_when_offline and self.connected is False:
+            # ★ 已知离线：**不入队**（用户 2026-10-01 拍板）。
+            #   为什么不是"继续入队、失败计数"：那样断网期间会一直空转尝试，
+            #   队列满了还得丢；而断网期间的读数**本来就不该补传**（时间戳已经过期）。
+            #   计数 `skipped_offline` 让"跳过了多少条"仍然看得见（不静默）。
+            self.skipped_offline += 1
+            return
         topic = f"{self.config.topic_prefix.strip('/')}/{kind}"
         message = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         try:
@@ -272,12 +359,17 @@ class MqttPublisher:
                 # paho 的 publish 是异步的：rc != 0 才算"立即失败"
                 if getattr(info, "rc", 0) != 0:
                     self.failed += 1
-                    self.last_error = f"publish rc={info.rc}"
+                    # ★ rc != 0 是**我们自己的观测**：它证明"现在发不出去" ⇒ 转入已知离线
+                    #   （不依赖 paho 对"首次连接失败"的回调语义），之后 `_enqueue` 就会暂停
+                    self._mark_offline(f"publish rc={info.rc}")
                 else:
                     self.published += 1
+                    if self.connected is not True:
+                        self._mark_online()
             except Exception as exc:  # noqa: BLE001 - 上云失败不影响本地
                 self.failed += 1
                 self.last_error = f"{type(exc).__name__}: {exc}"
+                self._mark_offline(self.last_error)
                 _LOG.debug("MQTT 发布失败（已忽略）：%s", self.last_error)
 
     # ------------------------------------------------------------------
@@ -288,6 +380,7 @@ class MqttPublisher:
         return {
             "enabled": self.config.enabled,
             "available": self.available,
+            #: 三态：``None`` 还不知道 / ``True`` 已连上 / ``False`` 已知断开
             "connected": self.connected,
             "published": self.published,
             "dropped": self.dropped,
@@ -296,6 +389,15 @@ class MqttPublisher:
             "reason": self.reason,
             "topic_prefix": self.config.topic_prefix,
             "host": self.config.host,
+            # ---- 断网行为（用户 2026-10-01 拍板"断网即暂停入队"）----
+            #: 现在这段离线已持续多少秒（在线 ⇒ None）
+            "offline_s": (None if self.offline_s() is None else round(float(self.offline_s()), 1)),
+            #: 离线了几次 / 累计离线多少秒
+            "offline_episodes": self.offline_episodes,
+            "offline_total_s": round(float(self.offline_total_s), 1),
+            #: 因"已知离线"而**没有入队**的条数（不静默：跳过了多少条要看得见）
+            "skipped_offline": self.skipped_offline,
+            "pause_when_offline": bool(self.pause_when_offline),
         }
 
 

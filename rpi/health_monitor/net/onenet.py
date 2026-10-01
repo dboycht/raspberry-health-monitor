@@ -334,7 +334,7 @@ class OneNetPublisher(MqttPublisher):
             qos=config.qos,
             keepalive=config.keepalive,
         )
-        super().__init__(base, queue_size=queue_size)
+        super().__init__(base, queue_size=queue_size, clock=clock)
         self.clock = clock
         self._msg_id = 0
         self.received_results: List[Dict[str, Any]] = []   # 平台回执（accepted/rejected）
@@ -406,8 +406,8 @@ class OneNetPublisher(MqttPublisher):
         return True
 
     def _on_connect(self, client: Any, userdata: Any, flags: Any, rc: int) -> None:
-        self.connected = (rc == 0)
         if rc == 0:
+            self._mark_online()
             _LOG.info("OneNET 已连接：%s:%s", self.onenet.resolved_host(), self.onenet.resolved_port())
             if self.onenet.subscribe_result:
                 base = self._topic()
@@ -419,7 +419,7 @@ class OneNetPublisher(MqttPublisher):
         else:
             # 常见 rc：4=用户名密码错（token/product_id 不对）、5=未授权（key 或 res 不匹配）
             hint = {4: "用户名或密码（token）不对", 5: "未授权：检查 access_key 与 res 是否配套"}.get(rc, "")
-            self.last_error = f"连接被拒绝 rc={rc} {hint}".strip()
+            self._mark_offline(f"连接被拒绝 rc={rc} {hint}".strip())
             _LOG.warning("OneNET 连接被拒绝：rc=%s %s", rc, hint)
 
     def _on_message(self, client: Any, userdata: Any, message: Any) -> None:
@@ -474,8 +474,17 @@ class OneNetPublisher(MqttPublisher):
         return {"id": int(message_id), "dp": dp}
 
     def _enqueue_datapoint(self, values: Dict[str, Any], ts: Optional[float] = None) -> None:
-        """把一组读数按数据点格式入队（父类的队列与线程负责发送）。"""
+        """把一组读数按数据点格式入队（父类的队列与线程负责发送）。
+
+        ⚠️ **已知离线时不入队**（与父类 :meth:`MqttPublisher._enqueue` 同一口径，
+        用户 2026-10-01 拍板）：本方法**绕开了父类的 `_enqueue`**，
+        所以那道闸门必须在这里**重复一次** —— 否则 OneNET 会成为"断网照旧攒数据"的例外，
+        而这种"两条入队路径只有一条加了守卫"的洞，测试若不专门覆盖就永远看不见。
+        """
         if self._client is None or not values:
+            return
+        if self.pause_when_offline and self.connected is False:
+            self.skipped_offline += 1
             return
         payload = self.build_datapoint(self._next_id(), values, ts)
         if not payload["dp"]:

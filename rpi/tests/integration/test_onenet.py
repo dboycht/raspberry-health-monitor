@@ -55,6 +55,8 @@ class FakePublishInfo:
 
 class FakeClient:
     instances: List["FakeClient"] = []
+    #: ``publish`` 返回的 rc（0 = 成功；非 0 = "现在发不出去"）
+    publish_rc: int = 0
 
     def __init__(self, client_id: str = "", clean_session: bool = True) -> None:
         self.client_id = client_id
@@ -91,7 +93,7 @@ class FakeClient:
 
     def publish(self, topic: str, message: str, qos: int = 0) -> FakePublishInfo:
         self.published.append((topic, message, qos))
-        return FakePublishInfo(rc=0)
+        return FakePublishInfo(rc=FakeClient.publish_rc)
 
 
 class FakeMessage:
@@ -380,6 +382,7 @@ class TestDatapointPayload(unittest.TestCase):
 class TestOneNetPublisher(unittest.TestCase):
     def setUp(self) -> None:
         FakeClient.instances.clear()
+        FakeClient.publish_rc = 0        # ⚠️ 类属性会被上一条用例改成 4，必须复位
         install_fake_paho()
         self.cfg = make_config(interval_s=1.0, subscribe_result=True)
         self.pub = OneNetPublisher(self.cfg)
@@ -414,6 +417,45 @@ class TestOneNetPublisher(unittest.TestCase):
         topics = [t for t, _ in client.subscribed]
         self.assertIn("$sys/123123/living-room-pi/dp/post/json/accepted", topics)
         self.assertIn("$sys/123123/living-room-pi/dp/post/json/rejected", topics)
+
+    def test_已知离线时不入队数据点(self) -> None:
+        """★ OneNET 走的是**自己的入队路径**（`_enqueue_datapoint`，绕开了父类 `_enqueue`）
+        ⇒ "断网即暂停入队"这道闸门必须在这里**也**有一份。
+
+        不测这条的后果：OneNET 会成为唯一的例外（断网照旧攒数据），
+        而"两条入队路径只有一条加了守卫"这种洞，别的用例全都看不见。
+        """
+        client = FakeClient.instances[-1]
+        client.on_disconnect(client, None, 1)                # 已知离线
+        self.pub.publish_reading({"heart_rate_bpm": 72.0, "spo2_percent": 98.0}, ts=1.0)
+        self.assertEqual(self.pub.skipped_offline, 1, "离线期间不该入队数据点")
+        self.assertEqual(self.pub._queue.qsize(), 0)
+        self.assertEqual(self._drain(timeout=0.4), [], "离线期间不该发出任何数据点")
+
+    def test_恢复后数据点继续上报(self) -> None:
+        client = FakeClient.instances[-1]
+        client.on_disconnect(client, None, 1)
+        self.pub.publish_reading({"heart_rate_bpm": 72.0}, ts=1.0)
+        self.assertEqual(self.pub.skipped_offline, 1)
+        client.on_connect(client, None, None, 0)             # 恢复
+        self.pub.publish_reading({"heart_rate_bpm": 73.0}, ts=2.0)
+        published = self._drain()
+        self.assertTrue(published, "恢复后必须继续上报")
+        self.assertEqual(self.pub.offline_episodes, 1)
+        self.assertGreaterEqual(self.pub.offline_total_s, 0.0)
+
+    def test_发布失败自动转入已知离线(self) -> None:
+        """与父类同一口径：`rc != 0` 是**我们自己的观测**，不依赖 paho 回调语义。"""
+        FakeClient.publish_rc = 4
+        self.pub.publish_reading({"heart_rate_bpm": 72.0}, ts=1.0)
+        import time
+
+        deadline = time.time() + 2.0
+        while time.time() < deadline and self.pub.connected is not False:
+            time.sleep(0.02)
+        self.assertIs(self.pub.connected, False)
+        self.pub.publish_reading({"heart_rate_bpm": 73.0}, ts=2.0)
+        self.assertEqual(self.pub.skipped_offline, 1)
 
     def test_没有可上报字段时必须留痕(self) -> None:
         """★ 静默不发是一级缺陷（2026-09-22 真机踩到）。
