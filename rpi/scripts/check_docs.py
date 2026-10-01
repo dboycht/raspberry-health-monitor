@@ -99,6 +99,10 @@ ALLOW_MISSING = {
     "_scratch/board_cloud_offline_accept.py",
     "mqtt_stub_broker.py",
     "_scratch/mqtt_stub_broker.py",
+    # 2026-10-01 深夜（第二轮）：E77 改"按平台"地址复用 + `/api/v1/health` 的 `outputs` 段
+    # 的真机验收探针（同样两种写法都登记，理由见上）。
+    "board_reuse_and_outputs_accept.py",
+    "_scratch/board_reuse_and_outputs_accept.py",
     # ⚠️ 2026-10-01 **又踩了同一族**（E56/E70），这次不只是板子假红 —— **CI 一直是红的**：
     #    docs/14 引用了 `_scratch/preview_tft_frames.py`（TFT 帧预览器，开发副本专属），
     #    而 CI 跑在 checkout 出来的仓库上（没有 `_scratch/`）⇒ `validate.py` 第 7 项 FAIL
