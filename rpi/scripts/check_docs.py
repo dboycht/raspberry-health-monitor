@@ -87,6 +87,18 @@ ALLOW_MISSING = {
     # **真的会睡 8 秒**的假音箱量 `dispatch()` 用时（板子上音频是永久坏的、
     # `aplay` 立刻失败，所以真机不存在"25 秒盲区"这个复现条件，只能靠注入式探针）。
     "probe_session_acceptance.py",
+    # 2026-10-01 深夜（本轮）：S9/C9 的"云不可达"替代验证 ——
+    # 驱动脚本 + 一个**只监听 127.0.0.1 的最小 MQTT 桩**（测试替身，不是真 broker；
+    # 用途是"拔网线/插回来"的等价操作，因为 `pi` 用户没有改网络的权限）。
+    # ⚠️ **两种写法都要登记**（本轮实测栽过，正是 E70 那一族）：
+    #    开发机上这两个文件**真的存在** ⇒ "悬空引用"检查不响；
+    #    板子/CI 上没有 `_scratch/` ⇒ 同一条文档**在那边才红**。
+    #    而两个检查器匹配的键不同：按前缀判定的那条认 `Path(norm).name`，
+    #    悬空引用的那条只认**完整归一化路径** ⇒ 只写基名会让板子继续红。
+    "board_cloud_offline_accept.py",
+    "_scratch/board_cloud_offline_accept.py",
+    "mqtt_stub_broker.py",
+    "_scratch/mqtt_stub_broker.py",
     # ⚠️ 2026-10-01 **又踩了同一族**（E56/E70），这次不只是板子假红 —— **CI 一直是红的**：
     #    docs/14 引用了 `_scratch/preview_tft_frames.py`（TFT 帧预览器，开发副本专属），
     #    而 CI 跑在 checkout 出来的仓库上（没有 `_scratch/`）⇒ `validate.py` 第 7 项 FAIL
