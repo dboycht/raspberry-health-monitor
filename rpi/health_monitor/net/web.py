@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -179,6 +180,9 @@ class WebApi:
             "active_alarms": self.runtime.engine.active_alarms(),
             "dispatcher": self.runtime.dispatcher.status(),
             "devices": collector.status()["devices"],
+            #: 输出器件（LED / 两屏 / 蜂鸣器 / 音箱）的**实时状态**（2026-10-01 用户要求）。
+            #: 见 :meth:`_outputs_status` 的说明：为什么以前没有、为什么它值得有。
+            "outputs": self._outputs_status(),
         }
         # 上云状态（可选功能）：客户端可用它判断"云上那条链路通不通"
         mqtt = getattr(self.runtime, "mqtt", None)
@@ -189,6 +193,42 @@ class WebApi:
             "started": bool(getattr(self.runtime, "mqtt_started", False)),
         }
         return 200, payload
+
+    def _outputs_status(self) -> Dict[str, Any]:
+        """输出器件的实时状态：``{设备名: 驱动 status()}``（**只读、不碰硬件**）。
+
+        为什么加它（2026-10-01 用户拍板；起因是一次验收的尴尬）
+        --------------------------------------------------------
+        `/api/v1/health` 的 `devices` 来自 `Collector.status()` ⇒ **只有输入器件**；
+        `/api/v1/devices` 只给 `describe()`（接线说明）与自检。
+        于是"**报警到底上屏了没 / 灯是什么颜色**"在接口上**看不到** ——
+        我做 S9 替代验证时只能用调度器的下发流水（`/api/v1/alarms` 的 `live[]`）
+        **间接**证明"命令发出去了"，而"屏上真的是那两行字吗"没法从外面取证。
+        ⇒ 现在把每个输出器件自己的 `status()` 原样暴露出来（LED 的 `current_color`/`blinking`、
+        LCD 的 `lines`/`page`、TFT 的页码与富帧摘要、蜂鸣器/音箱的计数…）。
+
+        ⚠️ 三条纪律：
+
+        1. **按 `dispatcher.outputs` 取，不是按配置的 `enabled`** —— 配置里写着启用的器件
+           也可能装配失败（没接线是常态），那种情况下它**不该**在这里出现
+           （与 :meth:`Runtime._screen_present` 同一口径：**不假装成功**）；
+        2. **单个器件的 `status()` 抛异常不许把整个健康接口打崩**：错误就地转成
+           ``{"error": "..."}``（`/api/v1/health` 是运维与手机端的第一入口，它必须永远能答）；
+        3. **只读**：绝不调用 `read()`（那会去碰硬件；LCD/MAX30102 没有排他锁，
+           见 `ERROR.md` E76 —— 健康接口不该产生副作用）。
+        """
+        outputs: Dict[str, Any] = {}
+        for name, device in sorted(getattr(self.runtime.dispatcher, "outputs", {}).items()):
+            getter = getattr(device, "status", None)
+            try:
+                info = getter() if callable(getter) else {"driver": type(device).__name__}
+            except Exception as exc:  # noqa: BLE001 - 一个器件坏了不能让健康接口也坏
+                info = {"error": f"{type(exc).__name__}: {exc}"}
+            if not isinstance(info, dict):        # 驱动写错了也不能让 JSON 变味
+                info = {"value": repr(info)}
+            info.setdefault("kind", getattr(getattr(device, "KIND", None), "value", ""))
+            outputs[name] = info
+        return outputs
 
     def _cloud_callback(self, q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         """接收 OneNET **规则引擎 HTTP 推送**的数据（云云对接）。
@@ -770,8 +810,9 @@ def probe_port(host: str = "0.0.0.0", port: int = 8080) -> Optional[str]:
     ⚠️ 判据：**注定要失败的操作不许产生副作用**。
     所以 `serve` 现在**先探端口**、探不过就立刻退出，连一个器件都不打开。
 
-    ⚠️ 探针必须与 :func:`make_server` **同口径**（``allow_reuse_address=False``），
-    否则会出现"探得到、绑不上"（或反过来）的假结论。
+    ⚠️ 探针必须与 :func:`make_server` **同口径**（同一个 :func:`allow_reuse_address`），
+    否则会出现"探得到、绑不上"（或反过来）的假结论 ——
+    2026-10-01 实测：口径不一致时，把 `TIME_WAIT` 造成的占用误读成"服务起不来"（E77）。
     探测用的 socket 立刻关闭 —— 真正的绑定仍由 :func:`make_server` 完成
     （探针只是把"注定失败"提前，不承担互斥职责）。
     """
@@ -779,7 +820,8 @@ def probe_port(host: str = "0.0.0.0", port: int = 8080) -> Optional[str]:
 
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        # ⚠️ 刻意**不设** SO_REUSEADDR：与 make_server 的 allow_reuse_address=False 对齐
+        if allow_reuse_address():
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind((host, int(port)))
     except OSError as exc:
         return f"{type(exc).__name__}: {exc}（可能已有实例在运行；换端口用 --port，或先关掉旧进程）"
@@ -788,17 +830,45 @@ def probe_port(host: str = "0.0.0.0", port: int = 8080) -> Optional[str]:
     return None
 
 
+def allow_reuse_address() -> bool:
+    """本平台是否让监听 socket 复用地址（``SO_REUSEADDR``）—— **按平台分开**。
+
+    为什么必须分开（`ERROR.md` **E7 + E77**）
+    -----------------------------------------
+    同一个开关在两个平台上是**两件不同的事**：
+
+    | 平台 | 设了 ``SO_REUSEADDR`` 会怎样 |
+    | --- | --- |
+    | **Windows** | **两个活着的监听者可以绑同一端口** ⇒ "我以为只有一个服务在跑，实际两个在抢请求"，手机端时而连到旧实例（**E7**，2026-09-21 实测踩到）⇒ **必须禁止** |
+    | **Linux** | 只允许绑"仍有 ``TIME_WAIT`` 的端口"，**不允许**第二个活着的监听者 ⇒ **防双开不受影响**，却能把"停服务后必须等约 60 秒"（**E77**）这个坑去掉 |
+
+    所以判据不是"要不要复用地址"，而是"**这个平台的复用语义会不会破坏防双开**"。
+    Linux 上不会 ⇒ 允许；Windows 上会 ⇒ 禁止。
+
+    ⚠️ 真机复验（2026-10-01，树莓派/Linux）：改成允许之后 ① 停服务后**立刻**能重新绑定
+    （不再等 60 秒）；② 已有实例在跑时再起一个，**仍然 `rc=2` 报端口被占用**
+    ⇒ 两条属性同时成立（见 `docs/07` §6.3）。
+    """
+    # ⚠️ `os` 在**模块级**导入（不在函数里）：否则测试没法用 `mock.patch.object(web.os, "name", ...)`
+    #    去验证"取值真的跟着平台变" —— 而那正是防止这条判据被写死、变成"永远绿"的唯一办法。
+    return os.name != "nt"
+
+
 def make_server(api: WebApi, host: str = "0.0.0.0", port: int = 8080) -> ThreadingHTTPServer:
     """创建一个（尚未启动的）HTTP 服务器。调用方负责 ``serve_forever()`` 与 ``shutdown()``。
 
-    ⚠️ **必须关掉 ``allow_reuse_address``**：标准库的 ``HTTPServer`` 默认把它设为 1
-    （即 TCP 的 ``SO_REUSEADDR``），在 Windows 上这会让**第二个实例也能绑上同一个端口**，
-    于是"我以为只有一个服务在跑，实际上两个在抢请求"——手机端会时而连到旧实例，
-    表现为"数据一会儿新一会儿旧"（2026-09-21 集成测试实测踩到）。
-    关掉后第二个实例会明确抛 ``OSError``，调用方就能给出"端口被占用"的提示。
+    ⚠️ ``allow_reuse_address`` **按平台取值**，见 :func:`allow_reuse_address`：
+    标准库的 ``HTTPServer`` 默认把它设为 1，在 **Windows** 上那会让**第二个实例也能绑上
+    同一个端口**（"两个服务抢请求"，E7）；而在 **Linux** 上它只影响 `TIME_WAIT`，
+    还能省掉"停服务后等 60 秒"（E77）。
+    ⇒ 关掉它的**理由只对 Windows 成立**，所以现在按平台给值，而不是一刀切关掉。
+
+    两平台的**共同保障**仍然成立：第二个活着的实例都会明确抛 ``OSError``，
+    调用方据此给出"端口被占用"的提示并按 E76 的顺序**一个器件都不碰**地退出。
     """
     handler = type("BoundHandler", (_Handler,), {"api": api})
-    server_cls = type("ExclusiveHTTPServer", (ThreadingHTTPServer,), {"allow_reuse_address": False})
+    server_cls = type("ExclusiveHTTPServer", (ThreadingHTTPServer,),
+                      {"allow_reuse_address": allow_reuse_address()})
     server = server_cls((host, port), handler)
     server.daemon_threads = True
     return server
@@ -817,4 +887,4 @@ def start_in_thread(api: WebApi, host: str = "0.0.0.0", port: int = 8080) -> Tup
     return server, thread
 
 
-__all__ = ["WebApi", "make_server", "probe_port", "start_in_thread"]
+__all__ = ["WebApi", "allow_reuse_address", "make_server", "probe_port", "start_in_thread"]

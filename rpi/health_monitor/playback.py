@@ -288,6 +288,19 @@ class ConsoleLcd(ConsoleOutput):
         self._note_ok()
         return DisplayStatus(device=self.name, lines=self.current_lines, page=self.page)
 
+    def status(self) -> Dict[str, Any]:
+        """与真实 `Lcd1602` **同形**：带上当前两行与页码（2026-10-01 补）。
+
+        为什么回放/演示器件也要有它：新的 `/api/v1/health` 的 `outputs` 段按 `status()`
+        取状态 ⇒ 不覆写的话，**演示模式与所有面板测试里那段会是空的**，
+        而"屏上现在是什么字"恰恰是这类测试最想断言的东西。
+        （真实驱动侧早有"每个 DISPLAY 驱动都必须带当前屏幕内容"的对称守卫，
+        这里补的是**同一个契约在模拟器件上的缺失**。）
+        """
+        info = super().status()
+        info.update({"lines": list(self.current_lines), "page": self.page})
+        return info
+
 
 class ConsoleSpeaker(ConsoleOutput):
     """模拟蓝牙音箱：记录播报文本（默认**不真的说话**）。"""
@@ -305,6 +318,13 @@ class ConsoleSpeaker(ConsoleOutput):
     def spoken(self) -> List[str]:
         return [c.text for c in self.history if isinstance(c, SpeakCommand)]
 
+    def status(self) -> Dict[str, Any]:
+        """带上"播报了几条 / 最后一句"，让 `/api/v1/health` 的 `outputs` 能直接取证。"""
+        info = super().status()
+        spoken = self.spoken
+        info.update({"spoken_count": len(spoken), "last_spoken": (spoken[-1] if spoken else "")})
+        return info
+
 
 class ConsoleBuzzer(ConsoleOutput):
     """模拟蜂鸣器：记录鸣叫次数。"""
@@ -321,6 +341,12 @@ class ConsoleBuzzer(ConsoleOutput):
     @property
     def total_beeps(self) -> int:
         return sum(c.times for c in self.history if isinstance(c, BeepCommand))
+
+    def status(self) -> Dict[str, Any]:
+        """带上累计鸣叫次数（判"报警到底响了几声"用得上）。"""
+        info = super().status()
+        info.update({"total_beeps": self.total_beeps})
+        return info
 
 
 class ConsoleLed(ConsoleOutput):
@@ -345,6 +371,15 @@ class ConsoleLed(ConsoleOutput):
         """最近一次灯光指令是否要求"持续闪"（供演示/测试观察，2026-09-26 加）。"""
         lights = [c for c in self.history if isinstance(c, LightCommand)]
         return bool(lights[-1].blink) if lights else False
+
+    def status(self) -> Dict[str, Any]:
+        """与真实 `Led` **同形**：`current_color` / `blinking`（2026-10-01 补，理由同 ConsoleLcd）。"""
+        info = super().status()
+        info.update({
+            "current_color": self.current_color,
+            "blinking": (self.current_color if self.blink_requested else None),
+        })
+        return info
 
 
 # ==========================================================================
