@@ -13,6 +13,21 @@
 1. **一句话 10 秒内不重复播报**（``speak_repeat_s``）；
 2. **消音生效**：``SILENCE`` 后一段时间内只保留 LED 提示，不响铃、不播报；
 3. **蜂鸣器鸣叫有总时长上限**（由驱动再兜一层，防止代码 bug 导致长鸣）。
+
+⚠️ **声音绝不允许阻塞监护循环**（`ERROR.md` **E63**，2026-10-01 真机实测）
+----------------------------------------------------------------------------
+真机上"两个按键同一秒报 `sensor_fault`"的根因是：`bt_speaker.speak()` 串行跑
+两条各 15 秒超时的外部命令，而本类的 :meth:`dispatch` 是在**主循环线程里**同步执行的
+⇒ **一次语音播报让整个监护停摆 20~30 秒**（不采集、不响应按键、不上云），
+主循环停摆又让"所有周期短的设备被判陈旧"⇒ 凭空一串假故障。
+
+因此本类把 **音频类**指令（`DeviceKind.AUDIO`：蜂鸣器 + 音箱）交给
+:class:`~health_monitor.core.output_worker.OutputWorker` 在**工作线程**里执行，
+主循环只入队、立即返回；灯与屏仍**同步**下发（它们只是一次 GPIO/I2C/SPI 写，
+而且"报警最要紧的头几十毫秒"里灯屏必须即时）。
+
+判据（见 `tests/core/test_dispatcher.py::TestAudioNeverBlocksLoop`）：
+**一个 `send()` 故意卡 10 秒的假音箱，不许让 `dispatch()` 多花超过 0.5 秒。**
 """
 
 from __future__ import annotations
@@ -34,6 +49,7 @@ from ..hal.models import (
     Severity,
     SpeakCommand,
 )
+from .output_worker import OutputWorker
 
 _LOG = logging.getLogger(__name__)
 
@@ -122,6 +138,9 @@ class AlarmDispatcher:
         enabled: 是否真的发声/显示。``False`` 时只记录（演示或夜间静音模式）。
         speak_repeat_s: 同一句话在该秒数内不重复播报（防吵人）。
         silence_after_s: 调用 :meth:`silence` 后，多少秒内只亮灯不出声。
+        audio_in_background: **音频是否交给工作线程**（默认 ``True``，见模块文档 E63）。
+            只有"要精确观察音频时序"的测试才该关掉它。
+        audio_worker: 注入一个 :class:`OutputWorker`（测试可直接拿到它做断言）。
     """
 
     def __init__(
@@ -130,6 +149,8 @@ class AlarmDispatcher:
         enabled: bool = True,
         speak_repeat_s: float = 10.0,
         silence_after_s: float = 300.0,
+        audio_in_background: bool = True,
+        audio_worker: Optional[OutputWorker] = None,
     ) -> None:
         self.outputs: Dict[str, OutputDevice] = dict(outputs or {})
         self.enabled = bool(enabled)
@@ -142,6 +163,35 @@ class AlarmDispatcher:
         self.errors: List[str] = []
         self._send_failures: Dict[str, int] = {}     # 器件名 -> 连续下发失败次数
         self._quiet_after = 3                        # 连续失败达到该次数后停止刷屏
+        #: 音频后台执行器（E63）。设为 ``None`` 表示"音频也同步跑"（仅测试用）。
+        self.audio_in_background = bool(audio_in_background)
+        self.worker: Optional[OutputWorker] = (
+            (audio_worker or OutputWorker()) if self.audio_in_background else None
+        )
+
+    # ------------------------------------------------------------------
+    # 音频后台执行器（E63）
+    # ------------------------------------------------------------------
+
+    def start_audio(self) -> None:
+        """启动音频工作线程（幂等；在服务正式跑起来时调一次）。"""
+        if self.worker is not None:
+            self.worker.start()
+
+    def flush_audio(self, timeout: float = 5.0) -> bool:
+        """等"已经入队的音频"跑完（测试断言"到底响没响"之前必须调它）。
+
+        返回是否真的排空。音频在后台 ⇒ **不调它就无法确定地断言声音结果**；
+        这也是"异步化"必须付的代价，所以把它做成一等公民而不是让测试去 sleep。
+        """
+        if self.worker is None:
+            return True
+        return self.worker.flush(timeout=timeout)
+
+    def close(self) -> None:
+        """停止后台执行器（幂等；由服务生命周期在 :meth:`Runtime.close` 里调）。"""
+        if self.worker is not None:
+            self.worker.close()
 
     # ------------------------------------------------------------------
     # 输出器件的运行期增删（2026-10-01，Web 配置面板的热应用用）
@@ -405,14 +455,22 @@ class AlarmDispatcher:
             only_driver: 只发给该驱动类型的器件（用于区分"蜂鸣器"与"音箱"，
                          因为二者同属 ``AUDIO`` 大类但指令类型不同）。
 
+        **音频走后台线程**（E63）：``DeviceKind.AUDIO`` 的指令只入队，**立即返回**；
+        灯/屏仍同步下发。详见模块文档与 :class:`~health_monitor.core.output_worker.OutputWorker`。
+
         退化保护：某个输出器件**连续多次**下发失败（例如它根本没打开成功），
         只记一次日志后进"冷却名单"，避免每帧刷屏把真问题淹掉；
         之后每次仍会尝试（器件可能热插拔恢复），一旦成功立刻恢复常态。
+        后台音频的失败计数与冷却由 `OutputWorker` 负责（并且会**熔断**一段时间）。
         """
-        for name, device in self.outputs.items():
+        background = kind is DeviceKind.AUDIO and self.worker is not None
+        for name, device in list(self.outputs.items()):
             if getattr(device, "KIND", None) is not kind:
                 continue
             if only_driver is not None and getattr(device, "NAME", "") != only_driver:
+                continue
+            if background:
+                self.worker.submit(name, device, command)
                 continue
             try:
                 device.send(command)
@@ -440,6 +498,10 @@ class AlarmDispatcher:
             "dispatched": len(self.dispatched),
             "errors": self.errors[-5:],
             "silenced_until": self._silenced_until,
+            #: 音频后台执行器的状态（E63）：队列积压 / 各器件成功次数 / 熔断情况。
+            #: 排障用：``pending`` 长期不为 0 = 输出器件太慢；``backoff_until`` 里出现器件名
+            #: = 它已连续失败被熔断（本项目真机上 ``speaker`` 就是这样，音频硬件本来就没有）。
+            "audio_worker": (self.worker.status() if self.worker is not None else None),
         }
 
     def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
@@ -447,4 +509,4 @@ class AlarmDispatcher:
         return self.dispatched[-limit:]
 
 
-__all__ = ["AlarmDispatcher", "AlarmPresentation", "PRESENTATION_TABLE"]
+__all__ = ["AlarmDispatcher", "AlarmPresentation", "OutputWorker", "PRESENTATION_TABLE"]

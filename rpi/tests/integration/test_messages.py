@@ -125,6 +125,10 @@ class _Base(unittest.TestCase):
             self.clock.advance(advance)
         self.rt.tick()
 
+    def _flush(self) -> None:
+        """排空音频队列（E63）：音频在工作线程里，读"响了几声"之前必须调它。"""
+        self.assertTrue(self.rt.flush_audio(5.0), "音频队列没有在 5 秒内排空")
+
     def _press_and_tick(self, who: str, action: ButtonAction = ButtonAction.CLICK,
                         advance: float = 0.3) -> None:
         """注入一次按键再跑一帧。
@@ -242,8 +246,10 @@ class TestSosStillRecorded(_Base):
 
     def test_长按A触发求救并留下事件(self) -> None:
         self._tick()
+        self._flush()
         before = self._beeps()
         self._press_and_tick("sos_button", ButtonAction.LONG_PRESS)
+        self._flush()
 
         self.assertIn(AlarmCode.SOS_PRESSED, [e.code for e in self.rt.recent_events()],
                       "SOS 必须在消息流里")

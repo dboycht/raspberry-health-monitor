@@ -36,6 +36,19 @@ from .store import Store
 
 _LOG = logging.getLogger(__name__)
 
+#: 判"数据陈旧"的**最小绝对秒数**（`ERROR.md` **E63**，2026-10-01 真机实测后加）。
+#:
+#: 为什么不能只看 ``stale_factor × interval``：这个门槛对**短周期设备**小得离谱 ——
+#: 两个按键是 ``0.2s × 3 = 0.6 秒``，`motion` 是 ``0.5s × 3 = 1.5 秒``。
+#: 于是**主循环只要被卡住一小会儿**（当时是语音播报阻塞了 25 秒），
+#: 它们就全部被判"陈旧"，而 `snapshot()` 把陈旧**直接折算成 `sensor_fault_after`
+#: 次读取失败** ⇒ 凭空报一串"传感器故障"，且下一帧就自愈（"同一秒报警又解除"）。
+#:
+#: 5 秒的依据：主循环的正常节拍是"最多睡 1 秒"（``run_forever``），
+#: 加上单次读取最坏 2~3 秒（DHT11 的位时序 + MAX30102 攒 5 秒窗会有秒级读），
+#: 5 秒**大于"正常一帧 + 一次慢读"**、又远小于真故障该被发现的时间。
+DEFAULT_STALE_MIN_S = 5.0
+
 
 class _Entry:
     """一个设备的运行状态（采集器内部用）。"""
@@ -82,6 +95,7 @@ class Collector:
         store: 历史存储（可为 ``None``，表示只跑内存不落库）。
         clock: 时间源，返回 Unix 秒（默认 :func:`time.time`；测试注入假时钟）。
         stale_factor: 超过 ``stale_factor × 周期`` 没读到新数据即认为"陈旧"。
+        stale_min_s: **判"陈旧"的最小绝对秒数**（默认 5.0，见 :data:`DEFAULT_STALE_MIN_S`）。
     """
 
     def __init__(
@@ -91,11 +105,13 @@ class Collector:
         store: Optional[Store] = None,
         clock: Callable[[], float] = time.time,
         stale_factor: float = 3.0,
+        stale_min_s: float = DEFAULT_STALE_MIN_S,
     ) -> None:
         self.config = config
         self.store = store
         self.clock = clock
         self.stale_factor = float(stale_factor)
+        self.stale_min_s = max(0.0, float(stale_min_s))
         self.entries: Dict[str, _Entry] = {}
         self._faulted: set = set()          # 已经报过"故障"的设备名（防止重复记录）
         self._awaiting: set = set()         # 已经报过"暂无有效读数（非故障）"的设备名（同上）
@@ -222,8 +238,11 @@ class Collector:
     def snapshot(self) -> ReadingSnapshot:
         """把各设备最近一次有效读数汇总成 :class:`ReadingSnapshot`。
 
-        ⚠️ **陈旧保护**：超过 ``stale_factor × 周期`` 没读到新值的字段一律置 ``None``
-        并在 ``sensor_failures`` 里体现——**不允许用旧值冒充当前状态**。
+        ⚠️ **陈旧保护**：超过 ``max(stale_factor × 周期, stale_min_s)`` 没读到新值的字段
+        一律置 ``None`` 并在 ``sensor_failures`` 里体现——**不允许用旧值冒充当前状态**。
+
+        ⚠️ 陈旧的门槛里有 ``stale_min_s``（E63）：短周期设备（按键 0.2s、PIR 0.5s）
+        的 ``3 × 周期`` 只有 0.6~1.5 秒，主循环稍一卡顿就会把它们全判成故障。
         """
         now = self.clock()
         snap = ReadingSnapshot(ts=now)
@@ -237,8 +256,9 @@ class Collector:
                 errors[name] = entry.last_error or "未知错误"
             elif stale:
                 # 之前读到过，但已经太久没更新：同样按"数据不可用"处理
+                limit = max(self.stale_factor * entry.interval, self.stale_min_s)
                 failures[name] = self.config.thresholds.sensor_fault_after
-                errors[name] = f"数据陈旧（超过 {self.stale_factor:g} × {entry.interval:g}s 未更新）"
+                errors[name] = f"数据陈旧（超过 {limit:g}s 未更新：{self.stale_factor:g} × {entry.interval:g}s 周期，且不小于 {self.stale_min_s:g}s）"
             sample = None if stale else entry.last_sample
             self._fill(snap, name, sample)
 
@@ -279,9 +299,20 @@ class Collector:
             _LOG.debug("设备 %s 返回的样本类型 %s 未参与报警判定", name, type(sample).__name__)
 
     def _is_stale(self, entry: _Entry, now: float) -> bool:
+        """该设备的数据是不是"陈旧"（太久没更新）。
+
+        ⚠️ 门槛 = ``max(stale_factor × interval, stale_min_s)`` —— 那两个设备的
+        ``3 × 0.2s`` 只有 0.6 秒，主循环稍一卡顿就会被判陈旧（E63）。
+
+        ⚠️ **从未成功读过**（``last_ok_ts is None``）**不算"陈旧"**，而是"还没有数据"：
+        它由 ``collect_due()`` 里的失败计数去暴露（真故障自然会涨 `failures`）。
+        原来的写法在这里直接返回 ``True`` ⇒ 服务**第一帧**（器件还没到期读第一次）
+        就会把**所有**设备判成陈旧 ⇒ 凭空一串 `sensor_fault`。
+        """
         if entry.last_sample is None or entry.last_ok_ts is None:
-            return True
-        return (now - entry.last_ok_ts) > self.stale_factor * entry.interval
+            return False
+        threshold = max(self.stale_factor * entry.interval, self.stale_min_s)
+        return (now - entry.last_ok_ts) > threshold
 
     def _motion_silent_s(self, entry: _Entry, now: float) -> Optional[float]:
         """计算"距上次检测到人"的秒数。
@@ -446,4 +477,4 @@ def _failed_sample(entry: _Entry, now: float, error: str) -> Sample:
     return guess(**kwargs)
 
 
-__all__ = ["Collector"]
+__all__ = ["Collector", "DEFAULT_STALE_MIN_S"]

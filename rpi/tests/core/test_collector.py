@@ -111,7 +111,13 @@ class TestCollectorSnapshot(unittest.TestCase):
         self.assertEqual(snap.health_summary()["ambient_temp_c"], 26.0)
 
     def test_陈旧数据被置空而不是沿用旧值(self) -> None:
-        """这条是红线：读不到就必须说"不知道"，不能拿 5 分钟前的值当当前状态。"""
+        """这条是红线：读不到就必须说"不知道"，不能拿 5 分钟前的值当当前状态。
+
+        ⚠️ 2026-10-01（E63）之后"陈旧"的门槛是 ``max(3 × 周期, stale_min_s)``，
+        默认 ``stale_min_s = 5`` ⇒ 这里必须推进**超过 5 秒**才能复现"陈旧"；
+        本节刻意把 ``stale_min_s`` 显式设为 0，用来单独验证**相对门槛**本身。
+        """
+        self.collector.stale_min_s = 0.0
         self.collector.collect_due()
         self.clock.advance(1.0 * 3.0 + 0.5)     # 超过 stale_factor(3) × interval(1s)
         snap = self.collector.snapshot()
@@ -119,6 +125,48 @@ class TestCollectorSnapshot(unittest.TestCase):
         self.assertIn("vitals", snap.sensor_failures)
         self.assertIn("陈旧", snap.sensor_errors["vitals"])
         self.assertIsNone(snap.health_summary()["heart_rate_bpm"])
+
+    # ------------------------------------------------------------------
+    # E63（2026-10-01）：陈旧判别不许把"还没读到第一笔"与"主循环卡了一下"
+    # 当成"传感器故障" —— 真机症状是"两个按键同一秒报 sensor_fault 又自愈"
+    # ------------------------------------------------------------------
+
+    def test_从未成功读过的设备不算陈旧(self) -> None:
+        """服务**第一帧**（器件还没到期读第一次）不许报故障。
+
+        修之前 ``_is_stale()`` 在 ``last_ok_ts is None`` 时直接返回 ``True``
+        ⇒ 第一帧所有设备一起"陈旧"、一起折算成 `sensor_fault_after` 次失败。
+        """
+        snap = self.collector.snapshot()          # 一次都没采过
+        self.assertEqual(snap.sensor_failures, {}, "还没读到第一笔 ≠ 设备故障")
+        self.assertTrue(all(not d["stale"] for d in self.collector.status()["devices"].values()))
+
+    def test_短周期设备的一次卡顿不会被当成故障_E63(self) -> None:
+        """★ E63 的判据：主循环被卡 2 秒，**短周期设备**不许因此被报成故障。
+
+        真机案发现场：`/api/v1/messages` 的 `detail.error` 白纸黑字写着
+        "数据陈旧（超过 3 × 0.2s 未更新）" —— 那是按键（周期 0.2s）被主循环卡住
+        25 秒后判出来的，**不是器件坏了，是我们自己卡了**。
+        这里把 vitals 的周期临时改成 0.2s，复现同一套算术。
+        """
+        self.collector.entries["vitals"].interval = 0.2     # 旧门槛 = 3 × 0.2 = 0.6s
+        self.collector.collect_due()
+        self.clock.advance(2.0)                             # 卡 2 秒：旧门槛已越过、新门槛 5s 未到
+        snap = self.collector.snapshot()
+        self.assertNotIn("vitals", snap.sensor_failures,
+                         "主循环卡顿不应被报成传感器故障（E63）")
+        self.assertIsNotNone(snap.vitals, "2 秒的卡顿不该把数据判成不知道")
+
+    def test_真故障仍然会被陈旧保护抓出来_E63(self) -> None:
+        """反向钉子：加了 ``stale_min_s`` 之后，**真的**读不到仍然必须报故障。
+
+        否则"修误报"就会变成"把真故障也一起瞒掉" —— 那比误报更糟。
+        """
+        self.collector.collect_due()
+        self.clock.advance(60.0)                   # 远超 max(3×1s, 5s)
+        snap = self.collector.snapshot()
+        self.assertIn("vitals", snap.sensor_failures, "真的一分钟没数据必须报出来")
+        self.assertIn("陈旧", snap.sensor_errors["vitals"])
 
     def test_失败计数传给规则引擎(self) -> None:
         self.vitals.fail_with = DeviceIOError("I2C 无应答")

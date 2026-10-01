@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from .core.config import ConfigError, load_config
 from .hal.registry import DRIVER_DOCS, MANIFEST, get_spec
+from .net.web import probe_port
 from .service import Runtime, build_runtime
 from .console import safe_print  # noqa: E402
 
@@ -110,9 +111,23 @@ def cmd_selfcheck(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """启动完整服务（采集 + 报警 + HTTP API），前台运行，Ctrl+C 退出。"""
+    """启动完整服务（采集 + 报警 + HTTP API），前台运行，Ctrl+C 退出。
+
+    ⚠️ **先探端口，再开器件**（`ERROR.md` **E75**）：顺序反了的话，"注定要失败的
+    第二个实例"会先去碰一遍硬件 —— GPIO 器件会因排他当场失败（无害），
+    但 **I2C 器件没有排他锁**（LCD1602 / MAX30102），第二个实例**真会去读 MAX30102 的
+    FIFO**（破坏性）。判据：**注定失败的操作不许产生副作用。**
+    """
     mock = not args.real
     runtime = build_runtime(args.config, mock=mock, store_path=args.store, dispatcher_enabled=not args.quiet)
+
+    blocked = probe_port(args.host, args.port)
+    if blocked is not None:
+        safe_print(f"❌ 端口 {args.port} 无法绑定：{blocked}")
+        print("   （已按'先探端口再开器件'的顺序退出：**一个器件都没碰**）")
+        runtime.close()
+        return 2
+
     errors = runtime.open()
     if errors:
         safe_print(f"⚠️  {len(errors)} 个设备打开失败（服务继续运行，但相关功能不可用）：")

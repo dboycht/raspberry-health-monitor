@@ -15,6 +15,11 @@
 5. 报警下发（``AlarmDispatcher.dispatch``）、落库、记录；
 6. 按最近到期时间睡眠（不空转烧 CPU）。
 
+⚠️ **本循环绝不允许被输出器件阻塞**（`ERROR.md` **E63**）：语音播报走
+:class:`~health_monitor.core.output_worker.OutputWorker` 的**工作线程**，
+本循环只入队。**任何新加的"下发/等待"都不许在这里同步跑** ——
+这个循环是"监护"，停一秒就是盲一秒。
+
 额外兜底：**所有传感器都读不到时**（例如一次性拔了线），
 会自发一条 ``SENSOR_FAULT``，避免"系统还在跑但什么都测不到"却悄无声息。
 """
@@ -126,6 +131,9 @@ SPO2_PROMPT_BEEPS = 2    # 叫人："该测血氧了"
 SPO2_START_BEEPS = 1     # 开始测量
 SPO2_DONE_BEEPS = 2      # 测到了
 SPO2_FAIL_BEEPS = 5      # 没测到
+
+#: 配置里心率血氧传感器的设备名（"按需测量"要临时装配/打开它）。
+VITALS_DEVICE_NAME = "vitals"
 
 
 def _pir_tag(motion: Any) -> str:
@@ -464,6 +472,10 @@ class Runtime:
         self._spo2_samples: List[Any] = []
         #: 上次喂提示的时刻（提示要周期性重发）
         self._spo2_last_notice_ts = 0.0
+        #: 这次测量的心率血氧传感器**是不是我们临时装配的**（是 ⇒ 测完要摘掉）
+        self._on_demand_vitals: bool = False
+        #: 测量前 vitals 的采样周期（测完还原；``None`` = 本轮没改过）
+        self._vitals_interval_before: Optional[float] = None
 
         # ---- 1. 装配输入设备 ----
         self.devices: Dict[str, Device] = {}
@@ -495,6 +507,9 @@ class Runtime:
         self.collector = Collector(
             config, self.inputs, store=self.store, clock=clock,
         )
+        # 音频工作线程（E63）：调度器造好就启动它，让"启动提示"的语音也走后台，
+        # 不阻塞 `open()` 之后紧接着的那一轮采集与 HTTP 绑定。
+        self.dispatcher.start_audio()
 
         # ---- 3.2 报警"持续提醒"的状态（2026-09-26 新增，见 `_drive_persistent_alert`）----
         #: 上次重发提示的时间（0 = 还没有过）
@@ -654,6 +669,17 @@ class Runtime:
             except Exception as exc:  # noqa: BLE001
                 _LOG.debug("关闭 HTTP 服务异常（已忽略）：%s", exc)
             self._server = None
+        # 音频工作线程（E63）：先停它，再关输出器件 —— 反过来的话，
+        # 线程可能正在 `speaker.send()` 里用已经关掉的器件，日志上是一串假失败。
+        try:
+            self.dispatcher.close()
+        except Exception as exc:  # noqa: BLE001
+            _LOG.debug("关闭音频工作线程异常（已忽略）：%s", exc)
+        # 测量途中关服务：把"临时装配"的传感器还回去（幂等；正常路径上它已经关了）
+        try:
+            self._spo2_release_vitals()
+        except Exception as exc:  # noqa: BLE001
+            _LOG.debug("收尾释放心率血氧传感器异常（已忽略）：%s", exc)
         self.collector.close_all()
         for name, device in self.outputs.items():
             try:
@@ -1020,6 +1046,12 @@ class Runtime:
 
         **总开关 = 配置里 ``spo2_button`` 的 ``enabled``**（用户 2026-09-30 定的口径）：
         关掉它就把"专用按键"和"定期叫人"**一起**关掉，不留半开状态。
+
+        ⚠️ 2026-10-01 起这里**不再要求 vitals 已装配**：默认配置把 `vitals` 设成
+        ``enabled=false``（"默认只做环境测量"），测量窗口内才临时装配它
+        （见 :meth:`_spo2_attach_vitals`）。原来那句
+        ``return SPO2_BUTTON_NAME in self.devices`` 是"按键必须已在调度里"，
+        在"按需装配"的口径下会把整个功能关死。
         """
         cfg = self.config.device(SPO2_BUTTON_NAME)
         if cfg is None or not getattr(cfg, "enabled", False):
@@ -1073,6 +1105,84 @@ class Runtime:
                   SPO2_PROMPT_BEEPS, float(th.spo2_remind_timeout_s))
         self._spo2_show(SPO2_PROMPT_LINES, now, force=True)
 
+    # ------------------------------------------------------------------
+    # 「按需测量」的器件生命周期（2026-10-01，用户选了方案 (c)）
+    # ------------------------------------------------------------------
+
+    def _spo2_attach_vitals(self) -> str:
+        """**只在测量窗口内**把心率血氧传感器装配并打开，返回失败原因（空串 = 成功）。
+
+        为什么这么做（用户 2026-10-01 拍板的产品口径）
+        -----------------------------------------------
+        规格原话：「默认情况下我们只进行环境的测量以及监控，只有用户点击后台或者
+        系统内部弹出时才测量血氧」。所以默认配置里 ``vitals.enabled=false`` ——
+        **平时一次都不采样**（不是"开着器件但不看"），只有这三条入口会临时打开它：
+
+        * 物理「测血氧」按键；* 后台 ``POST /api/v1/spo2/measure``；* 系统先叫人、用户按了同意。
+
+        ⚠️ **已知代价**（写进 `DEVELOPMENT.md` 待办与 `docs/07`）：测量之外
+        `hr_too_high` / `hr_too_low` / `spo2_too_low` 三条报警规则**永远不触发** ——
+        没有数据就没有判定。想回到"连续采样"就把配置里 ``vitals.enabled`` 改回 ``true``。
+
+        ⚠️ 副作用：``_last_stale_alert``（"所有传感器都没数据 ⇒ 自发 SENSOR_FAULT"那条）
+        以 ``self.inputs`` 为准；vitals 被摘掉后就不算了，**正是我们要的**
+        （否则服务会在没人测的时候一直报"所有传感器均无有效数据"）。
+
+        ⚠️ **测量期会把采样周期临时调成** ``thresholds.spo2_read_interval_s``（默认 1 秒）：
+        配置里 ``vitals.read_interval_s`` 可能被用户设成 30 秒（"保留缓慢异常发现"），
+        那样一次 30 秒的测量窗口只攒得到 1 个样本 —— 面板会显示"没测到"，
+        而**真实原因是我们采样太慢，不是手指没贴**。
+        """
+        name = VITALS_DEVICE_NAME
+        cfg = self.config.device(name)
+        if cfg is None:
+            return "配置里没有 vitals 设备"
+        if name in self.devices:                     # 用户把它设成连续采样了：直接用
+            self._apply_measure_interval()
+            return ""
+
+        problem = self._attach_device(cfg)
+        if problem:
+            _LOG.warning("[测血氧] 临时装配 %s 失败（本次测量无法进行）：%s", name, problem)
+            return problem
+        self._on_demand_vitals = True
+        self._apply_measure_interval()
+        _LOG.info("[测血氧] 已临时启用心率血氧传感器（测量窗口内采样，测完自动关闭）")
+        return ""
+
+    def _apply_measure_interval(self) -> None:
+        """测量窗口内把 vitals 的采样周期换成 ``spo2_read_interval_s``（记下原值以便还原）。"""
+        entry = self.collector.entries.get(VITALS_DEVICE_NAME)
+        if entry is None:
+            return
+        want = float(self.config.thresholds.spo2_read_interval_s)
+        if entry.interval == want:
+            return
+        if self._vitals_interval_before is None:
+            self._vitals_interval_before = entry.interval
+        entry.interval = want
+        # 让下一次读取**尽快**发生（默认 1 秒，本来就快；30 秒档才有意义）
+        due = self.clock() + want
+        if entry.next_due_ts is None or entry.next_due_ts > due:
+            entry.next_due_ts = due
+
+    def _spo2_release_vitals(self) -> None:
+        """测量窗口结束：**还原采样周期**，并把"临时装配"的传感器关掉摘掉（幂等）。
+
+        ⚠️ 只有"临时装配"的才关 —— 用户手工设成 ``enabled=true`` 的连续采样
+        绝不能被一次测量顺手关掉（那会把他的配置悄悄改掉）。
+        """
+        entry = self.collector.entries.get(VITALS_DEVICE_NAME)
+        if entry is not None and self._vitals_interval_before is not None:
+            entry.interval = self._vitals_interval_before
+            self._vitals_interval_before = None
+        if not self._on_demand_vitals:
+            return
+        self._on_demand_vitals = False
+        if VITALS_DEVICE_NAME in self.devices:
+            self._detach_device(VITALS_DEVICE_NAME)
+            _LOG.info("[测血氧] 测量结束：已关闭并摘掉心率血氧传感器（回到「只做环境监控」）")
+
     def _spo2_begin_measure(self, now: float) -> None:
         """开始测量窗口（用户按键了）。屏上那句提示**就是 E60 的产品化处置**。"""
         th = self.config.thresholds
@@ -1080,13 +1190,21 @@ class Runtime:
         self._spo2_deadline = now + float(th.spo2_measure_s)
         self._spo2_samples = []
         self._spo2_last_notice_ts = 0.0
+        problem = self._spo2_attach_vitals()
         self.dispatcher.notice_beep(SPO2_START_BEEPS, now)
+        if problem:
+            # 传感器打不开：**当场如实告诉用户**，别让他举着手指等 30 秒
+            _LOG.warning("[测血氧] 传感器不可用：%s", problem)
+            self._spo2_show(SPO2_FAIL_LINES, now, force=True)
+            self._spo2_finish_measure(now)
+            return
         _LOG.info("[测血氧] 开始测量（%.0f 秒）：请把食指指腹轻贴 MAX30102、"
                   "**别用力压**（按紧会让血氧偏低，见 ERROR.md E60）", float(th.spo2_measure_s))
         self._spo2_show(SPO2_MEASURE_LINES, now, force=True)
 
     def _spo2_finish_measure(self, now: float) -> None:
         """测量结束：有有效读数就报**窗口中位数**，没有就如实说"没测到"（**不报警**）。"""
+        self._spo2_release_vitals()          # 先还硬件：下面可能提前 return
         usable = [s for s in self._spo2_samples if _has_usable_vitals(s)]
         hr: Optional[float] = None
         spo2: Optional[float] = None
@@ -1139,6 +1257,7 @@ class Runtime:
 
     def _spo2_give_up(self, now: float) -> None:
         """本轮没测成（叫人后没人按 / 用户否决）⇒ 回到待机并排下一轮。**不报警。**"""
+        self._spo2_release_vitals()          # 幂等：正常路径上它已经是关着的
         self._spo2_state = "idle"
         self._spo2_samples = []
         self._spo2_request = None
@@ -1319,6 +1438,9 @@ class Runtime:
         所以两条入口的行为**必然一致**，不会各写一套。
         """
         if not self._spo2_enabled():
+            # 用户在测量途中把「测血氧」关了（面板热应用）⇒ 立刻收摊并**还硬件**，
+            # 否则那个"临时装配"的传感器会一直留着读（"关了还在测"是最难查的一类）。
+            self._spo2_release_vitals()
             self._spo2_state = "idle"
             self._spo2_request = None
             return
@@ -1443,6 +1565,15 @@ class Runtime:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def flush_audio(self, timeout: float = 5.0) -> bool:
+        """等"已经入队的音频"跑完，返回是否排空。
+
+        为什么是一等公民（E63）：音频改到工作线程后，**"报警判出来了"与
+        "蜂鸣器真的响了"之间多了一小段异步**。任何"要确定地断言声音结果"的调用方
+        （集成测试、真机验收脚本、`demo`）都必须先调它，否则断言会随机地红/绿。
+        """
+        return self.dispatcher.flush_audio(timeout=timeout)
 
     def start_http(self, host: str = "0.0.0.0", port: int = 8080, token: str = "") -> Any:
         """启动 HTTP API（后台线程），返回 server 对象。"""

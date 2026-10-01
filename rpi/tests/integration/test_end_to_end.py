@@ -21,12 +21,14 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime
 from typing import Any, Dict, List
+from unittest import mock
 
 from health_monitor.core.config import AppConfig
 from health_monitor.demo import DEMO_CONFIG
 from health_monitor.hal import find_conflicts
-from health_monitor.net.web import WebApi
+from health_monitor.net.web import WebApi, probe_port
 from health_monitor.playback import PlaybackRuntime
 from health_monitor.service import Runtime
 
@@ -38,8 +40,10 @@ def demo_runtime(**kwargs: Any) -> PlaybackRuntime:
 
 
 class _Clock:
-    def __init__(self, start: float = 1_790_000_000.0) -> None:
-        self.t = start
+    def __init__(self, start: float = None) -> None:   # type: ignore[assignment]
+        # 默认从**当地 14:00** 起（白天）：夜间"久无活动"阈值会放大（E68），
+        # 用写死的时间戳会让用例"白天绿、夜里红"（E71 的形状）。
+        self.t = daytime() if start is None else float(start)
 
     def __call__(self) -> float:
         return self.t
@@ -47,6 +51,17 @@ class _Clock:
     def advance(self, seconds: float) -> float:
         self.t += seconds
         return self.t
+
+
+def daytime(hour: int = 14) -> float:
+    """一个**肯定不在夜间窗口内**的时间戳（默认当地 14:00）。
+
+    为什么需要它（`ERROR.md` **E68**）：夜间"久无活动"阈值会放大
+    ``night_no_motion_factor`` 倍，而写死的时间戳换算成本地几点**随机器时区变** ⇒
+    同一份代码白天绿、夜里红（**E71** 的形状：CI 红、本机绿）。
+    凡"与时段有关"的用例一律用它打底。
+    """
+    return datetime(2026, 9, 21, hour, 0, 0).timestamp()
 
 
 class TestFullPipeline(unittest.TestCase):
@@ -60,6 +75,10 @@ class TestFullPipeline(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.rt.close()
+
+    def _flush(self) -> None:
+        """排空音频队列（E63）：音频在工作线程里，读"响了几声/念了几句"之前必须调它。"""
+        self.assertTrue(self.rt.flush_audio(5.0), "音频队列没有在 5 秒内排空")
 
     def test_所有演示设备都装配成功(self) -> None:
         self.assertIn("vitals", self.rt.inputs)
@@ -90,6 +109,7 @@ class TestFullPipeline(unittest.TestCase):
         lcd = self.rt.outputs["display"]
         buzzer = self.rt.outputs["alarm_buzzer"]
         speaker = self.rt.outputs["speaker"]
+        self._flush()
         self.assertNotEqual(led.current_color, "off", "报警时 LED 必须亮")
         self.assertIn("HR HIGH", " ".join(lcd.current_lines), "LCD 必须显示报警文案")
         self.assertGreater(buzzer.total_beeps, 0, "报警时蜂鸣器必须响")
@@ -106,6 +126,9 @@ class TestFullPipeline(unittest.TestCase):
     def test_久无活动报警(self) -> None:
         from health_monitor.hal.models import MotionState
 
+        # ⚠️ 时钟固定到当地 14:00：夜间阈值会放大（E68），
+        #    不固定的话这条用例会"白天绿、夜里红"。
+        self.clock.t = daytime()
         self.rt.set_motion(MotionState.IDLE, silent_s=120.0)
         codes = [e.code.value for e in self.rt.tick()]
         self.assertIn("no_motion_too_long", codes)
@@ -123,8 +146,10 @@ class TestFullPipeline(unittest.TestCase):
         self.rt.silence(self.clock())
         buzzer = self.rt.outputs["alarm_buzzer"]
         speaker = self.rt.outputs["speaker"]
+        self._flush()
         before_beeps, before_spoken = buzzer.total_beeps, len(speaker.spoken)
         self.rt.tick()
+        self._flush()
         self.assertEqual(buzzer.total_beeps, before_beeps, "静音期间蜂鸣器不该响")
         self.assertEqual(len(speaker.spoken), before_spoken, "静音期间不该语音播报")
         self.assertNotEqual(self.rt.outputs["status_led"].current_color, "off", "静音期间仍要亮灯提示")
@@ -212,10 +237,12 @@ class Test实体按键接线(unittest.TestCase):
 
         self.rt.silence(self.clock())
         buzzer = self.rt.outputs["alarm_buzzer"]
+        self.rt.flush_audio()            # 音频在工作线程里（E63）：先把队列排空再读数
         before = buzzer.total_beeps
 
         self.button.press(ButtonAction.LONG_PRESS)
         codes = [e.code.value for e in self.rt.tick()]
+        self.rt.flush_audio()
         self.assertIn("sos_pressed", codes, "长按必须触发 SOS 事件")
         self.assertFalse(self.rt.dispatcher.is_silenced(self.clock()), "求救必须能响：先解除静音")
         self.assertGreater(buzzer.total_beeps, before, "SOS 应当让蜂鸣器响")
@@ -271,18 +298,26 @@ class Test报警持续提醒(unittest.TestCase):
         self.rt.set_vitals(heart_rate=130.0, spo2=98.0)
         self.rt.tick()
 
+    def _flush(self) -> None:
+        """排空音频队列（E63）：音频在工作线程里，读"响了几声"之前必须调它。"""
+        self.assertTrue(self.rt.flush_audio(5.0), "音频队列没有在 5 秒内排空")
+
     def test_报警期间灯持续闪(self) -> None:
         self._trigger_alarm()
         self.assertTrue(self.led.blink_requested, "报警期间 LED 应当处于持续闪状态")
 
     def test_到间隔才重响不到不响(self) -> None:
         self._trigger_alarm()
+        self._flush()
         first = self.buzzer.total_beeps
+        self.assertGreater(first, 0, "第 1 次报警就该响")
         self.clock.advance(1.0)
         self.rt.tick()
+        self._flush()
         self.assertEqual(self.buzzer.total_beeps, first, "没到间隔不该重响")
         self.clock.advance(5.0)
         self.rt.tick()
+        self._flush()
         self.assertGreater(self.buzzer.total_beeps, first, "到了间隔必须再响一次")
         self.assertGreaterEqual(self.rt.dispatcher.realerts, 1, "重发次数要能被观察")
 
@@ -294,10 +329,12 @@ class Test报警持续提醒(unittest.TestCase):
         self.assertFalse(self.led.blink_requested, "消音后灯应转常亮（不再闪）")
         self.assertNotEqual(self.led.current_color, "off", "消音只停声音，灯仍要亮")
 
+        self._flush()
         beeps = self.buzzer.total_beeps
         for _ in range(4):
             self.clock.advance(5.0)
             self.rt.tick()
+        self._flush()
         self.assertEqual(self.buzzer.total_beeps, beeps, "消音期间不许再响")
 
     def test_报警解除后不再重发(self) -> None:
@@ -307,10 +344,12 @@ class Test报警持续提醒(unittest.TestCase):
         events = self.rt.tick()
         self.assertIn("all_clear", [e.code.value for e in events], "恢复正常应当发 ALL_CLEAR")
 
+        self._flush()
         beeps = self.buzzer.total_beeps
         for _ in range(3):
             self.clock.advance(5.0)
             self.rt.tick()
+        self._flush()
         self.assertEqual(self.buzzer.total_beeps, beeps, "报警解除后不该再重发")
 
     def test_间隔为0时回到只提示一次(self) -> None:
@@ -471,6 +510,64 @@ class TestPortConflict(unittest.TestCase):
         finally:
             rt1.close()
             rt2.close()
+
+
+class TestPortProbeBeforeHardware(unittest.TestCase):
+    """★ E75（2026-10-01）：**注定要失败的实例不许碰硬件**。
+
+    真机现场（S10 验收）：第二个实例在**绑定端口之前**就去开了 GPIO，
+    于是先打出一串 `DeviceInitError: … 'GPIO busy'`（sos_button/spo2_button/tft/status_led）。
+    那些是无害的（GPIO 排他、当场失败）；但 **I2C 器件（LCD1602 / MAX30102）没有排他锁**
+    ⇒ 第二个实例**真的会去读 MAX30102 的 FIFO**（破坏性：两进程互相抢走采样）。
+    判据：**注定失败的操作不许产生副作用。**
+    """
+
+    def test_端口空闲时探针放行(self) -> None:
+        import socket
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))          # 让内核挑一个空闲端口
+            port = probe.getsockname()[1]
+        self.assertIsNone(probe_port("127.0.0.1", port), "空闲端口不该被判定为占用")
+
+    def test_端口被占用时探针给出人话原因(self) -> None:
+        rt = demo_runtime()
+        rt.open()
+        server = rt.start_http(host="127.0.0.1", port=0)
+        port = server.server_address[1]
+        try:
+            reason = probe_port("127.0.0.1", port)
+            self.assertIsNotNone(reason, "端口已被真实服务占用，探针必须报出来")
+            self.assertIn("端口", str(reason) + "端口")   # 文案要能直接打给用户看
+        finally:
+            rt.close()
+
+    def test_serve_在端口被占用时连一个器件都不打开(self) -> None:
+        """★ 这条才是 E75 的判据本体：**`Runtime.open()` 一次都不许被调用**。"""
+        from health_monitor import main as cli
+
+        with mock.patch.object(cli, "probe_port", return_value="[Errno 98] Address already in use"), \
+                mock.patch.object(Runtime, "open", autospec=True) as opened:
+            rc = cli.main(["serve", "--host", "127.0.0.1", "--port", "65500"])
+        self.assertEqual(rc, 2, "端口被占用应当以退出码 2 结束")
+        self.assertFalse(opened.called, "端口已经注定绑不上，绝不许再去碰硬件（E75）")
+
+    def test_端口空闲时照常往下走(self) -> None:
+        """反向钉子：探针放行时**必须继续**启动（别把"先探端口"写成"永远退出"）。"""
+        from health_monitor import main as cli
+
+        with mock.patch.object(cli, "probe_port", return_value=None) as probe, \
+                mock.patch.object(Runtime, "open", autospec=True) as opened, \
+                mock.patch.object(Runtime, "start_http", autospec=True) as http, \
+                mock.patch.object(Runtime, "start_background", autospec=True), \
+                mock.patch.object(cli, "time") as fake_time:
+            opened.return_value = {}
+            fake_time.sleep.side_effect = KeyboardInterrupt          # 起完就"按 Ctrl+C"
+            rc = cli.main(["serve", "--host", "127.0.0.1", "--port", "65501"])
+        self.assertTrue(probe.called, "必须先探端口")
+        self.assertTrue(opened.called, "端口空闲时应当照常开器件")
+        self.assertTrue(http.called, "端口空闲时应当照常起 HTTP")
+        self.assertEqual(rc, 0)
 
 
 class TestConfigConsistency(unittest.TestCase):

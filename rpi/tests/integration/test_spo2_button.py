@@ -121,16 +121,27 @@ class _Base(unittest.TestCase):
         self.rt.sim(who).press(action)
         self._tick(advance=advance)
 
+    def tick(self) -> list:
+        """跑一帧并**排空音频队列**（E63）。
+
+        本文件大量用蜂鸣器当"暗号"的判据（1 声注意 / 2 声开始 / 5 声失败），
+        而音频自 2026-10-01 起在工作线程里跑 ⇒ 不排空的话 `_beeps()` 读到的是中间值。
+        统一走这一个入口，免得每条断言前面都要记得手写 flush。
+        """
+        events = self.rt.tick()
+        self.assertTrue(self.rt.flush_audio(5.0), "音频队列没有在 5 秒内排空")
+        return events
+
     def _tick(self, advance: float = 0.0) -> None:
         if advance:
             self.clock.advance(advance)
-        self.rt.tick()
+        self.tick()
 
     def _reach_prompt(self) -> None:
         """走到"正在叫人"这一步。"""
-        self.rt.tick()
+        self.tick()
         self.clock.advance(REMIND_S)
-        self.rt.tick()
+        self.tick()
         self.assertEqual(self._lcd()[0], SPO2_PROMPT_LINES[0].ljust(16),
                          "到点应当已经在叫人（前置条件没成立，后面的断言就不成立）")
 
@@ -139,14 +150,14 @@ class TestReminder(_Base):
     """叫人这一步：到点才叫，叫在两块屏上，且把屏占住。"""
 
     def test_没到点不叫人(self) -> None:
-        self.rt.tick()
+        self.tick()
         self.assertNotIn("SPO2", " ".join(self._lcd()))
         self.assertEqual(self._beeps(), 0)
 
     def test_到点叫人并且鸣两声(self) -> None:
-        self.rt.tick()
+        self.tick()
         self.clock.advance(REMIND_S)
-        self.rt.tick()
+        self.tick()
         self.assertIn(SPO2_PROMPT_LINES[0], self._lcd()[0])
         self.assertIn(SPO2_PROMPT_LINES[1], self._lcd()[1])
         self.assertEqual(self._beeps(), 2, "叫人的暗号是 2 声")
@@ -191,7 +202,7 @@ class TestMeasure(_Base):
 
     def test_主动按键不必等叫人(self) -> None:
         """没到提醒时间也能自己按着测（"我想现在测一下"）。"""
-        self.rt.tick()
+        self.tick()
         self._press_and_tick()
         self.assertIn(SPO2_MEASURE_LINES[0], self._lcd()[0])
 
@@ -357,7 +368,7 @@ class TestDecline(_Base):
 
         其它阶段用户长按同样是"我要测" —— 给他"按了却没反应"的挫败感才是真的错。
         """
-        self.rt.tick()
+        self.tick()
         self._press_and_tick(action=ButtonAction.LONG_PRESS)
         self.assertIn(SPO2_MEASURE_LINES[0], self._lcd()[0],
                       "待机时长按应当和短按一样开始测量")
@@ -393,7 +404,7 @@ class TestStatusFields(_Base):
     """`spo2_status()` 的字段与倒计时 —— 面板与 `GET /api/v1/spo2` **共用**它。"""
 
     def test_待机时的字段(self) -> None:
-        self.rt.tick()
+        self.tick()
         status = self.rt.spo2_status(self.clock())
         self.assertTrue(status["ok"])
         self.assertTrue(status["enabled"])
@@ -457,26 +468,26 @@ class TestSwitch(_Base):
     spo2_enabled = False
 
     def test_关掉后状态里enabled为假(self) -> None:
-        self.rt.tick()
+        self.tick()
         status = self.rt.spo2_status(self.clock())
         self.assertFalse(status["enabled"])
         self.assertEqual(status["state"], "idle")
 
     def test_关掉后两个动作方法都拒绝(self) -> None:
         """HTTP 层据此返回 409；这条钉子保证"拒绝"来自 Runtime 而不是 web 层自己判断。"""
-        self.rt.tick()
+        self.tick()
         self.assertFalse(self.rt.spo2_measure_now(self.clock()))
         self.assertFalse(self.rt.spo2_decline(self.clock()))
 
     def test_关掉后到点也不叫人(self) -> None:
-        self.rt.tick()
+        self.tick()
         self._tick(advance=REMIND_S * 3)
         self.assertNotIn("SPO2", " ".join(self._lcd()))
         self.assertEqual(self._beeps(), 0)
 
     def test_关掉后按键也没反应(self) -> None:
         """按键被排除在配置外时，事件根本不会进来（也不该进测量）。"""
-        self.rt.tick()
+        self.tick()
         dev = self.rt.sim("spo2_button")
         self.assertIsNone(dev, "未启用的器件不该被装配出来")
 
@@ -553,6 +564,92 @@ class TestDefaultIsEnvironmentOnly(_Base):
         self.assertIn("T=", lcd, "LCD 调试面板应当一直在刷新环境读数")
 
 
+class TestOnDemandVitalsDevice(_Base):
+    """★★ 用户 2026-10-01 选了方案 (c)：**默认 ``vitals.enabled=false``，测量时才临时开**。
+
+    与 :class:`TestDefaultIsEnvironmentOnly` 的分工：那一组锁**行为**（"没人参与就不会有一次测量"），
+    本组锁**硬件层的取舍** —— 非测量期**一次都不采样**，测量窗口内才装配+打开传感器，
+    测完立刻关掉摘掉。这就是"默认只做环境的测量以及监控"的**底层落地**。
+
+    ⚠️ 已知代价（用户已知情选择）：测量之外 `hr_too_high` / `hr_too_low` / `spo2_too_low`
+    三条规则**永远不触发**（没有数据就没有判定）。想回去就改配置
+    ``devices.vitals.enabled=true``，本组最后一条钉子保证那条路仍然通。
+    """
+
+    def setUp(self) -> None:
+        devices = {name: dict(cfg) for name, cfg in DEMO["devices"].items()}
+        devices["vitals"] = dict(devices["vitals"], enabled=False)
+        self.clock = _Clock()
+        self.rt = PlaybackRuntime(
+            AppConfig.from_dict({"thresholds": dict(DEMO["thresholds"]), "devices": devices}),
+            clock=self.clock,
+            sleep=lambda _s: None,
+            verbose_outputs=False,
+        )
+        self.rt.open()
+        self.addCleanup(self.rt.close)
+
+    def test_默认不装配也不读心率血氧(self) -> None:
+        self.tick()
+        self.assertNotIn("vitals", self.rt.devices, "默认不该装配心率血氧传感器")
+        self.assertNotIn("vitals", self.rt.collector.entries, "更不该在采集调度里轮询它")
+        snap = self.rt.collector.snapshot()
+        self.assertIsNone(snap.vitals, "默认口径下拿不到任何心率血氧读数")
+
+    def test_测量时临时打开_测完自动关掉(self) -> None:
+        self.tick()
+        self._press_and_tick("spo2_button", advance=0.3)      # 主动测：不需要先叫人
+        self.assertEqual(self.rt.spo2_status(self.clock())["state"], "measure")
+        self.assertIn("vitals", self.rt.devices, "测量窗口内必须把传感器打开")
+        # 让传感器给出一次有效读数，然后等到测量窗口结束
+        self.rt.set_vitals(heart_rate=68.0, spo2=97.0)
+        self._tick(advance=1.0)
+        self._tick(advance=MEASURE_S + 1.0)
+        self.assertEqual(self.rt.spo2_status(self.clock())["state"], "result")
+        self.assertNotIn("vitals", self.rt.devices, "测完必须关掉摘掉（回到只做环境监控）")
+        self.assertNotIn("vitals", self.rt.collector.entries)
+
+    def test_测量结果仍然拿得到(self) -> None:
+        """反向钉子：临时装配**不许**把功能做坏 —— 该出结果还得出了结果。"""
+        self.tick()
+        self._press_and_tick("spo2_button", advance=0.3)
+        self.rt.set_vitals(heart_rate=68.0, spo2=97.0)
+        for _ in range(4):
+            self._tick(advance=1.0)
+        self._tick(advance=MEASURE_S + 1.0)
+        result = self.rt.spo2_status(self.clock())["last_result"]
+        self.assertTrue(result["ok"], f"临时装配路径必须能测出结果：{result}")
+        # 回放传感器带小幅噪声 ⇒ 用容差（判据是"结果对得上量级"，不是"逐位相等"）
+        self.assertAlmostEqual(result["heart_rate_bpm"], 68.0, delta=3.0)
+        self.assertAlmostEqual(result["spo2_percent"], 97.0, delta=2.0)
+
+    def test_传感器打不开时如实说没测到而不是死等(self) -> None:
+        """器件没接好时：当场给结论，别让老人举着手指等满 30 秒。"""
+        self.tick()
+        self._press_and_tick("spo2_button", advance=0.3)
+        self.rt._detach_device("vitals")                      # 模拟"临时打开的传感器又掉了"
+        self.rt.spo2_measure_now(self.clock())                # 提前结束 ⇒ 走 finish 分支
+        self.assertNotIn("vitals", self.rt.devices)
+
+    def test_手工改成连续采样时不许被测量顺手关掉(self) -> None:
+        """⚠️ 边界：用户自己把 vitals 设成 ``enabled=true``（要连续采样）时，
+        一次测量**不许**把它关掉 —— 那等于悄悄改了用户的配置。"""
+        devices = {name: dict(cfg) for name, cfg in DEMO["devices"].items()}
+        devices["vitals"] = dict(devices["vitals"], enabled=True)
+        rt = PlaybackRuntime(
+            AppConfig.from_dict({"thresholds": dict(DEMO["thresholds"]), "devices": devices}),
+            clock=self.clock, sleep=lambda _s: None, verbose_outputs=False,
+        )
+        rt.open()
+        self.addCleanup(rt.close)
+        rt.tick()
+        self.assertIn("vitals", rt.devices)
+        self.assertTrue(rt.spo2_measure_now(rt.clock()))
+        rt.set_vitals(heart_rate=70.0, spo2=98.0)
+        rt._spo2_finish_measure(rt.clock())
+        self.assertIn("vitals", rt.devices, "连续采样模式下测量结束不该把传感器摘掉")
+
+
 class TestIntervalReschedule(_Base):
     """★ `ERROR.md` **E67**：改了"叫人间隔"必须**重排已排定的下一轮**。
 
@@ -570,7 +667,7 @@ class TestIntervalReschedule(_Base):
         })
 
     def test_把间隔调小会立刻提前下一轮(self) -> None:
-        self.rt.tick()                       # t=1000，下一轮排在 1000+120=1120
+        self.tick()                       # t=1000，下一轮排在 1000+120=1120
         applied, _ = self.rt.apply_config(self._config_with_interval(15.0))
         self.assertIn("测血氧叫人间隔已重排", applied)
         self._tick(advance=16.0)             # t=1016：没重排的话要等到 1120
@@ -583,7 +680,7 @@ class TestIntervalReschedule(_Base):
         若无条件重排，把 15 秒调成 600 秒会把"5 秒后就该到"的那一轮推到 10 分钟后，
         现场看起来像卡死 —— 与 `apply_config` 里"改读取周期"的处理必须一致。
         """
-        self.rt.tick()                       # 下一轮 = 1120
+        self.tick()                       # 下一轮 = 1120
         self.clock.advance(100.0)            # t=1100，已经快到了
         self.rt.apply_config(self._config_with_interval(600.0))
         self._tick(advance=25.0)             # t=1125 > 1120
@@ -597,7 +694,7 @@ class TestIntervalReschedule(_Base):
                       "正在叫人的这一轮不许被配置变更打断（用户正看着屏）")
 
     def test_间隔设为0就不再定期叫人(self) -> None:
-        self.rt.tick()
+        self.tick()
         self.rt.apply_config(self._config_with_interval(0.0))
         self._tick(advance=100000.0)
         self.assertNotIn("SPO2", " ".join(self._lcd()))
@@ -625,14 +722,14 @@ class TestTwoButtonsInService(_Base):
     """★ E61 的行为侧：按「测血氧」键**绝不能**变成消音或求救。"""
 
     def test_测血氧按键不产生求救报警(self) -> None:
-        self.rt.tick()
+        self.tick()
         self._press_and_tick()
         self.assertEqual(self.rt.recent_events(), [], "按测血氧键冒出报警事件了")
         self.assertEqual(self.rt.engine.active_alarms(), {})
 
     def test_测血氧按键把报警消音了才算错(self) -> None:
         self.rt.sos()                       # 造一个报警（sos 会解除静音）
-        self.rt.tick()
+        self.tick()
         self.assertFalse(self.rt.dispatcher.is_silenced(self.clock()))
         self._press_and_tick()
         self.assertFalse(
@@ -643,14 +740,14 @@ class TestTwoButtonsInService(_Base):
     def test_求救按键仍然照常消音(self) -> None:
         """反向钉子：别为了新按键把老按键的功能弄坏。"""
         self.rt.sos()
-        self.rt.tick()
+        self.tick()
         self.rt.sim("sos_button").press(ButtonAction.CLICK)
         self._tick(advance=0.3)
         self.assertTrue(self.rt.dispatcher.is_silenced(self.clock()),
                         "sos_button 短按应当照旧消音")
 
     def test_求救按键长按仍然照常求助(self) -> None:
-        self.rt.tick()
+        self.tick()
         before = len(self.rt.recent_events())
         self.rt.sim("sos_button").press(ButtonAction.LONG_PRESS)
         self._tick(advance=0.3)
