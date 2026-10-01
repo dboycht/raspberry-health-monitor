@@ -16,12 +16,13 @@
     "hysteresis": 3,
     "spo2_remind_interval_s": 120,
     "spo2_remind_timeout_s": 60,
-    "spo2_measure_s": 30
+    "spo2_measure_s": 30,
+    "spo2_read_interval_s": 1.0
   },
   "devices": {
     "vitals": {
       "driver": "max30102",
-      "enabled": true,
+      "enabled": false,
       "read_interval_s": 1,
       "params": {
         "bus": 1,

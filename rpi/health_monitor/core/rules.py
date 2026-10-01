@@ -11,6 +11,9 @@
 4. **数据缺失 ≠ 正常**：传感器读不到时**不产生"正常"结论**，只报 ``SENSOR_FAULT``；
    绝不能把"读不到"当成"一切正常"（这是健康监护类系统最危险的假阴性）。
 5. **久无活动**用 PIR 的 `seconds_since_motion()`；**夜间起夜**用窗口内 DETECTED 次数。
+6. **夜间"久无活动"阈值会放宽**（``night_no_motion_factor``，E75）：
+   PIR 看不到"睡着不动的人"，夜里真人可以几小时不动 ⇒ 夜间阈值放大若干倍，
+   否则**每天夜里必然误报一次**（真机实测：整夜每 5 秒响 4 声）。
 """
 
 from __future__ import annotations
@@ -239,7 +242,16 @@ class RuleEngine:
             never_seen = silent is not None and math.isinf(silent)
             if never_seen:
                 silent = max(0.0, snap.ts - self._watching_since)
-            if silent is not None and silent >= self.th.no_motion_timeout_s:
+            # 🔴 夜间宽限（`ERROR.md` **E75**）：HC-SR501 **看不到"睡着不动的人"**
+            #    ⇒ 白天用来发现"跌倒后静止"的 30 分钟超时，到夜里**每天必然误报一次**
+            #    （真机实测 01:04 报 `no_motion_too_long`，再叠加 5 秒重发 ⇒ 整夜每 5 秒响 4 声）。
+            #    夜里真人可以几小时不动，那不是异常 ⇒ 夜间阈值放大 `night_no_motion_factor` 倍
+            #    （默认 4 ⇒ 30 分钟变 2 小时）：睡觉不误报，而"整夜毫无动静"仍然报得出来。
+            night = self._in_night_window(snap.ts)
+            limit = self.th.no_motion_timeout_s
+            if night and not never_seen:
+                limit *= max(1.0, float(self.th.night_no_motion_factor))
+            if silent is not None and silent >= limit:
                 # ⚠️ `silent` 为 inf = **从开机到现在一次都没检测到人**（不是"刚动过"）。
                 #    这种情况必须如实说"至今未检测到任何活动"：
                 #    ① 旧写法 `f"{silent / 60:.0f} 分钟"` 会印出"已有 inf 分钟未检测到活动"；
@@ -254,6 +266,13 @@ class RuleEngine:
                     ),
                     value=None if never_seen else round(silent, 1),
                     unit="" if never_seen else "s", source=motion.device,
+                    # 排查/展示用：这一轮的**实际**阈值与是不是夜间宽限生效
+                    # （现场问"为什么 40 分钟没报警"时，看这两个字段就有答案）
+                    detail={
+                        "threshold_s": round(float(limit), 1),
+                        "night": bool(night),
+                        "night_factor": float(self.th.night_no_motion_factor),
+                    },
                 )
             # 夜间起夜统计（只在夜间窗口内计数，窗口外的记录会被清理）
             self._prune_night_wakes(snap.ts)

@@ -54,6 +54,16 @@ const DEFAULT_PLAN = [
   'basic',
   'docs',
   'hardware',
+  // ★ 2026-10-01 补（本轮，E76 同批）：`android/` 也进推送计划。
+  //   为什么：`rpi/scripts/check_docs.py` 的第 3 条**三方一致性**要拿
+  //   `android/.../AlarmCatalog.kt` 与 `hal/models.py` 对照 —— 它按
+  //   **仓库根**（`ROOT = check_docs.py 的 parents[2]`）去找那个文件。
+  //   板子上有 `~/raspberry-health-monitor/android/`（早前手工拷过），于是：
+  //   **开发机 11 项全绿、板子上第 7 项红**（报"AlarmCatalog.kt 缺少 alarm_silenced"），
+  //   而红的原因是板上那份**是旧的**、跟本轮代码无关。
+  //   ⇒ 要么把 android 纳入推送（本行），要么板上那条检查永远在说谎。
+  //   只推源码（`android/` 下的构建产物 `build/`、`.gradle/` 不进仓库、也不在这里）。
+  'android',
   'README.md',
 ];
 

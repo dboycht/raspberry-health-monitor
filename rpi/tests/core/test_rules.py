@@ -52,6 +52,17 @@ def night_ts(hour: int) -> float:
     return datetime(2026, 9, 21, hour, 0, 0).timestamp()
 
 
+def daytime_ts(hour: int = 14) -> float:
+    """构造"**肯定不在夜间窗口内**"的时间戳（默认 14:00）。
+
+    为什么要有它（`ERROR.md` **E68**）：夜间"久无活动"阈值会被放大
+    ``night_no_motion_factor`` 倍，而测试若写死 ``ts=1000.0``（= 当天 08:16 附近，
+    **随本机时区变**）或直接跑在夜里，就会"同一份代码白天绿、夜里红"——
+    这正是 **E71** 那一类坑（假时钟 + 本地小时）。凡"与时段有关"的用例一律用它。
+    """
+    return datetime(2026, 9, 21, hour, 0, 0).timestamp()
+
+
 class TestNormalValues(unittest.TestCase):
     def test_全部正常时不报警(self) -> None:
         engine = RuleEngine()
@@ -209,11 +220,19 @@ class TestCooldownAndHysteresis(unittest.TestCase):
 
 
 class TestMotionRules(unittest.TestCase):
+    """久无活动 / 夜间起夜 —— ⚠️ 一律用 :func:`daytime_ts` 打底。
+
+    为什么不能用写死的 ``ts=1000.0``（`ERROR.md` **E68** 带出来的坑）：
+    夜间"久无活动"阈值会放大 ``night_no_motion_factor`` 倍，
+    而 ``1000.0`` 换算到本地是几点**随机器时区变** ⇒ 同一份代码在 UTC 下绿、在 UTC+8 下红
+    （这就是 **E71** 的"CI 红、本机绿"形状）。固定到当地 14:00 就与时区无关了。
+    """
+
     def test_久无活动触发CRITICAL(self) -> None:
         engine = RuleEngine(Thresholds(no_motion_timeout_s=1800))
         snap = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=daytime_ts(),
+            motion=MotionSample(ts=daytime_ts(), device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=2000.0,
         )
         events = engine.evaluate(snap)
@@ -221,11 +240,76 @@ class TestMotionRules(unittest.TestCase):
         self.assertEqual(ev.severity, Severity.CRITICAL)
         self.assertAlmostEqual(ev.value, 2000.0, places=1)
 
+    # ------------------------------------------------------------------
+    # E68：夜间宽限（PIR 看不到"睡着不动的人" ⇒ 夜里必然误报）
+    # ------------------------------------------------------------------
+
+    def _quiet_at(self, hour: int, silent_s: float, **th_kwargs) -> list:
+        """在 ``hour`` 点构造"已经静默 ``silent_s`` 秒"的快照并评估。"""
+        ts = night_ts(hour)
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=1800, **th_kwargs))
+        snap = ReadingSnapshot(
+            ts=ts,
+            motion=MotionSample(ts=ts, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=silent_s,
+        )
+        return [e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG]
+
+    def test_夜间阈值被放大(self) -> None:
+        """★ E68 的判据：同样静默 40 分钟，白天报、夜里（默认 ×4）不报。
+
+        真机现场：01:04 报 `no_motion_too_long`（30 分钟阈值）+ 每 5 秒重发
+        ⇒ **整夜每 5 秒响 4 声**；而 HC-SR501 本来就看不到睡着不动的人。
+        """
+        self.assertTrue(self._quiet_at(14, 2400.0), "白天 40 分钟无活动必须报（跌倒风险）")
+        self.assertFalse(self._quiet_at(2, 2400.0), "夜里 40 分钟不动是**正常睡觉**，不该报")
+
+    def test_夜间阈值等于阈值乘倍数(self) -> None:
+        """边界要能被算出来：1800 × 4 = 7200 秒。"""
+        self.assertFalse(self._quiet_at(2, 7000.0))
+        self.assertTrue(self._quiet_at(2, 7300.0), "超过夜间阈值仍必须报（不是整夜豁免）")
+
+    def test_倍数设为1就等于关闭夜间宽限(self) -> None:
+        self.assertTrue(self._quiet_at(2, 1900.0, night_no_motion_factor=1.0),
+                        "factor=1 应当回到'日夜同一阈值'")
+
+    def test_夜间窗口外不受宽限影响(self) -> None:
+        """06:00 已经是白天（`night_end_hour=6`）⇒ 立刻回到 30 分钟口径。"""
+        self.assertTrue(self._quiet_at(6, 2400.0))
+        self.assertTrue(self._quiet_at(21, 2400.0))
+
+    def test_报告里能看出实际阈值与是否夜间(self) -> None:
+        """排查用：现场问"为什么 40 分钟没报警"，看 detail 就有答案。"""
+        ev_night = self._quiet_at(2, 7300.0)[0]
+        self.assertTrue(ev_night.detail["night"])
+        self.assertAlmostEqual(ev_night.detail["threshold_s"], 7200.0, places=1)
+        ev_day = self._quiet_at(14, 2000.0)[0]
+        self.assertFalse(ev_day.detail["night"])
+        self.assertAlmostEqual(ev_day.detail["threshold_s"], 1800.0, places=1)
+
+    def test_从未检测到人时不吃夜间宽限_E55不变(self) -> None:
+        """⚠️ 反向钉子：**从没检测到过人**仍然按基础阈值报（E55 的语义不许被这次改动冲掉）。
+
+        否则"PIR 一根线掉了 / 老人整夜没被看到"这类真问题会在夜里被宽限掉。
+        """
+        ts = night_ts(2)
+        engine = RuleEngine(Thresholds(no_motion_timeout_s=1800, repeat_cooldown_s=0))
+        engine.evaluate(ReadingSnapshot(
+            ts=ts, motion=MotionSample(ts=ts, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        ))
+        later = ts + 1900.0
+        ev = [e for e in engine.evaluate(ReadingSnapshot(
+            ts=later, motion=MotionSample(ts=later, device="hc_sr501", state=MotionState.IDLE),
+            motion_silent_s=math.inf,
+        )) if e.code is AlarmCode.NO_MOTION_TOO_LONG]
+        self.assertEqual(len(ev), 1, "从未检测到人不受夜间宽限影响，满基础阈值就要报")
+
     def test_检测到人时不报久无活动(self) -> None:
         engine = RuleEngine()
         snap = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.DETECTED),
+            ts=daytime_ts(),
+            motion=MotionSample(ts=daytime_ts(), device="hc_sr501", state=MotionState.DETECTED),
             motion_silent_s=0.0,
         )
         self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, [e.code for e in engine.evaluate(snap)])
@@ -234,8 +318,8 @@ class TestMotionRules(unittest.TestCase):
         """PIR 读失败时不能推断"没人动"（那是臆测）。"""
         engine = RuleEngine()
         snap = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.UNKNOWN),
+            ts=daytime_ts(),
+            motion=MotionSample(ts=daytime_ts(), device="hc_sr501", state=MotionState.UNKNOWN),
             motion_silent_s=99999.0,
         )
         self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, [e.code for e in engine.evaluate(snap)])
@@ -247,10 +331,11 @@ class TestMotionRules(unittest.TestCase):
         根因：`inf >= no_motion_timeout_s` 恒成立。正确语义 = **从"开始监护"的时刻起算**，
         满阈值才报警（这段时间本来也可能真的没人动，但那是"还没到计时"而不是"已经超时"）。
         """
+        base = daytime_ts()
         engine = RuleEngine(Thresholds(no_motion_timeout_s=1800))
         first = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=base,
+            motion=MotionSample(ts=base, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=math.inf,
         )
         codes = [e.code for e in engine.evaluate(first)]
@@ -258,16 +343,16 @@ class TestMotionRules(unittest.TestCase):
 
         # 监护跑了 10 分钟（还没到 30 分钟阈值）⇒ 仍然不报
         mid = ReadingSnapshot(
-            ts=1000.0 + 600.0,
-            motion=MotionSample(ts=1000.0 + 600.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=base + 600.0,
+            motion=MotionSample(ts=base + 600.0, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=math.inf,
         )
         self.assertNotIn(AlarmCode.NO_MOTION_TOO_LONG, [e.code for e in engine.evaluate(mid)])
 
         # 满阈值之后 ⇒ 必须报（否则真出事就不报警了）
         late = ReadingSnapshot(
-            ts=1000.0 + 1801.0,
-            motion=MotionSample(ts=1000.0 + 1801.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=base + 1801.0,
+            motion=MotionSample(ts=base + 1801.0, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=math.inf,
         )
         ev = [e for e in engine.evaluate(late) if e.code is AlarmCode.NO_MOTION_TOO_LONG]
@@ -276,16 +361,17 @@ class TestMotionRules(unittest.TestCase):
 
     def test_检测到人之后再静默满阈值仍然报警_E55反向(self) -> None:
         """反向守一手：真的"先动过、然后长时间不动"必须照旧报警。"""
+        base = daytime_ts()
         engine = RuleEngine(Thresholds(no_motion_timeout_s=60, repeat_cooldown_s=0))
         seen = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.DETECTED),
+            ts=base,
+            motion=MotionSample(ts=base, device="hc_sr501", state=MotionState.DETECTED),
             motion_silent_s=0.0,
         )
         engine.evaluate(seen)
         quiet = ReadingSnapshot(
-            ts=1000.0 + 61.0,
-            motion=MotionSample(ts=1000.0 + 61.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=base + 61.0,
+            motion=MotionSample(ts=base + 61.0, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=61.0,
         )
         codes = [e.code for e in engine.evaluate(quiet)]
@@ -300,18 +386,19 @@ class TestMotionRules(unittest.TestCase):
         ② ``value=inf`` 经 ``json.dumps`` 变成裸 ``Infinity``（**非法 JSON**），
            实测被 OneNET 整包拒收（``err_code 98 illegal data``）。
         """
+        base = daytime_ts()
         engine = RuleEngine(Thresholds(no_motion_timeout_s=1800))
         snap = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=base,
+            motion=MotionSample(ts=base, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=math.inf,
         )
         # ⚠️ E55 之后，"从未检测到人"从**开始监护**起算 ⇒ 先要跑满阈值才会报警。
         #    所以这里先推时间到阈值之后，再检查文案与数值（E47 的保证不变）。
-        engine.evaluate(snap)                                   # t=1000：开始监护
+        engine.evaluate(snap)                                   # t=base：开始监护
         later = ReadingSnapshot(
-            ts=1000.0 + 1801.0,
-            motion=MotionSample(ts=1000.0 + 1801.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=base + 1801.0,
+            motion=MotionSample(ts=base + 1801.0, device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=math.inf,
         )
         ev = next(e for e in engine.evaluate(later) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
@@ -331,8 +418,8 @@ class TestMotionRules(unittest.TestCase):
         读起来像"还没超时"，验收人当场以为没触发（阈值 1800 时反而正常，所以开发机测不出来）。"""
         engine = RuleEngine(Thresholds(no_motion_timeout_s=20, repeat_cooldown_s=0))
         snap = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=daytime_ts(),
+            motion=MotionSample(ts=daytime_ts(), device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=20.0,
         )
         ev = next(e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG)
@@ -344,8 +431,8 @@ class TestMotionRules(unittest.TestCase):
     def test_长时长文案用分钟与小时(self) -> None:
         engine = RuleEngine(Thresholds(no_motion_timeout_s=1800, repeat_cooldown_s=0))
         snap = ReadingSnapshot(
-            ts=1000.0,
-            motion=MotionSample(ts=1000.0, device="hc_sr501", state=MotionState.IDLE),
+            ts=daytime_ts(),
+            motion=MotionSample(ts=daytime_ts(), device="hc_sr501", state=MotionState.IDLE),
             motion_silent_s=5400.0,      # 1.5 小时
         )
         ev = next(e for e in engine.evaluate(snap) if e.code is AlarmCode.NO_MOTION_TOO_LONG)

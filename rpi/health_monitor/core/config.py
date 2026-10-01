@@ -42,6 +42,18 @@ class Thresholds:
     humidity_max: float = 80.0
     # 久无活动（秒）：超过则告警"疑似跌倒/长时间静止"
     no_motion_timeout_s: float = 1800.0
+    #: **夜间"久无活动"的宽限倍数**（2026-10-01 起；见 `ERROR.md` **E75**）。
+    #:
+    #: 为什么需要它：HC-SR501 看不到"睡着不动的人" ⇒ 白天用来发现"跌倒后静止"的
+    #: 30 分钟超时，到了夜里**每天必然误报一次**（真机实测：01:04 报
+    #: `no_motion_too_long`，再叠加 5 秒重发 ⇒ 整夜每 5 秒响 4 声）。
+    #: 夜里真人可以几个小时一动不动，那不是异常。
+    #:
+    #: 口径：**夜间（``night_start_hour``~``night_end_hour``）阈值 =
+    #: ``no_motion_timeout_s × 本倍数``**。默认 4 ⇒ 30 分钟变 2 小时：
+    #: 睡觉不再误报，而"整夜一次都没动静"仍然报得出来。
+    #: ``1.0`` = 关闭夜间宽限（回到"日夜同一阈值"）。
+    night_no_motion_factor: float = 4.0
     # 夜间频繁起夜：窗口与次数
     night_start_hour: int = 22
     night_end_hour: int = 6
@@ -66,6 +78,16 @@ class Thresholds:
     spo2_remind_timeout_s: float = 60.0
     #: 一次测量的时长（秒）：用户按下按键后开始计时，到点读结果。
     spo2_measure_s: float = 30.0
+    #: **测量窗口内心率血氧的采样周期**（秒，2026-10-01 新增）。
+    #:
+    #: 为什么要它：默认口径改成"**默认只做环境测量与监控，测血氧时才开 MAX30102**"
+    #: （用户 2026-10-01 拍板，见 :meth:`health_monitor.service.Runtime._spo2_attach_vitals`）⇒
+    #: 非测量期**一次都不采样**，测量窗口内必须自己保证"攒够样本"。
+    #: MAX30102 的内部窗口约 5 秒 ⇒ 1 秒采样、30 秒窗口能攒 20~25 个有效读数
+    #: （T7 的 `vitals_check.py` 就是这个口径）。
+    #: ⚠️ 配置里 ``devices.vitals.read_interval_s`` 仍然有用：用户把 vitals 手工设成
+    #: ``enabled=true``（＝要连续采样）时按那个周期跑；测量时会临时改用本值，测完还原。
+    spo2_read_interval_s: float = 1.0
 
     def validate(self) -> None:
         """检查阈值自洽性。**启动期必须调用**，错误直接抛 ``ConfigError``。"""
@@ -80,6 +102,11 @@ class Thresholds:
             raise ConfigError(f"spo2_min 应在 (0, 100] 内，当前 {self.spo2_min}")
         if self.no_motion_timeout_s <= 0:
             raise ConfigError("no_motion_timeout_s 必须为正数")
+        if self.night_no_motion_factor < 1:
+            raise ConfigError(
+                "night_no_motion_factor 至少为 1（1 = 关闭夜间宽限；"
+                f"当前 {self.night_no_motion_factor}）"
+            )
         if not (0 <= self.night_start_hour <= 23 and 0 <= self.night_end_hour <= 23):
             raise ConfigError("夜间时段小时数必须在 0~23 之间")
         if self.repeat_cooldown_s < 0:
@@ -98,6 +125,10 @@ class Thresholds:
             raise ConfigError("spo2_remind_timeout_s 必须为正数（等人按键的超时时间）")
         if self.spo2_measure_s <= 0:
             raise ConfigError("spo2_measure_s 必须为正数（一次测量的时长）")
+        if self.spo2_read_interval_s <= 0:
+            raise ConfigError(
+                "spo2_read_interval_s 必须为正数（测量窗口内心率血氧的采样周期）"
+            )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Thresholds":
@@ -368,6 +399,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "ambient_temp_max": 30,
         "humidity_max": 80,
         "no_motion_timeout_s": 1800,
+        "night_no_motion_factor": 4.0,
         "night_start_hour": 22,
         "night_end_hour": 6,
         "night_wake_count": 5,
@@ -380,11 +412,21 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "spo2_remind_interval_s": 120,
         "spo2_remind_timeout_s": 60,
         "spo2_measure_s": 30,
+        "spo2_read_interval_s": 1.0,
     },
     "devices": {
+        # ⚠️ **默认不连续采样**（用户 2026-10-01 拍板，`DEVELOPMENT.md` 待办第 3 条选了 (c)）：
+        #    规格原话是「默认情况下我们只进行环境的测量以及监控，只有用户点击后台或者
+        #    系统内部弹出时才测量血氧」。实现方式不是"开着器件但不看"，
+        #    而是**测量窗口内才临时装配 + 打开它**（见 `Runtime._spo2_attach_vitals`），
+        #    测完立刻关掉 ⇒ 平时**一个采样都不产生**。
+        #    ⚠️ 想回到"连续采样"就把它改成 true（测量窗口会临时改用
+        #    `thresholds.spo2_read_interval_s` 的周期，测完还原）。
+        #    副作用（已知、已记录）：测量之外 `hr_too_high` / `hr_too_low` / `spo2_too_low`
+        #    三条规则**永远不触发**（没有数据就没有判定）。
         "vitals": {
             "driver": "max30102",
-            "enabled": True,
+            "enabled": False,
             "read_interval_s": 1.0,
             "params": {"bus": 1, "address": 87, "led_current": "7.6mA"},
         },

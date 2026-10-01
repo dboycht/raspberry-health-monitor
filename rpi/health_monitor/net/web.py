@@ -757,6 +757,37 @@ def esc(text: str) -> str:
     )
 
 
+def probe_port(host: str = "0.0.0.0", port: int = 8080) -> Optional[str]:
+    """**先探一下端口能不能绑**，返回 ``None`` 表示可以，否则返回一句人话的原因。
+
+    为什么需要它（`ERROR.md` **E76**，2026-10-01 真机 S10 验收发现）
+    ---------------------------------------------------------------
+    启动顺序原来是"**先开器件、再绑端口**" ⇒ "端口被占用"这件事是在**碰完硬件之后**
+    才发现的。GPIO 类器件因为排他（`GPIO busy`）会当场失败、无害；
+    但 **I2C 器件（LCD1602 / MAX30102）没有排他锁** ⇒ 第二个实例**真的会去读 MAX30102 的
+    FIFO**（破坏性：两进程互相抢走采样），也可能往 LCD 写过一帧。
+
+    ⚠️ 判据：**注定要失败的操作不许产生副作用**。
+    所以 `serve` 现在**先探端口**、探不过就立刻退出，连一个器件都不打开。
+
+    ⚠️ 探针必须与 :func:`make_server` **同口径**（``allow_reuse_address=False``），
+    否则会出现"探得到、绑不上"（或反过来）的假结论。
+    探测用的 socket 立刻关闭 —— 真正的绑定仍由 :func:`make_server` 完成
+    （探针只是把"注定失败"提前，不承担互斥职责）。
+    """
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # ⚠️ 刻意**不设** SO_REUSEADDR：与 make_server 的 allow_reuse_address=False 对齐
+        probe.bind((host, int(port)))
+    except OSError as exc:
+        return f"{type(exc).__name__}: {exc}（可能已有实例在运行；换端口用 --port，或先关掉旧进程）"
+    finally:
+        probe.close()
+    return None
+
+
 def make_server(api: WebApi, host: str = "0.0.0.0", port: int = 8080) -> ThreadingHTTPServer:
     """创建一个（尚未启动的）HTTP 服务器。调用方负责 ``serve_forever()`` 与 ``shutdown()``。
 
@@ -786,4 +817,4 @@ def start_in_thread(api: WebApi, host: str = "0.0.0.0", port: int = 8080) -> Tup
     return server, thread
 
 
-__all__ = ["WebApi", "make_server", "start_in_thread"]
+__all__ = ["WebApi", "make_server", "probe_port", "start_in_thread"]

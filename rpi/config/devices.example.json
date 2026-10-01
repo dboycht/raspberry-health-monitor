@@ -7,6 +7,7 @@
     "ambient_temp_max": 30,
     "humidity_max": 80,
     "no_motion_timeout_s": 1800,
+    "night_no_motion_factor": 4.0,
     "night_start_hour": 22,
     "night_end_hour": 6,
     "night_wake_count": 5,
@@ -17,12 +18,13 @@
     "hysteresis": 3,
     "spo2_remind_interval_s": 120,
     "spo2_remind_timeout_s": 60,
-    "spo2_measure_s": 30
+    "spo2_measure_s": 30,
+    "spo2_read_interval_s": 1.0
   },
   "devices": {
     "vitals": {
       "driver": "max30102",
-      "enabled": true,
+      "enabled": false,
       "read_interval_s": 1,
       "params": {
         "bus": 1,
