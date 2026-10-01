@@ -10,7 +10,15 @@
     "  这样做是为了让『级别单调递增』这条守卫仍然成立；stage_run.py 会用 [取消] 标记并出提醒。",
     "★ 2026-09-28 用户下令补打**阶段 tag**：每级另有 `tag`（T0…T4），",
     "  要取回『那一级的完整代码』用 `git checkout T3` 即可 —— 阶段 tag 是快照，",
-    "  与『发布版 tag = 版本号（如 1.0.1，须用户下令才打）』是两套语义，别混。"
+    "  与『发布版 tag = 版本号（如 1.0.1，须用户下令才打）』是两套语义，别混。",
+    "★ 2026-10-01 新增 status=partial：**服务化那一级已验收、但有一项明确未做**（T10 的 S9）。",
+    "  它必须同时给 `verified_on` 与 `missing`（缺了什么、为什么），否则会退化成『说不清的 verified』。",
+    "★ 2026-10-01 补 T14（按需测血氧，用户 2026-09-30 追加的功能级）：",
+    "  此前 stages.json 只到 T13 ⇒ `stage_run --stage Txx` 起的服务**没有『测血氧』按键**，",
+    "  而 docs/14 的阶梯表里 T14 早已标『已完成』 —— 这个缺口由 T14 条目 + 服务级快照补 spo2_button 修掉。",
+    "  ⚠️ T14 的 devices 仍保留 vitals（为了『级别单调递增』这条守卫）；",
+    "  想复现**产品默认**（默认不连续采样、测量时临时开）请用：",
+    "     python3 scripts/stage_run.py --stage T14 --set devices.vitals.enabled=false"
   ],
   "reference": "rpi/config/devices.example.json",
   "stages": {
@@ -98,27 +106,37 @@
     },
     "T10": {
       "title": "服务化：HTTP API + 状态网页",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
-      "status": "planned",
-      "note": "到这里本级器件集合与 T9 相同；差别在『全部起服务』（S1–S10 逐项验收）"
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "status": "partial",
+      "verified_on": "2026-10-01",
+      "missing": ["S9 断网可用性：`pi` 用户无网络权限（nmcli 返回 Not authorized），用户 2026-10-01 明确决定本轮不做 ⇒ 该项仍标注未实测"],
+      "note": "★ 2026-10-01 补 status=partial：**服务化本身已真机验收**（S1–S8、S10–S19 全 ✅，含三面板/消息流/屏显控制/TFT 富帧），**唯独 S9 未实测**且已由用户决定不做 ⇒ 记 partial + missing，而不是糊成 verified、也不是留在 planned（那会读成『什么都没做』）。验收记录见 docs/07 第 3/3.1 节与 §6.1。★ 本级起快照含 `spo2_button`：测血氧是服务级功能（T14），服务级快照把它带上，`--stage T10` 起服务即可复现完整功能集"
     },
     "T11": {
       "title": "SQLite 历史与趋势",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
-      "status": "planned",
-      "note": "内核已具备；本级是『用起来』：连跑 30~60 分钟 + 历史接口 + 保留期清理"
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "status": "verified",
+      "verified_on": "2026-10-01",
+      "note": "★ 2026-10-01 由 planned 改为 verified（原先只是没更新）：验收判据全部有真机证据 —— ① 历史接口 S5：`/api/v1/history?metric=ambient_temp_c&limit=300` 实测返回 **300 行**（中位采样间隔 3.0 s）；② 趋势图 S12：用一次**真实采集中断**做 A/B（禁用 ambient 150 s ⇒ 历史里一个 152 s 的洞 ⇒ 按时间断线画出 2 条线，修复前是 1 条线跨缺口）；③ 保留期：`Store.retention_days=30` + `prune()` 每小时被调用（板子实测库 6.4 MB / readings 62749 行 / 跨度 103.5 小时）；④ 『连跑 30~60 分钟』这条早已被更强的运行时跨度覆盖（vitals 表跨度 32 小时）。详见 docs/07 的 S5、S12 与 **§6.1 第 6 行**（本轮 vitals 表改为『只在有值时写』，省 SD 卡写入）"
     },
     "T12": {
       "title": "OneNET 上云（数据点 + 规则引擎转发）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
       "status": "planned",
-      "note": "另需在板子的 devices.local.json 里开 onenet.enabled 并配密钥（密钥不入库）；平台接收已实测过 'accepted'"
+      "note": "另需在板子的 `devices.local.json` 里开 `onenet.enabled` 并配密钥（密钥不入库）。**已实测**：C1–C5（token 参数生成、上报启动、MQTT connected、数据点写出、平台回执 `accepted`）。**未实测两项**：① **C7 平台侧** —— 本机接收口 `POST /api/v1/cloud/callback` 2026-10-01 已用真 JSON 验通（HTTP 200），但**没有在 OneNET 控制台建规则**，所以『平台真的推回来了』仍未验；② **C9 断网重连** —— 未做真断网。<br>★ 2026-10-01：上云改为**断网即暂停入队**（用户拍板）：`connected` 是三态（未知/已连/已知离线），**只在『已知离线』时暂停入队**并累加 `skipped_offline`，恢复后从当前值继续（**不补传**断网期间的读数）；离线次数/时长/跳过条数都在 `/api/v1/health` 的 `mqtt` 字段里。用『云不可达』替代验证过（本地报警照常、监护循环不受影响），见 docs/07 §6.2"
     },
     "T13": {
       "title": "手机 App 联调 + 整机收口",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
       "status": "planned",
-      "note": "安卓端在局域网联调；本级还要填完 docs/07 的 54 项与准备答辩材料"
+      "note": "安卓端在局域网联调；本级还要填完 docs/07 的 54 项与准备答辩材料。**未做的部分**：A1–A9 **全部未实测**（`app-debug.apk` 已构建 11.31 MB、安卓单测 78 项通过，但**从没在真手机上安装过**）；另 `docs/07` 的 H16（HC-SR04 拓展件）与 T12 的 C7/C9 也仍未验"
+    },
+    "T14": {
+      "title": "按需测血氧（蜂鸣器叫人 → 按键 → 测量 → 报结果）",
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "status": "verified",
+      "verified_on": "2026-09-30",
+      "note": "用户 2026-09-30 追加的功能级（docs/14 的 T14 一节）。接线：新增「测血氧」按键一端 **GPIO13（物理脚 33）**、另一端 GND（脚 34）。真机验收：叫人（蜂鸣 2 声 + 两屏 `SPO2 CHECK NOW?`）→ 按键 → 引导测量（屏上 `FINGER ON PPG` / **`TOUCH LIGHTLY`**，后者就是 E60 的产品化处置）→ 报窗口中位数（实测 `心率 68 bpm / 血氧 97 %`，146 个有效读数取中位数）。<br>★ 2026-10-01 追加并真机验收：**默认改为『只做环境测量』**（用户选方案 c）—— 配置默认 `vitals.enabled=false`，**测量窗口内临时装配+打开传感器、测完立刻关掉**（板子实测：测前 devices 无 vitals → 测量中出现 → 30 s 窗口结束又消失）；测量期采样周期用 `thresholds.spo2_read_interval_s`（默认 1 s，测完还原）。⚠️ **stage 快照仍保留 vitals**（为了『级别单调递增』守卫）⇒ 想复现产品默认请用 `--set devices.vitals.enabled=false`。<br>⚠️ 本级暴露 **E61**（多按键事件无来源标识）、**E62**（只信 ok 标记 ⇒ float(None) 打崩 tick）、**E64**（引导测量成了 `spo2_too_low` 的新入口，**待用户拍板**）"
     }
   }
 }

@@ -157,10 +157,50 @@ class TestStageSnapshots(unittest.TestCase):
                 self.assertTrue(info.get("title"), "缺 title")
                 self.assertIn(
                     info.get("status"),
-                    ("verified", "planned", "cancelled"),
-                    "status 只能是 verified/planned/cancelled",
+                    ("verified", "planned", "cancelled", "partial"),
+                    "status 只能是 verified/planned/cancelled/partial",
                 )
                 self.assertIsInstance(info.get("devices"), list, "devices 必须是列表")
+
+    def test_partial必须写明缺了什么(self) -> None:
+        """★ 2026-10-01 新增 `partial`：**已验收、但有一项明确未做**（当前是 T10 的 S9）。
+
+        为什么要这个状态、而不是二选一：
+        * 记 `verified` ⇒ 把"断网可用性没验过"糊过去（本项目明令禁止"实测/未实测"不分档）；
+        * 记 `planned` ⇒ 读起来像"这一级什么都没做"，而实际 S1–S8、S10–S19 全验过了。
+
+        ⇒ 判据：`partial` 必须同时给 `verified_on` 与**非空** `missing`（缺了什么、为什么缺）。
+        """
+        partials = [n for n, i in self.stages.items() if i.get("status") == "partial"]
+        self.assertTrue(partials, "本项目应有 partial 级（T10）；没有说明快照被改坏了")
+        for name in partials:
+            info = self.stages[name]
+            with self.subTest(stage=name):
+                self.assertTrue(info.get("verified_on"), f"{name} 标了 partial 却没写 verified_on")
+                missing = info.get("missing")
+                self.assertIsInstance(missing, list, f"{name} 的 missing 必须是列表")
+                self.assertTrue(missing, f"{name} 标了 partial 却没写 missing（缺什么、为什么）")
+
+    def test_服务级快照必须包含测血氧按键(self) -> None:
+        """★ 2026-10-01 修掉的缺口：**没有任何一级启用过 `spo2_button`**。
+
+        后果（实测确认过）：`stage_run.py --stage T10` 起的服务**没有「测血氧」按键** ⇒
+        按需测血氧那一级在 stage 快照下**等于不存在**，而 docs/14 早已标 T14「已完成」。
+        判据：T10 起（服务级）每一级的快照都必须带 `spo2_button`。
+        """
+        for name in ("T10", "T11", "T12", "T13", "T14"):
+            self.assertIn(
+                "spo2_button", self.stages[name]["devices"],
+                f"{name} 的快照缺 spo2_button ⇒ --stage {name} 起服务后没有「测血氧」按键",
+            )
+
+    def test_T14已登记(self) -> None:
+        """T14（按需测血氧）此前**不在 stages.json 里**（只到 T13），必须补上并留验收日期。"""
+        self.assertIn("T14", self.stages, "T14 必须登记进 stages.json（docs/14 早已标它已完成）")
+        info = self.stages["T14"]
+        self.assertEqual(info["status"], "verified")
+        self.assertTrue(info.get("verified_on"))
+        self.assertIn("spo2_button", info["devices"])
 
     def test_器件名都真实存在(self) -> None:
         for name, info in self.stages.items():

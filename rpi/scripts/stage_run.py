@@ -361,7 +361,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         safe_print("分级快照（config/stages.json）：")
         for name in sorted_stage_names(data["stages"]):
             info = data["stages"][name]
-            mark = {"verified": "[已验]", "cancelled": "[取消]"}.get(info.get("status"), "[计划]")
+            mark = {"verified": "[已验]", "cancelled": "[取消]", "partial": "[部分]"}.get(info.get("status"), "[计划]")
             safe_print(f"  {mark} {name:<4} {info.get('title','')}")
             safe_print(f"          器件：{', '.join(info.get('devices') or []) or '（无，走 basic/）'}")
         return 0
