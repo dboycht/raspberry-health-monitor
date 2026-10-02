@@ -161,6 +161,60 @@ class TestAlarmLabelsCoverEveryCode(unittest.TestCase):
         self.assertEqual(sorted(webui.KIND_LABELS), ["alarm", "clear", "info", "record"])
 
 
+class TestDunderAllNamesExist(unittest.TestCase):
+    """⑤ 每个模块 `__all__` 里的名字**必须真的存在**（2026-10-01 补）。
+
+    为什么值得单独一条：删掉 TMP36/MCP3002（T5/T6 取消）时，`tests/core/fakes.py` 里的
+    `FakeBodyTempSensor` 类被删了，但 **`__all__` 里的名字漏删** —— 于是
+    `from tests.core.fakes import *` 会 `AttributeError`，而**所有单测照样全绿**
+    （没人 `import *`，这个字符串就静静躺着）。这正是"**声明面 ↔ 实现面漂移**"最纯粹的形态：
+    一处是字符串、一处是代码，中间**没有任何东西会报错**。
+
+    ⇒ 判据：把 `health_monitor` 下每个模块 import 进来，逐条检查 `__all__`。
+    （`__main__.py` 可以安全 import：它的 `raise SystemExit` 在 `if __name__` 保护里。）
+    """
+
+    def _modules(self):
+        import importlib
+
+        modules = {}
+        for path in sorted((RPI / "health_monitor").rglob("*.py")):
+            if "__pycache__" in str(path):
+                continue
+            rel = path.relative_to(RPI).with_suffix("")
+            name = ".".join(rel.parts)
+            if name.endswith(".__init__"):
+                name = name[: -len(".__init__")]
+            modules[name] = importlib.import_module(name)
+        return modules
+
+    def test_抽取器抽到了足够的模块和名字(self) -> None:
+        """自证：别因为"一个模块都没读到"而永远绿。"""
+        modules = self._modules()
+        self.assertGreaterEqual(len(modules), 20, f"只扫到 {len(modules)} 个模块，扫描逻辑有问题")
+        total = sum(len(getattr(m, "__all__", ()) or ()) for m in modules.values())
+        self.assertGreaterEqual(total, 40, f"__all__ 里的名字总数只有 {total}，抽取逻辑有问题")
+
+    def test_every_all_name_exists(self) -> None:
+        missing: list[str] = []
+        for name, module in self._modules().items():
+            for item in getattr(module, "__all__", ()) or ():
+                if not hasattr(module, item):
+                    missing.append(f"{name}.{item}")
+        self.assertEqual(
+            missing, [],
+            "这些名字写在 __all__ 里、但模块里并不存在 ⇒ `import *` 会当场 AttributeError，"
+            f"而平时没有任何东西会发现（多半是删代码时漏删了名字）：{missing}",
+        )
+
+    def test_测试替身模块的all也要干净(self) -> None:
+        """`tests/core/fakes.py` 就是本轮出问题的地方，单独也钉一次。"""
+        from tests.core import fakes
+
+        missing = [n for n in (fakes.__all__ or ()) if not hasattr(fakes, n)]
+        self.assertEqual(missing, [], f"tests/core/fakes.py 的 __all__ 里有不存在的名字：{missing}")
+
+
 class TestInjectionSelfTest(unittest.TestCase):
     """**注入式反证**：真的把"声明面"改坏一次，断言判据会红。
 

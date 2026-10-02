@@ -155,7 +155,6 @@ def build_all(mock: bool = True) -> Dict[str, Device]:
 __all__ = [
     "FakeVitalSensor",
     "FakeAmbientSensor",
-    "FakeBodyTempSensor",
     "FakeMotionSensor",
     "FakeRangeSensor",
     "build_all",
