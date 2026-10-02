@@ -41,6 +41,10 @@ fun SettingsScreen(
     onTest: () -> Unit,
     onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier,
+    onCloudProductIdChange: (String) -> Unit = {},
+    onCloudDeviceNameChange: (String) -> Unit = {},
+    onCloudAccessKeyChange: (String) -> Unit = {},
+    onSaveCloud: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -102,6 +106,68 @@ fun SettingsScreen(
                     InfoStrip(
                         text = state.testResult,
                         severity = if (state.testOk) Severity.NORMAL else Severity.CRITICAL,
+                    )
+                }
+            }
+        }
+
+        // ---- 云端（OneNET）只读：**可选**功能 ----
+        // ⚠️ 这里刻意把"密钥不进 App、只存本机"写在界面上：用户有权知道自己的密钥去哪了。
+        Card(elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "云端（可选）",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "填了就能在「云端」页看树莓派**上次上报**到中国移动 OneNET 的数据" +
+                        "（手机只要能上网就行，不必连到树莓派）。三项都填才启用。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                OutlinedTextField(
+                    value = state.cloudProductId,
+                    onValueChange = onCloudProductIdChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("产品 ID（product_id）") },
+                    placeholder = { Text("例如 vmkgy5EP2t") },
+                    singleLine = true,
+                )
+
+                OutlinedTextField(
+                    value = state.cloudDeviceName,
+                    onValueChange = onCloudDeviceNameChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("设备名（device_name）") },
+                    placeholder = { Text("例如 t1") },
+                    singleLine = true,
+                )
+
+                OutlinedTextField(
+                    value = state.cloudAccessKey,
+                    onValueChange = onCloudAccessKeyChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("密钥（access_key）") },
+                    placeholder = { Text("平台分配的产品/设备密钥") },
+                    singleLine = true,
+                    supportingText = {
+                        Text(
+                            "⚠️ 只存在这台手机上，**没有**写进 App；建议用**只读**密钥。" +
+                                "三项都留空 = 关闭云端功能。",
+                        )
+                    },
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = onSaveCloud) { Text("保存云端参数") }
+                }
+
+                if (state.cloudSavedMessage != null) {
+                    InfoStrip(
+                        text = state.cloudSavedMessage,
+                        severity = if (state.cloudConfigured) Severity.NORMAL else Severity.WARNING,
                     )
                 }
             }

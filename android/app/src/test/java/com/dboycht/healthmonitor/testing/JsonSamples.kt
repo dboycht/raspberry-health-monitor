@@ -115,6 +115,28 @@ object JsonSamples {
                       "detail": {"recovered_code": "ambient_temp_high"}, "pushed": false}]}
     """.trimIndent()
 
+    /**
+     * ★ **真机原样抓下来的** OneNET 响应（2026-10-02，`GET /datapoint/history-datapoints`）。
+     *
+     * 用途：云端只读功能的解析回归。这份样本有三件事**必须照抄真机**，否则又白测：
+     *
+     * 1. `value` **类型混着来** —— 数字（`89`、`22.7`、`0`）与字符串（`"unknown"`、`"1.0.1"`）都有；
+     * 2. 时间字段是**两套**（可读字符串 `at` + 毫秒时间戳 `at_timestamp`），且各流的时间**差很远**
+     *    （最新的是 `motion`，最旧的是 `heart_rate`，差了整整一天）；
+     * 3. 顶层还有 `msg` / `request_id` 等我们用不上的键（靠 `ignoreUnknownKeys` 忽略）。
+     *
+     * ⚠️ 这是**节选**（真机那次 `count=18`，这里保留 5 条代表性数据流，含当时最旧/最新的两条）。
+     */
+    val ONENET_HISTORY_REAL: String = """
+        {"code":0,"msg":"succ","request_id":"83e8e02a329ecee9c0701fa63d41c58e",
+         "data":{"count":18,"datastreams":[
+           {"id":"motion","datapoints":[{"at":"2026-10-01 23:30:23.000","at_timestamp":1790868623000,"value":"unknown"}]},
+           {"id":"alarm_value","datapoints":[{"at":"2026-10-01 23:09:33.000","at_timestamp":1790867373000,"value":22.7}]},
+           {"id":"heart_rate","datapoints":[{"at":"2026-09-30 21:38:13.000","at_timestamp":1790775493000,"value":89}]},
+           {"id":"alarm_level","datapoints":[{"at":"2026-10-01 23:09:35.000","at_timestamp":1790867375000,"value":0}]},
+           {"id":"version","datapoints":[{"at":"2026-10-01 23:30:23.000","at_timestamp":1790868623000,"value":"1.0.1"}]}]}}
+    """.trimIndent()
+
     /** §4.2 的健康样本（含设备状态与 dispatcher）。 */
     val HEALTH: String = """
         {

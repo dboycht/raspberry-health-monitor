@@ -26,8 +26,18 @@ data class SettingsUiState(
     val testing: Boolean = false,
     val testResult: String? = null,
     val testOk: Boolean = false,
+    // ---- 云端（OneNET）只读：**可选**功能，密钥由用户手填、不进 APK ----
+    val cloudProductId: String = "",
+    val cloudDeviceName: String = "",
+    val cloudAccessKey: String = "",
+    val cloudSaved: Boolean = false,
+    val cloudSavedMessage: String? = null,
 ) {
     val addressValid: Boolean get() = UrlNormalizer.normalizeOrNull(baseUrl) != null
+
+    /** 云端三项是否都填了（与 `AppSettings.cloudConfigured` 同一判据）。 */
+    val cloudConfigured: Boolean
+        get() = cloudProductId.isNotBlank() && cloudDeviceName.isNotBlank() && cloudAccessKey.isNotBlank()
 }
 
 /**
@@ -53,7 +63,55 @@ class SettingsViewModel(
             baseUrl = settings.baseUrl,
             token = settings.token,
             normalizedPreview = UrlNormalizer.normalizeOrNull(settings.baseUrl),
+            cloudProductId = settings.cloudProductId,
+            cloudDeviceName = settings.cloudDeviceName,
+            cloudAccessKey = settings.cloudAccessKey,
         )
+    }
+
+    fun onCloudProductIdChange(value: String) {
+        _uiState.value = _uiState.value.copy(cloudProductId = value, cloudSaved = false, cloudSavedMessage = null)
+    }
+
+    fun onCloudDeviceNameChange(value: String) {
+        _uiState.value = _uiState.value.copy(cloudDeviceName = value, cloudSaved = false, cloudSavedMessage = null)
+    }
+
+    fun onCloudAccessKeyChange(value: String) {
+        _uiState.value = _uiState.value.copy(cloudAccessKey = value, cloudSaved = false, cloudSavedMessage = null)
+    }
+
+    /**
+     * 保存云端三项（**可选功能**：三项都空 = 关掉云端）。
+     *
+     * ⚠️ 只做"填没填全"的检查，**不做联网校验** —— 校验放在「云端」页的拉取里，
+     * 因为那一步才真正会用到平台的签名与接口（在这里校验等于多打一次网络，且失败原因更绕）。
+     */
+    fun saveCloud() {
+        val current = _uiState.value
+        viewModelScope.launch {
+            val saved = settingsRepository.saveCloud(
+                productId = current.cloudProductId,
+                deviceName = current.cloudDeviceName,
+                accessKey = current.cloudAccessKey,
+            )
+            val message = if (saved.cloudConfigured) {
+                "已保存云端参数（资源 ${saved.cloudResource}）；去「云端」页看数据"
+            } else if (saved.cloudProductId.isBlank() && saved.cloudDeviceName.isBlank() &&
+                saved.cloudAccessKey.isBlank()
+            ) {
+                "已清空云端参数：不再访问云端"
+            } else {
+                "三项要一起填才算启用（现在缺了至少一项）"
+            }
+            _uiState.value = _uiState.value.copy(
+                cloudProductId = saved.cloudProductId,
+                cloudDeviceName = saved.cloudDeviceName,
+                cloudAccessKey = saved.cloudAccessKey,
+                cloudSaved = true,
+                cloudSavedMessage = message,
+            )
+        }
     }
 
     fun onBaseUrlChange(value: String) {

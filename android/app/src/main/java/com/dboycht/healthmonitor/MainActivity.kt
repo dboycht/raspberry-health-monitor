@@ -32,6 +32,8 @@ import com.dboycht.healthmonitor.ui.about.AboutScreen
 import com.dboycht.healthmonitor.ui.about.AboutViewModel
 import com.dboycht.healthmonitor.ui.alarms.AlarmsScreen
 import com.dboycht.healthmonitor.ui.alarms.AlarmsViewModel
+import com.dboycht.healthmonitor.ui.cloud.CloudScreen
+import com.dboycht.healthmonitor.ui.cloud.CloudViewModel
 import com.dboycht.healthmonitor.ui.dashboard.DashboardScreen
 import com.dboycht.healthmonitor.ui.dashboard.DashboardViewModel
 import com.dboycht.healthmonitor.ui.settings.SettingsScreen
@@ -62,10 +64,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** 底部导航的四个页面。符号当图标用：不引 material-icons-extended，APK 能小几十 MB。 */
+/** 底部导航的五个页面。符号当图标用：不引 material-icons-extended，APK 能小几十 MB。 */
 private enum class MonitorTab(val title: String, val symbol: String) {
     DASHBOARD("监护", "♥"),
     ALARMS("报警", "⚠"),
+    CLOUD("云端", "☁"),
     ABOUT("关于", "ⓘ"),
     SETTINGS("设置", "⚙"),
 }
@@ -78,11 +81,13 @@ private fun MonitorApp(container: AppContainer) {
 
     val dashboardViewModel: DashboardViewModel = viewModel(factory = DashboardViewModel.factory(container))
     val alarmsViewModel: AlarmsViewModel = viewModel(factory = AlarmsViewModel.factory(container))
+    val cloudViewModel: CloudViewModel = viewModel(factory = CloudViewModel.factory(container))
     val aboutViewModel: AboutViewModel = viewModel(factory = AboutViewModel.factory(container))
     val settingsViewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
 
     val dashboardState by dashboardViewModel.uiState.collectAsStateWithLifecycle()
     val alarmsState by alarmsViewModel.uiState.collectAsStateWithLifecycle()
+    val cloudState by cloudViewModel.uiState.collectAsStateWithLifecycle()
     val aboutState by aboutViewModel.uiState.collectAsStateWithLifecycle()
     val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
 
@@ -92,6 +97,7 @@ private fun MonitorApp(container: AppContainer) {
             when (tab) {
                 MonitorTab.DASHBOARD -> dashboardViewModel.startPolling(lifecycle)
                 MonitorTab.ALARMS -> alarmsViewModel.startPolling(lifecycle)
+                MonitorTab.CLOUD -> cloudViewModel.startPolling(lifecycle)
                 MonitorTab.ABOUT -> aboutViewModel.startPolling(lifecycle)
                 // 设置页不轮询，只在进入时读一次已保存的值。
                 MonitorTab.SETTINGS -> settingsViewModel.load()
@@ -100,6 +106,7 @@ private fun MonitorApp(container: AppContainer) {
             // onStop 时显式停掉，协议 §5.1 要求"在 onStop() 里停掉轮询"。
             dashboardViewModel.stopPolling()
             alarmsViewModel.stopPolling()
+            cloudViewModel.stopPolling()
             aboutViewModel.stopPolling()
         }
     }
@@ -167,6 +174,12 @@ private fun MonitorApp(container: AppContainer) {
                     onDismissFeedback = { alarmsViewModel.clearFeedback() },
                 )
 
+                MonitorTab.CLOUD -> CloudScreen(
+                    state = cloudState,
+                    onRefresh = { cloudViewModel.refreshNow() },
+                    onOpenSettings = { tab = MonitorTab.SETTINGS },
+                )
+
                 MonitorTab.ABOUT -> AboutScreen(
                     state = aboutState,
                     onRefresh = { aboutViewModel.refreshNow() },
@@ -179,6 +192,10 @@ private fun MonitorApp(container: AppContainer) {
                     onSave = { settingsViewModel.save() },
                     onTest = { settingsViewModel.testConnection() },
                     onOpenAbout = { tab = MonitorTab.ABOUT },
+                    onCloudProductIdChange = settingsViewModel::onCloudProductIdChange,
+                    onCloudDeviceNameChange = settingsViewModel::onCloudDeviceNameChange,
+                    onCloudAccessKeyChange = settingsViewModel::onCloudAccessKeyChange,
+                    onSaveCloud = { settingsViewModel.saveCloud() },
                 )
             }
         }

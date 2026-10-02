@@ -26,6 +26,12 @@ class AppContainer(context: Context) {
         settingsProvider = { settingsRepository.current() },
     )
 
+    /**
+     * **云端（OneNET）只读**仓库：与 [monitorRepository] 是两个独立数据源
+     * （不同域名、不同鉴权、不同新鲜度），详见 [CloudRepository] 的说明。
+     */
+    val cloudRepository: CloudRepository = HttpCloudRepository()
+
     /** 当前设置（含归一化地址），供界面显示。 */
     suspend fun currentSettings(): AppSettings = settingsRepository.current()
 }
