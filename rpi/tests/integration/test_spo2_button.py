@@ -649,6 +649,33 @@ class TestOnDemandVitalsDevice(_Base):
         rt._spo2_finish_measure(rt.clock())
         self.assertIn("vitals", rt.devices, "连续采样模式下测量结束不该把传感器摘掉")
 
+    def test_引导测量问出的低血氧照样报警_按用户决定保持现状(self) -> None:
+        """★ **决策钉子**（用户 2026-10-01 明确拍板：**保持现状，宁多报不漏报**）。
+
+        背景（`ERROR.md` **E64**）："按需测血氧"上线后，**引导测量**本身成了
+        `spo2_too_low` 的一条**新入口** —— 以前只有"连续低血氧"才报；现在系统主动叫人测一次，
+        测出 97 %（阈值 93 %）也算，实测同一人两次出现 **97 % 与 92 %**。
+
+        三条候选处置（保持现状 / 引导测量只记录不参与报警 / 单独一套阈值）里，
+        用户选了**保持现状**，理由是"**宁多报不漏报**"：真的低血氧应当报出来，
+        而"引导测量会叫人再测一次"本来就是它的设计目的。
+
+        ⚠️ 这条测试**不是**在验证某个实现细节，而是**把产品决定固定住**：
+        将来谁想改成"引导测量不参与报警"，CI 会当场红，他就必须回到这条注释、
+        回到 `ERROR.md` E64 看一眼——**而不是悄悄改掉一个用户拍过板的语义**。
+        """
+        self.tick()
+        self._press_and_tick("spo2_button", advance=0.3)      # 主动测（无需先叫人）
+        self.assertEqual(self.rt.spo2_status(self.clock())["state"], "measure")
+        # 测量窗口内给出一个"低血氧"读数（阈值 spo2_min = 93）
+        self.rt.set_vitals(heart_rate=72.0, spo2=91.0)
+        for _ in range(3):
+            self._tick(advance=1.0)
+        self.assertIn(
+            "spo2_too_low", self.rt.engine.active_alarms(),
+            "引导测量问出的低血氧必须照样报警（用户 2026-10-01 拍板：宁多报不漏报，见 ERROR.md E64）",
+        )
+
 
 class TestIntervalReschedule(_Base):
     """★ `ERROR.md` **E67**：改了"叫人间隔"必须**重排已排定的下一轮**。
