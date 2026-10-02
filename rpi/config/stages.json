@@ -177,12 +177,9 @@
         "tft",
         "spo2_button"
       ],
-      "status": "partial",
+      "status": "verified",
       "verified_on": "2026-10-01",
-      "missing": [
-        "S9 断网可用性：**真断网**仍未做（`pi` 用户无网络权限，nmcli 返回 Not authorized）；2026-10-01 已用『云不可达 + 最小 MQTT 桩』做**替代验证**（25 项判据，docs/07 §6.2）⇒ `docs/07` 记『部分通过』"
-      ],
-      "note": "★ 2026-10-01 补 status=partial：**服务化本身已真机验收**（S1–S8、S10–S19 全 ✅，含三面板/消息流/屏显控制/TFT 富帧），**唯独 S9 未实测**且已由用户决定不做 ⇒ 记 partial + missing，而不是糊成 verified、也不是留在 planned（那会读成『什么都没做』）。验收记录见 docs/07 第 3/3.1 节与 §6.1。★ 本级起快照含 `spo2_button`：测血氧是服务级功能（T14），服务级快照把它带上，`--stage T10` 起服务即可复现完整功能集"
+      "note": "★ 2026-10-01 补 status=partial：**服务化本身已真机验收**（S1–S8、S10–S19 全 ✅，含三面板/消息流/屏显控制/TFT 富帧），**唯独 S9 未实测**且已由用户决定不做 ⇒ 记 partial + missing，而不是糊成 verified、也不是留在 planned（那会读成『什么都没做』）。验收记录见 docs/07 第 3/3.1 节与 §6.1。★ 本级起快照含 `spo2_button`：测血氧是服务级功能（T14），服务级快照把它带上，`--stage T10` 起服务即可复现完整功能集<br>★ 2026-10-02 由 `partial` 改为 **`verified`**：satisfy 唯一那个 missing（S9 断网可用性）—— 除了 2026-10-01 的『云不可达 + MQTT 桩』替代验证（25 项判据），**2026-10-02 又拿到了真实断网证据**：板子上云通路被校园网挡住 623 秒（`connected=False`、`skipped_offline=21`、`/dev/tcp/mqtts.heclouds.com/1883` = Connection timed out），而**本地监护/报警全程正常**、`active_alarms={}` 无假报警 ⇒ `docs/07` 的 S9 记 ✅ 实测通过（真断网这件事真的发生了）。"
     },
     "T11": {
       "title": "SQLite 历史与趋势",
