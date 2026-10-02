@@ -41,3 +41,7 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 交付包（二进制交付件：PPT/PDF/字体副本）按需要单独交，不进仓库
+/dist/
+
