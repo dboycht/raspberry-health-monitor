@@ -54,7 +54,14 @@ object JsonSamples {
     /** 极端情况：`data` 整体缺失（服务刚起来还没采到数），必须不能崩。 */
     val CURRENT_DATA_ABSENT: String = """{"ok": true, "active_alarms": {}}"""
 
-    /** §4.4 的报警样本：live + history，history 里 `value` 可能是 null。 */
+    /**
+     * §4.4 的报警样本：live + history，history 里 `value` 可能是 null。
+     *
+     * ⚠️ 2026-10-02：这条 `pushed` 原来是 **`0`**（照当时契约文档手写），现在改成 **`false`** ——
+     * 真机发的是布尔（`store.recent_alarms()` 里 `bool(row["pushed"])`）。
+     * 留着 `0` 会直接解析失败（`Expected valid boolean literal prefix, but had '0'`），
+     * 而那份"文档形状"的样本正是当初让这个不一致**躲过所有单测**的原因。
+     */
     val ALARMS: String = """
         {"ok": true,
          "live": [{"ts": 1790001560.0, "code": "hr_too_high", "severity": 2,
@@ -62,12 +69,50 @@ object JsonSamples {
                    "beep_times": 3, "silenced": false}],
          "history": [{"ts": 1790001560.0, "code": "hr_too_high", "severity": 2,
                       "message": "心率偏高 128.4bpm，请注意查看", "value": 128.4, "unit": "bpm",
-                      "source": "vitals", "detail": {}, "pushed": 0},
+                      "source": "vitals", "detail": {}, "pushed": false},
                      {"ts": 1790001500.0, "code": "sos_pressed", "severity": 3,
                       "message": "已收到紧急求助，请立即查看", "value": null, "unit": "",
                       "source": "sos", "detail": {}}, 
                      {"ts": 1790001400.0, "code": null, "severity": null, "message": null,
                       "value": null, "unit": null, "source": null, "detail": null}]}
+    """.trimIndent()
+
+    /**
+     * ★ **真机原样抓下来的** `/api/v1/alarms` 响应（2026-10-02 11:52，树莓派 `t1`）。
+     *
+     * 为什么必须留一份"真机形状"的样本：上面那份 [ALARMS] 是**照契约文档手写**的，
+     * 于是它恰好绕开了真机上的两个坑 —— `pushed` 真机发的是**布尔 `false`**（文档写成 `0`），
+     * `detail` 真机里是**混合类型**（`{"ok":false,"valid_samples":0}`、`{"error":"…"}`）。
+     * App 当时把二者声明成 `Int?` / `Map<String,String>` ⇒ **CI 全绿、真机报警列表全红**
+     * （界面："响应格式不对：树莓派返回的不是预期 JSON"）。
+     *
+     * ⚠️ **纪律**：这类"线上形状"的样本要**从设备抓**，不要照文档手写 ——
+     * 手写的样本只能证明"我们自洽"，证明不了"跟设备一致"。
+     */
+    val ALARMS_REAL_DEVICE: String = """
+        {"ok": true,
+         "live": [{"ts": 1790911714.8330173, "code": "system_start", "severity": 1,
+                   "light": "green", "blink": false, "speak": "监护系统已启动",
+                   "beep_times": 0, "silenced": false},
+                  {"ts": 1790912692.5840764, "code": "ambient_temp_high", "severity": 1,
+                   "light": "yellow", "blink": false, "speak": "室温偏高，建议通风",
+                   "beep_times": 1, "silenced": false}],
+         "history": [{"ts": 1790912701.408948, "code": "spo2_measured", "severity": 1,
+                      "message": "血氧测量未取得有效读数", "value": null, "unit": "",
+                      "source": "spo2",
+                      "detail": {"ok": false, "heart_rate_bpm": null, "spo2_percent": null,
+                                 "valid_samples": 0},
+                      "pushed": false},
+                     {"ts": 1790912692.5841634, "code": "ambient_temp_high", "severity": 1,
+                      "message": "室温偏高 22.7°C，请注意查看", "value": 22.7, "unit": "°C",
+                      "source": "ambient", "detail": {}, "pushed": false},
+                     {"ts": 1790859319.3283668, "code": "sensor_fault", "severity": 2,
+                      "message": "传感器 spo2_button 连续 3 次读取失败，请检查接线",
+                      "value": 3.0, "unit": "次", "source": "spo2_button",
+                      "detail": {"error": "数据陈旧（超过 3 × 0.2s 未更新）"}, "pushed": false},
+                     {"ts": 1790867375.1975873, "code": "all_clear", "severity": 0,
+                      "message": "室温偏高已恢复正常", "value": null, "unit": "", "source": "",
+                      "detail": {"recovered_code": "ambient_temp_high"}, "pushed": false}]}
     """.trimIndent()
 
     /** §4.2 的健康样本（含设备状态与 dispatcher）。 */

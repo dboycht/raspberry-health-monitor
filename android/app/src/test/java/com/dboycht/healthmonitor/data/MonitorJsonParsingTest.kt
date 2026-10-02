@@ -2,6 +2,9 @@ package com.dboycht.healthmonitor.data
 
 import com.dboycht.healthmonitor.testing.JsonSamples
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -109,6 +112,64 @@ class MonitorJsonParsingTest {
     }
 
     // --- §4.4 /alarms -------------------------------------------------
+
+    /**
+     * ★ **回归钉子**（2026-10-02 真机验收抓到）：真机的 `/api/v1/alarms` 必须能解析。
+     *
+     * 出事的是两个字段的**类型**：
+     *  * `pushed`：真机发**布尔** `false`（`store.recent_alarms()` 里 `bool(row["pushed"])`），
+     *    而 DTO 当时写的是 `Int?`；契约文档也写成 `0` ⇒ 文档、实现、App 三方不一致；
+     *  * `detail`：真机里是**混合类型**字典（`{"valid_samples":0}` / `{"ok":false}` /
+     *    `{"error":"…"}`），而 DTO 当时写的是 `Map<String, String>`。
+     *
+     * 这两个都会让整个响应解析失败 ⇒ 真机上"报警事件（0 条）/ 响应格式不对"，
+     * 而**所有单测全绿**（样本是照文档手写的，恰好绕开了真机形状）。
+     * ⇒ 判据：**解析样本必须来自设备**（见 [JsonSamples.ALARMS_REAL_DEVICE] 的注释）。
+     */
+    @Test
+    fun `真机原样报文字段能解析_pushed 是布尔_detail 是混合类型`() {
+        val response = json.decodeFromString<AlarmsResponse>(JsonSamples.ALARMS_REAL_DEVICE)
+
+        assertTrue("真机报文必须能解析", response.ok)
+        assertEquals(2, response.live.size)
+        assertEquals(4, response.history.size)
+
+        // pushed 是布尔（不是 0/1）。
+        assertEquals(false, response.history[0].pushed)
+        assertEquals(false, response.history[1].pushed)
+
+        // detail 里的值可以是 int / bool / null / 字符串 —— 都不能让解析失败。
+        val spo2 = response.history.first { it.code == "spo2_measured" }
+        assertEquals(0, spo2.detail["valid_samples"]!!.jsonPrimitive.int)
+        assertEquals(false, spo2.detail["ok"]!!.jsonPrimitive.boolean)
+        assertTrue(
+            "finger 缺失时是 JSON null",
+            spo2.detail["heart_rate_bpm"] is kotlinx.serialization.json.JsonNull,
+        )
+
+        val fault = response.history.first { it.code == "sensor_fault" }
+        assertTrue(
+            "detail 里的中文错误串要原样保留",
+            fault.detail["error"]!!.jsonPrimitive.content.contains("数据陈旧"),
+        )
+
+        val clear = response.history.first { it.code == "all_clear" }
+        assertEquals(
+            "ambient_temp_high",
+            clear.detail["recovered_code"]!!.jsonPrimitive.content,
+        )
+
+        // 空对象也要能解析。
+        assertEquals(0, response.history.first { it.code == "ambient_temp_high" }.detail.size)
+
+        // 整条链路（App 的事件流）也要能吃下真机报文。
+        val feed = com.dboycht.healthmonitor.domain.AlarmFeed.from(response)
+        assertEquals(4, feed.history.size)
+        assertEquals(
+            listOf("spo2_measured", "ambient_temp_high", "sensor_fault", "all_clear"),
+            feed.history.map { it.code },
+        )
+    }
 
     @Test
     fun `解析 §4_4 报警样本_live 与 history`() {

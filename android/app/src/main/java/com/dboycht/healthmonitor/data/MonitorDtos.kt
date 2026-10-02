@@ -1,6 +1,7 @@
 package com.dboycht.healthmonitor.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /**
  * 树莓派接口的线上数据模型（DTO）。
@@ -110,8 +111,22 @@ data class AlarmEventDto(
     val value: Double? = null,
     val unit: String? = null,
     val source: String? = null,
-    val detail: Map<String, String> = emptyMap(),
-    val pushed: Int? = null,
+    /**
+     * 事件附加信息。**值类型是开放的**（`String` / `Int` / `Boolean` / `null` 都可能），
+     * 例如真机实际发过：`{"recovered_code":"ambient_temp_high"}`、
+     * `{"error":"数据陈旧…"}`、`{"ok":false,"heart_rate_bpm":null,"valid_samples":0}`。
+     *
+     * ⚠️ **2026-10-02 真机验收抓到**：这里原来声明成 `Map<String, String>` ⇒ 真机一返回
+     * `{"valid_samples": 0}` 就解析失败，整个报警列表报"响应格式不对"，而 App 自身单测
+     * 用的是"照文档手写"的样本（`detail` 恰好为空对象）⇒ **CI 全绿、真机全红**。
+     * 现在用 [JsonElement] 接受任意 JSON 值（判据：**开放字典就不该假设值类型**）。
+     */
+    val detail: Map<String, JsonElement> = emptyMap(),
+    /**
+     * 是否已推送到手机。⚠️ 真机发的是**布尔** `false`（`store.recent_alarms()` 里
+     * `bool(row["pushed"])`），不是契约文档原先写的 `0` —— 同一次真机验收一并纠正。
+     */
+    val pushed: Boolean? = null,
 )
 
 // ---------------------------------------------------------------------------
