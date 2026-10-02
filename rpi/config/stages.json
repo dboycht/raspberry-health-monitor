@@ -33,7 +33,10 @@
     },
     "T1": {
       "title": "LCD1602 字符屏（I2C）",
-      "devices": ["ambient", "display"],
+      "devices": [
+        "ambient",
+        "display"
+      ],
       "status": "verified",
       "verified_on": "2026-09-26",
       "commit": "7f17f53",
@@ -42,7 +45,12 @@
     },
     "T2": {
       "title": "蜂鸣器 + 双色 LED（本地报警）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led"
+      ],
       "status": "verified",
       "verified_on": "2026-09-26",
       "commit": "ba6ae30",
@@ -51,7 +59,13 @@
     },
     "T3": {
       "title": "按键：短按消音 / 长按求助",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button"
+      ],
       "status": "verified",
       "verified_on": "2026-09-26",
       "commit": "83730b8",
@@ -60,7 +74,14 @@
     },
     "T4": {
       "title": "HC-SR501 人体红外（久无活动）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion"
+      ],
       "status": "verified",
       "verified_on": "2026-09-28",
       "commit": "5ed5b50",
@@ -69,21 +90,43 @@
     },
     "T5": {
       "title": "MCP3002 ADC 自证两个通道",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion"
+      ],
       "status": "cancelled",
       "cancelled_on": "2026-09-28",
       "note": "❌ 用户决定取消（不做 ADC/TMP36 这一路）。2026-09-28 真机联调未验通：树莓派侧信号全部实测正常（CS/CLK/DIN），但回读线读数不稳定（三种读法互相矛盾）⇒ 判定为面包板/接线侧问题，排查成本超出该级价值。完整经过与教训见 ERROR.md E48。⚠️ 2026-10-01：用户决定**彻底删除** MCP3002/TMP36 的代码（驱动/测试/配置/报警码均已移除），本级条目**仅作阶梯历史保留**。"
     },
     "T6": {
       "title": "TMP36 精密体温（模拟量 → 温度）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion"
+      ],
       "status": "cancelled",
       "cancelled_on": "2026-09-28",
       "note": "❌ 随 T5 一并取消（它依赖 T5 的 ADC 自证）。⚠️ 2026-10-01：用户决定**彻底删除** TMP36/MCP3002 的代码（驱动/测试/配置/报警码/`body_temp` 全部移除），本级条目**仅作阶梯历史保留**。"
     },
     "T7": {
       "title": "MAX30102 心率血氧",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals"
+      ],
       "status": "verified",
       "verified_on": "2026-09-29",
       "commit": "47bbb21",
@@ -91,14 +134,31 @@
     },
     "T8": {
       "title": "蓝牙音箱语音播报",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals"
+      ],
       "status": "cancelled",
       "cancelled_on": "2026-09-30",
       "note": "❌ **已废止并删除代码**（2026-10-02 用户明确指示「蓝牙音响不要了」）。当初不做的理由：板上**没有可发声的输出设备** —— `aplay -l` 只有两张 HDMI 声卡、Pi 5 **没有 3.5mm 孔**、`bluetoothctl devices` 只配了一只键盘 ⇒ `espeak-ng`/`aplay` 虽在，但播报**无去处**（服务日志每次都报 `aplay: audio open error 524`）；而报警链路（蜂鸣器 + 三色 LED + 两块屏）已闭环。\n★ 2026-10-02 删除范围（同 T5/T6 的「废止即删干净」先例）：① 驱动 `outputs/bt_speaker.py` 与其单测；② `SpeakCommand` / `CommandType.SPEAK` / `AlarmPresentation.speak` 字段与**每条报警的中文播报文案**；③ `POST /api/v1/speak` 调试接口（连同契约文档）；④ 配置里的 `speaker` 器件、模拟器 `ConsoleSpeaker`、`espeak-ng`/`aplay` 体检项。**保留**：蜂鸣器（真实存在的报警声）、三色 LED、两块屏，以及 E63 的**音频工作线程**（蜂鸣器也走它，那条「声音绝不许阻塞监护循环」的纪律与判据照旧有效）。报告按「该级取消、代码已删除」写。见 `ERROR.md` E48 同族记法与 docs/14 的 T8 一节。"
     },
     "T9": {
       "title": "TFT 1.8\" SPI 彩屏",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals",
+        "tft"
+      ],
       "status": "verified",
       "verified_on": "2026-09-29",
       "commit": "7b1958f",
@@ -106,38 +166,91 @@
     },
     "T10": {
       "title": "服务化：HTTP API + 状态网页",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals",
+        "tft",
+        "spo2_button"
+      ],
       "status": "partial",
       "verified_on": "2026-10-01",
-      "missing": ["S9 断网可用性：**真断网**仍未做（`pi` 用户无网络权限，nmcli 返回 Not authorized）；2026-10-01 已用『云不可达 + 最小 MQTT 桩』做**替代验证**（25 项判据，docs/07 §6.2）⇒ `docs/07` 记『部分通过』"],
+      "missing": [
+        "S9 断网可用性：**真断网**仍未做（`pi` 用户无网络权限，nmcli 返回 Not authorized）；2026-10-01 已用『云不可达 + 最小 MQTT 桩』做**替代验证**（25 项判据，docs/07 §6.2）⇒ `docs/07` 记『部分通过』"
+      ],
       "note": "★ 2026-10-01 补 status=partial：**服务化本身已真机验收**（S1–S8、S10–S19 全 ✅，含三面板/消息流/屏显控制/TFT 富帧），**唯独 S9 未实测**且已由用户决定不做 ⇒ 记 partial + missing，而不是糊成 verified、也不是留在 planned（那会读成『什么都没做』）。验收记录见 docs/07 第 3/3.1 节与 §6.1。★ 本级起快照含 `spo2_button`：测血氧是服务级功能（T14），服务级快照把它带上，`--stage T10` 起服务即可复现完整功能集"
     },
     "T11": {
       "title": "SQLite 历史与趋势",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals",
+        "tft",
+        "spo2_button"
+      ],
       "status": "verified",
       "verified_on": "2026-10-01",
       "note": "★ 2026-10-01 由 planned 改为 verified（原先只是没更新）：验收判据全部有真机证据 —— ① 历史接口 S5：`/api/v1/history?metric=ambient_temp_c&limit=300` 实测返回 **300 行**（中位采样间隔 3.0 s）；② 趋势图 S12：用一次**真实采集中断**做 A/B（禁用 ambient 150 s ⇒ 历史里一个 152 s 的洞 ⇒ 按时间断线画出 2 条线，修复前是 1 条线跨缺口）；③ 保留期：`Store.retention_days=30` + `prune()` 每小时被调用（板子实测库 6.4 MB / readings 62749 行 / 跨度 103.5 小时）；④ 『连跑 30~60 分钟』这条早已被更强的运行时跨度覆盖（vitals 表跨度 32 小时）。详见 docs/07 的 S5、S12 与 **§6.1 第 6 行**（本轮 vitals 表改为『只在有值时写』，省 SD 卡写入）"
     },
     "T12": {
       "title": "OneNET 上云（数据点 + 规则引擎转发）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
-      "status": "partial",
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals",
+        "tft",
+        "spo2_button"
+      ],
+      "status": "verified",
       "verified_on": "2026-10-02",
-      "missing": ["C7 的**平台侧**：规则引擎要 POST 到一个**公网可达**的回调 URL，而本项目立场是『只在内网』（板子在内网 NAT 后、docs/09 只有电脑热点这种局域网通路）⇒ 本机接收口已验通（HTTP 200 + 留证），**平台侧在本课程网络下做不到**（用户 2026-10-02 拍板『不做，只写清』；以后要验的两条路写在 docs/07 的 C7 行与 docs/11 §6）", "C9 的**真断网**：仍未做（`pi` 无网络权限）；已用『云不可达 + 最小 MQTT 桩』替代验证（杀桩⇒离线、再起桩⇒自动重连并继续上报；25 项判据见 docs/07 §6.2）"],
-      "note": "另需在板子的 `devices.local.json` 里开 `onenet.enabled` 并配密钥（密钥不入库）。★ 2026-10-02 由 `planned` 改为 `partial`（原先只是没更新）：**已实测** C1–C6 + C8 —— token 参数生成、上报启动、MQTT connected、数据点写出、平台回执 `accepted`、**故意发非法报文体 ⇒ 平台回 `rejected` + `err_code 98 illegal data`**（把 E47 的机理钉死）、回调端点本机自测 200 + 宽容接收；**部分**：C7 平台侧（拓扑限制，见 missing）、C9 真断网（有替代验证）。<br>★ 2026-10-01：上云改为**断网即暂停入队**（用户拍板）：`connected` 是三态（未知/已连/已知离线），**只在『已知离线』时暂停入队**并累加 `skipped_offline`，恢复后从当前值继续（**不补传**断网期间的读数）；离线次数/时长/跳过条数都在 `/api/v1/health` 的 `mqtt` 字段里。<br>★ 2026-10-02 追加：**手机端新增『云端』页（只读 OneNET）** —— 手机只有移动数据时也能看『树莓派上次上报过什么』（密钥由用户在设置页手填、不进 APK；接口与鉴权的坑见 docs/11 §6.1）。⚠️ 当天中午板子连不上 MQTT broker（校园网侧）⇒ 顺带在真实断网下验了『暂停入队』（`skipped_offline` 增长、无失败堆积）"
+      "note": "另需在板子的 `devices.local.json` 里开 `onenet.enabled` 并配密钥（密钥不入库）。★ 2026-10-02 由 `planned` 改为 `partial`（原先只是没更新）：**已实测** C1–C6 + C8 —— token 参数生成、上报启动、MQTT connected、数据点写出、平台回执 `accepted`、**故意发非法报文体 ⇒ 平台回 `rejected` + `err_code 98 illegal data`**（把 E47 的机理钉死）、回调端点本机自测 200 + 宽容接收；**部分**：C7 平台侧（拓扑限制，见 missing）、C9 真断网（有替代验证）。<br>★ 2026-10-01：上云改为**断网即暂停入队**（用户拍板）：`connected` 是三态（未知/已连/已知离线），**只在『已知离线』时暂停入队**并累加 `skipped_offline`，恢复后从当前值继续（**不补传**断网期间的读数）；离线次数/时长/跳过条数都在 `/api/v1/health` 的 `mqtt` 字段里。<br>★ 2026-10-02 追加：**手机端新增『云端』页（只读 OneNET）** —— 手机只有移动数据时也能看『树莓派上次上报过什么』（密钥由用户在设置页手填、不进 APK；接口与鉴权的坑见 docs/11 §6.1）。⚠️ 当天中午板子连不上 MQTT broker（校园网侧）⇒ 顺带在真实断网下验了『暂停入队』（`skipped_offline` 增长、无失败堆积）<br>★ 2026-10-02 由 `partial` 改为 **`verified`**（用户拍板口径）：**C7 的『云→端』下行本项目不做**（『手机上的信息是云端获得的，只有看的功能』）⇒ 不再是缺失项，而是『不采用』；**C9 真断网**同样不需要专门复现（『发现断网就不提交了呗』，而『断网即暂停入队』本就是设计，并有 2026-10-02 的真实断网观察：板上云通路断了 10 分钟、本地监护/报警全程正常）。本机回调接收口已实现并自测通过，作为能力保留。"
     },
     "T13": {
       "title": "手机 App 联调 + 整机收口",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals",
+        "tft",
+        "spo2_button"
+      ],
       "status": "partial",
       "verified_on": "2026-10-02",
-      "missing": ["**整机收口 + 交付材料**还没做：`docs/07` 的导出、`docs/12` 课程任务对照的缺项、答辩材料的最终整理（本级前半段『手机联调』已完成）", "`docs/07` 的 **H16**（HC-SR04 拓展件，未接线）与 **H14**（蓝牙音箱，板上无可用发声设备）仍未验；T12 的 C7 平台侧 / C9 真断网见 T12 的 missing"],
-      "note": "★ 2026-10-02 由 `planned` 改为 `partial`（原先只是没更新）：**A1–A9 九项全部真机实测通过**（安装/配置地址/四张卡真值/缺失值渲染/报警同步/消音/求助/断网恢复/后台省电，逐项证据见 docs/07 §4）。⚠️ 通路说明：手机当时**只有移动数据、与板子不同网段** ⇒ 用 **USB 反向端口**（`adb reverse` + PC 转发器）测的；**『手机经 Wi-Fi 直连树莓派』这条网络路径未验**。★ 这一轮顺带抓出并修掉 2 个真缺陷（A5 报警列表在真机上永远解析失败 = `ERROR.md` E79；A8 断网后界面显示已连接却永不刷新 = E80），两者都是『CI 全绿、只有真机会红』。<br>★ 2026-10-02 追加：安卓端新增**五个标签页**（监护/报警/**云端**/关于/设置），其中『云端』是只读 OneNET（手机不在家也能看上次上报）；`body_temp` 残留全删（五张卡→四张卡）"
+      "missing": [
+        "**答辩演示脚本**还没按 `docs/15` §3 的真机顺序重排（整机收口与交付材料已于 2026-10-02 完成：新增 `docs/15-交付材料清单.md`、导出 `docs/07`/`docs/13` 的 PDF、修掉 `docs/任务原件.md` 的过期结论）"
+      ],
+      "note": "★ 2026-10-02 由 `planned` 改为 `partial`（原先只是没更新）：**A1–A9 九项全部真机实测通过**（安装/配置地址/四张卡真值/缺失值渲染/报警同步/消音/求助/断网恢复/后台省电，逐项证据见 docs/07 §4）。⚠️ 通路说明：手机当时**只有移动数据、与板子不同网段** ⇒ 用 **USB 反向端口**（`adb reverse` + PC 转发器）测的；**『手机经 Wi-Fi 直连树莓派』这条网络路径未验**。★ 这一轮顺带抓出并修掉 2 个真缺陷（A5 报警列表在真机上永远解析失败 = `ERROR.md` E79；A8 断网后界面显示已连接却永不刷新 = E80），两者都是『CI 全绿、只有真机会红』。<br>★ 2026-10-02 追加：安卓端新增**五个标签页**（监护/报警/**云端**/关于/设置），其中『云端』是只读 OneNET（手机不在家也能看上次上报）；`body_temp` 残留全删（五张卡→四张卡）<br>★ 2026-10-02 口径：**手机主线是『云端』页（端→云→手机只读，异网可用）**，「监护」「报警」两个直连页为**可选附加**（同网段时实时 + 消音/求助，A6/A7 已验）；H16（HC-SR04）与 H14（蓝牙音箱）已废止删除，不再计入。"
     },
     "T14": {
       "title": "按需测血氧（蜂鸣器叫人 → 按键 → 测量 → 报结果）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
+      "devices": [
+        "ambient",
+        "display",
+        "alarm_buzzer",
+        "status_led",
+        "sos_button",
+        "motion",
+        "vitals",
+        "tft",
+        "spo2_button"
+      ],
       "status": "verified",
       "verified_on": "2026-09-30",
       "note": "用户 2026-09-30 追加的功能级（docs/14 的 T14 一节）。接线：新增「测血氧」按键一端 **GPIO13（物理脚 33）**、另一端 GND（脚 34）。真机验收：叫人（蜂鸣 2 声 + 两屏 `SPO2 CHECK NOW?`）→ 按键 → 引导测量（屏上 `FINGER ON PPG` / **`TOUCH LIGHTLY`**，后者就是 E60 的产品化处置）→ 报窗口中位数（实测 `心率 68 bpm / 血氧 97 %`，146 个有效读数取中位数）。<br>★ 2026-10-01 追加并真机验收：**默认改为『只做环境测量』**（用户选方案 c）—— 配置默认 `vitals.enabled=false`，**测量窗口内临时装配+打开传感器、测完立刻关掉**（板子实测：测前 devices 无 vitals → 测量中出现 → 30 s 窗口结束又消失）；测量期采样周期用 `thresholds.spo2_read_interval_s`（默认 1 s，测完还原）。⚠️ **stage 快照仍保留 vitals**（为了『级别单调递增』守卫）⇒ 想复现产品默认请用 `--set devices.vitals.enabled=false`。<br>⚠️ 本级暴露 **E61**（多按键事件无来源标识）、**E62**（只信 ok 标记 ⇒ float(None) 打崩 tick）、**E64**（引导测量成了 `spo2_too_low` 的新入口，**待用户拍板**）"
