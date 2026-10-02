@@ -262,7 +262,7 @@ curl -s http://127.0.0.1:8080/api/v1/health | python3 -m json.tool | head -40
 - [ ] `python3 scripts/onenet_token.py --selftest` 通过（算法正确）
 - [ ] 配置里 `onenet.enabled = true`，且 `python3 -m health_monitor selfcheck --real` 仍无 FAIL
 - [ ] 启动日志出现 **`OneNET 已连接`**
-- [ ] OneNET 控制台的设备**数据流里能看到真实数值**（心率/体温等）
+- [ ] OneNET 控制台的设备**数据流里能看到真实数值**（心率/室温等）
 - [ ] （做云云对接的话）启用了规则引擎，且树莓派日志出现 **`[云端推送] #N`**
 - [ ] `curl http://127.0.0.1:8080/api/v1/health` 的 `mqtt`/`cloud` 字段显示 `connected: true`
 - [ ] 断网测试：拔网线/关 WiFi 后，**本地报警仍然工作**（蜂鸣器+LED+LCD 照旧），
