@@ -34,7 +34,6 @@ class MonitorJsonParsingTest {
         assertEquals(97.9, data.spo2_percent!!, 0.001)
         assertEquals(true, data.finger_detected)
         assertEquals(0.95, data.vitals_quality!!, 0.001)
-        assertEquals(36.5, data.body_temp_c!!, 0.001)
         assertEquals(24.5, data.ambient_temp_c!!, 0.001)
         assertEquals(55.2, data.humidity_percent!!, 0.001)
         assertEquals("detected", data.motion_state)
@@ -59,7 +58,6 @@ class MonitorJsonParsingTest {
 
         // 同一份样本里"有值"的字段照常解析（不能因为别的字段是 null 就整体失败）。
         assertEquals(false, data.finger_detected)
-        assertEquals(36.1, data.body_temp_c!!, 0.001)
         assertEquals(48.0, data.humidity_percent!!, 0.001)
 
         // sensor_failures 非空要能解析成"设备名 → 次数"。
@@ -105,7 +103,6 @@ class MonitorJsonParsingTest {
         val data = json.decodeFromString<CurrentResponse>(missing).data!!
         assertNull(data.heart_rate_bpm)
         assertNull(data.spo2_percent)
-        assertNull(data.body_temp_c)
         assertNull(data.finger_detected)
         assertNull(data.motion_state)
         assertTrue(data.sensor_failures.isEmpty())
@@ -231,7 +228,6 @@ class MonitorJsonParsingTest {
         listOf(
             data.heart_rate_bpm,
             data.spo2_percent,
-            data.body_temp_c,
             data.ambient_temp_c,
             data.humidity_percent,
             data.vitals_quality,

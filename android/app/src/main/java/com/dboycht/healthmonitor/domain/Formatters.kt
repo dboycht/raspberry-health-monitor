@@ -59,8 +59,6 @@ object Formatters {
 
     fun spo2(percent: Double?): String = valueWithUnit(percent, " %", decimals = 1)
 
-    fun bodyTemp(celsius: Double?): String = valueWithUnit(celsius, " ℃", decimals = 1)
-
     fun ambientTemp(celsius: Double?): String = valueWithUnit(celsius, " ℃", decimals = 1)
 
     fun humidity(percent: Double?): String = valueWithUnit(percent, " %", decimals = 1)

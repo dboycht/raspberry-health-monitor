@@ -37,19 +37,20 @@ object DashboardCards {
     private const val HR_LOW = 50.0
     private const val HR_HIGH = 110.0
     private const val SPO2_LOW = 92.0
-    private const val BODY_TEMP_LOW = 35.5
-    private const val BODY_TEMP_HIGH = 37.5
     private const val HUMIDITY_LOW = 30.0
     private const val HUMIDITY_HIGH = 70.0
 
     /**
-     * 按协议 §4.1 的渲染规则生成五张卡片：
-     * 心率 / 血氧 / 体温 / 室温湿度 / 活动状态。
+     * 按协议 §4.1 的渲染规则生成四张卡片：
+     * 心率 / 血氧 / 室温湿度 / 活动状态。
+     *
+     * ⚠️ 2026-10-01：原来的**第五张"体温"卡片已删除** —— 它对应的
+     * `body_temp_c`（TMP36 + MCP3002）那一级（T5/T6）已由用户决定取消，
+     * 树莓派端**不再下发该字段**，再留着这张卡就是一张永远显示"—"的死卡片。
      */
     fun build(snapshot: MonitorSnapshot): List<DashboardCard> = listOf(
         heartRateCard(snapshot),
         spo2Card(snapshot),
-        bodyTempCard(snapshot),
         roomCard(snapshot),
         motionCard(snapshot),
     )
@@ -106,28 +107,6 @@ object DashboardCards {
                 else -> Severity.NORMAL
             },
             alert = low,
-        )
-    }
-
-    private fun bodyTempCard(s: MonitorSnapshot): DashboardCard {
-        val temp = s.bodyTempC
-        val outOfRange = temp != null && (temp < BODY_TEMP_LOW || temp > BODY_TEMP_HIGH)
-        return DashboardCard(
-            title = "体温",
-            value = if (temp == null) Formatters.UNKNOWN else Formatters.formatNumber(temp, 1),
-            unit = if (temp == null) null else "℃",
-            subtitle = "正常范围 $BODY_TEMP_LOW~$BODY_TEMP_HIGH ℃",
-            statusText = when {
-                temp == null -> "未知"
-                outOfRange -> "异常"
-                else -> "正常"
-            },
-            statusSeverity = when {
-                temp == null -> Severity.INFO
-                outOfRange -> Severity.WARNING
-                else -> Severity.NORMAL
-            },
-            alert = outOfRange,
         )
     }
 

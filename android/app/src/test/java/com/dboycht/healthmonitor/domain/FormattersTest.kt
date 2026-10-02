@@ -21,7 +21,6 @@ class FormattersTest {
         "formatNumber" to { v -> Formatters.formatNumber(v, 1) },
         "heartRate" to { v -> Formatters.heartRate(v) },
         "spo2" to { v -> Formatters.spo2(v) },
-        "bodyTemp" to { v -> Formatters.bodyTemp(v) },
         "ambientTemp" to { v -> Formatters.ambientTemp(v) },
         "humidity" to { v -> Formatters.humidity(v) },
         "quality" to { v -> Formatters.quality(v) },
@@ -59,7 +58,6 @@ class FormattersTest {
     fun `有值时单位与精度正确`() {
         assertEquals("72 bpm", Formatters.heartRate(72.4))
         assertEquals("97.9 %", Formatters.spo2(97.9))
-        assertEquals("36.5 ℃", Formatters.bodyTemp(36.5))
         assertEquals("24.5 ℃", Formatters.ambientTemp(24.5))
         assertEquals("55.2 %", Formatters.humidity(55.2))
         assertEquals("95 %", Formatters.quality(0.95))

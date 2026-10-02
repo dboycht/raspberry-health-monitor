@@ -59,7 +59,6 @@ data class CurrentDataDto(
     val spo2_percent: Double? = null,
     val finger_detected: Boolean? = null,
     val vitals_quality: Double? = null,
-    val body_temp_c: Double? = null,
     val ambient_temp_c: Double? = null,
     val humidity_percent: Double? = null,
     val motion_state: String? = null,

@@ -25,17 +25,19 @@ class DashboardCardsTest {
         cards.first { it.title == title }
 
     @Test
-    fun `正好五张卡片_心率 血氧 体温 室温湿度 活动状态`() {
+    fun `正好四张卡片_心率 血氧 室温湿度 活动状态`() {
+        // ⚠️ 2026-10-01：**由五张改为四张** —— "体温"那张卡随 T5/T6（TMP36+MCP3002）取消，
+        // 树莓派端不再下发 `body_temp_c`，留着它就是一张永远显示"—"的死卡片。
         val cards = DashboardCards.build(MonitorSnapshot.EMPTY)
-        assertEquals(5, cards.size)
+        assertEquals(4, cards.size)
         assertEquals(
-            listOf("心率", "血氧", "体温", "室温 / 湿度", "活动状态"),
+            listOf("心率", "血氧", "室温 / 湿度", "活动状态"),
             cards.map { it.title },
         )
     }
 
     @Test
-    fun `全空快照时五张卡片都不显示 0`() {
+    fun `全空快照时四张卡片都不显示 0`() {
         val cards = DashboardCards.build(MonitorSnapshot.EMPTY)
         cards.forEach { card ->
             // 只允许"--"或"-- / --"这种纯未知占位，不允许出现任何数字。
@@ -46,12 +48,19 @@ class DashboardCardsTest {
             assertFalse("${card.title} 的值里不能有 0：${card.value}", card.value.contains("0"))
         }
         assertEquals(Formatters.UNKNOWN, cardOf(cards, "心率").value)
-        assertEquals(Formatters.UNKNOWN, cardOf(cards, "体温").value)
         assertEquals("-- / --", cardOf(cards, "室温 / 湿度").value)
         assertEquals("未知", cardOf(cards, "活动状态").value)
         // 值缺失时不给单位（避免出现 "-- ℃"）。
-        assertNull(cardOf(cards, "体温").unit)
         assertNull(cardOf(cards, "心率").unit)
+    }
+
+    @Test
+    fun `不再有体温卡片`() {
+        // 反向钉子：谁把"体温"卡片加回来，这条会当场红 ——
+        // 它对应的字段（body_temp_c）在协议里已经没有了（T5/T6 取消，见 docs/07 H8）。
+        val titles = DashboardCards.build(MonitorSnapshot.EMPTY).map { it.title }
+        // ⚠️ JUnit4 的签名是 `assertFalse(message, condition)` —— 消息在前。
+        assertFalse("体温卡片已删除：body_temp_c 不再由树莓派下发", "体温" in titles)
     }
 
     @Test
@@ -145,9 +154,10 @@ class DashboardCardsTest {
     }
 
     @Test
-    fun `心率与体温越界时卡片高亮`() {
+    fun `心率越界时卡片高亮`() {
+        // 2026-10-01：原来这条同时测"体温越界"，体温卡删除后只留心率这一半。
         val cards = DashboardCards.build(
-            snapshot(CurrentDataDto(ts = 1.0, finger_detected = true, heart_rate_bpm = 128.4, body_temp_c = 38.2)),
+            snapshot(CurrentDataDto(ts = 1.0, finger_detected = true, heart_rate_bpm = 128.4)),
         )
         val hr = cardOf(cards, "心率")
         assertEquals("128", hr.value)
@@ -155,11 +165,6 @@ class DashboardCardsTest {
         assertEquals("异常", hr.statusText)
         assertEquals(Severity.WARNING, hr.statusSeverity)
         assertTrue(hr.alert)
-
-        val temp = cardOf(cards, "体温")
-        assertEquals("38.2", temp.value)
-        assertEquals("异常", temp.statusText)
-        assertTrue(temp.alert)
     }
 
     @Test

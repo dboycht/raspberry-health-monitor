@@ -1,7 +1,7 @@
 # 安卓监护端（Kotlin + Jetpack Compose）
 
 树莓派「居家老人健康与安全监护系统」的**手机监护端**：子女在手机上远程查看老人的
-心率 / 血氧 / 体温 / 室温湿度 / 活动状态，接收报警，并能**消音**或**长按触发求助**。
+心率 / 血氧 / 室温湿度 / 活动状态，接收报警，并能**消音**或**长按触发求助**。
 
 > 接口的唯一依据是 `docs/手册/05-安卓通信协议.md`。本目录下任何代码与该文档冲突时，
 > **以文档为准**，并且必须同步改文档（协议 §6）。
@@ -12,7 +12,7 @@
 
 | 页面 | 内容 | 用到的接口 | 刷新频率 |
 | --- | --- | --- | --- |
-| 监护（首页） | 心率 / 血氧 / 体温 / 室温湿度 / 活动状态 五张卡片；`active_alarms` 非空时红色横幅高亮；`sensor_failures` 非空时警告条；「消音」按钮 | `GET /api/v1/current`、`POST /api/v1/silence` | **4 秒** |
+| 监护（首页） | 心率 / 血氧 / 室温湿度 / 活动状态 **四张卡片**；`active_alarms` 非空时红色横幅高亮；`sensor_failures` 非空时警告条；「消音」按钮 | `GET /api/v1/current`、`POST /api/v1/silence` | **4 秒** |
 | 报警 | 当前报警横幅 + 报警事件列表（严重度降序 → 时间降序）+ 本次下发过的报警；**长按 1.5 秒**触发 `/sos`；「消音」 | `GET /api/v1/alarms`、`GET /api/v1/current`、`POST /api/v1/sos`、`POST /api/v1/silence` | **5 秒** |
 | 关于 / 硬件 | 树莓派服务版本、在线时长、是否模拟模式、每个设备状态与失败次数、`/devices` 的接线说明（总线与物理脚） | `GET /api/v1/health`、`GET /api/v1/devices` | **10 秒** |
 | 设置 | 树莓派地址（自动归一化）+ 可选 token，**持久化**；一键「测试连接」 | `GET /api/v1/health`（测试用） | 进页面读一次 |
@@ -210,7 +210,7 @@ adb install -r D:\code\DeepSeekHarness\raspberry-health-monitor\android\app\buil
 | ③ 严重度排序/颜色 | `domain/SeverityTest.kt` | 0<1<2<3 可比大小；四个颜色互不相同、容器色更浅；越界值被夹取并有兜底色；事件「严重度降序 → 时间降序」；`active_alarms` 最高严重度用于横幅配色 |
 | ④ 接口 JSON 解析 | `data/MonitorJsonParsingTest.kt` | 用协议里的**真实响应样本字符串**（含 `null` 字段与 `{}` 空对象）：`null` 必须是 `null` 而不是 `0.0`；`data` 整体缺失不崩；未知字段被忽略（协议 §6）；`history` 中 `code: null` 的事件被过滤；`/health`、`/devices`、`/silence`、`/sos` 逐一解析 |
 | ⑤ 地址归一化 | `data/UrlNormalizerTest.kt` | `192.168.1.20 → http://192.168.1.20:8080/`；带端口/scheme 不动；`https` 不加 8080；粘贴的完整接口地址只留主机端口；非法输入返回 `null`；幂等；用 `HttpUrl` 真解析一次确认 Retrofit 能用 |
-| 附加 | `ui/dashboard/DashboardCardsTest.kt`、`ui/*/[Dashboard\|Alarms]ViewModelTest.kt`、`settings/AppSettingsTest.kt` | 五张卡片的硬要求渲染；请求失败保留上次数据；连续失败停轮询；消音文案提醒「报警未解除」；SOS 成功/失败反馈；设置持久化与归一化 |
+| 附加 | `ui/dashboard/DashboardCardsTest.kt`、`ui/*/[Dashboard\|Alarms]ViewModelTest.kt`、`settings/AppSettingsTest.kt` | **四张卡片**的硬要求渲染（含"不再有体温卡片"的反向钉子）；请求失败保留上次数据；连续失败停轮询；消音文案提醒「报警未解除」；SOS 成功/失败反馈；设置持久化与归一化 |
 
 测试**不依赖真实网络**：HTTP 层用 `FakeMonitorRepository`，JSON 层直接用样本字符串喂给
 与运行时同一个 `Json` 配置。
