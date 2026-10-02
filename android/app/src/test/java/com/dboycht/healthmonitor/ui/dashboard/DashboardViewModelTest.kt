@@ -7,8 +7,12 @@ import com.dboycht.healthmonitor.settings.AppSettings
 import com.dboycht.healthmonitor.testing.FakeMonitorRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -66,7 +70,7 @@ class DashboardViewModelTest {
         assertEquals(72.4, state.snapshot.heartRateBpm!!, 0.001)
         assertNull(state.errorMessage)
         assertEquals(1, repository.currentCalls)
-        assertFalse(state.pollingStopped)
+        assertFalse(state.slowRetry)
     }
 
     @Test
@@ -95,7 +99,7 @@ class DashboardViewModelTest {
     }
 
     @Test
-    fun `连续失败达到上限后自动停止轮询_点刷新可复位`() = runTest(dispatcher) {
+    fun `连续失败达到上限后降速重试_而不是停掉轮询`() = runTest(dispatcher) {
         val repository = FakeMonitorRepository(current = FakeMonitorRepository.failure())
         val vm = viewModel(repository)
 
@@ -104,10 +108,10 @@ class DashboardViewModelTest {
             advanceUntilIdle()
         }
 
-        val stopped = vm.uiState.value
-        assertTrue("连续失败后应停止轮询", stopped.pollingStopped)
-        assertEquals(DashboardViewModel.MAX_CONSECUTIVE_FAILURES, stopped.consecutiveFailures)
-        val callsWhenStopped = repository.currentCalls
+        val slowed = vm.uiState.value
+        assertTrue("连续失败后应进入降速重试", slowed.slowRetry)
+        assertEquals(DashboardViewModel.MAX_CONSECUTIVE_FAILURES, slowed.consecutiveFailures)
+        val callsWhenSlowed = repository.currentCalls
 
         // 手动刷新把它复位；这次成功。
         repository.current = com.dboycht.healthmonitor.data.MonitorApiResult.Success(MonitorSnapshot())
@@ -115,10 +119,115 @@ class DashboardViewModelTest {
         advanceUntilIdle()
 
         val recovered = vm.uiState.value
-        assertFalse(recovered.pollingStopped)
+        assertFalse(recovered.slowRetry)
         assertEquals(0, recovered.consecutiveFailures)
         assertEquals(ConnectionStatus.CONNECTED, recovered.connection)
-        assertTrue(repository.currentCalls > callsWhenStopped)
+        assertTrue(repository.currentCalls > callsWhenSlowed)
+    }
+
+    // ------------------------------------------------------------------
+    // 轮询**循环**本身（2026-10-02 真机验收补）
+    //
+    // 为什么单独一组：上面所有测试都只调 refreshNow()，**从来没有真正跑过循环** ——
+    // 于是"连续失败 → while 退出 → refreshNow 拉不起来 → 界面显示已连接却永远不刷新"
+    // 这个真机上被抓到的缺陷，在单测里**完全看不见**。这组测试驱动真实循环 [pollLoop]。
+    //
+    // ⚠️ 直接调 `pollLoop()` 而不是 `startPolling(lifecycle)`：后者要 `LifecycleRegistry`，
+    //    在纯 JVM 单测里需要 `Looper`（会 NPE）。循环与生命周期接线分开，正好让"循环会不会停住"
+    //    这件事**可以被测**。
+    // ------------------------------------------------------------------
+
+    /**
+     * 推进虚拟时间并让调度器把这一瞬间的协程跑完。
+     *
+     * ⚠️ 循环是**故意无限**的，所以这里**不能用 `advanceUntilIdle()`**（那会一直往下推进，
+     * 直到 `runTest` 超时）—— 必须"走一步、跑一跑"。
+     */
+    private fun kotlinx.coroutines.test.TestScope.tick(millis: Long) {
+        advanceTimeBy(millis)
+        runCurrent()
+    }
+
+    @Test
+    fun `循环里连续失败后仍在重试_不会永久停住`() = runTest(dispatcher) {
+        val repository = FakeMonitorRepository(current = FakeMonitorRepository.failure())
+        val vm = viewModel(repository)
+
+        val job = launch { vm.pollLoop() }
+        try {
+            // 跑够 3 次失败（4 秒一次）→ 进入降速。
+            repeat(5) { tick(DashboardViewModel.POLL_INTERVAL_MILLIS) }
+            assertTrue("应已进入降速重试", vm.uiState.value.slowRetry)
+            val callsAtSlow = repository.currentCalls
+
+            // ★ 关键：降速之后**还会**继续请求（旧实现到这里就永远不动了）。
+            repeat(4) { tick(DashboardViewModel.RETRY_INTERVAL_MILLIS) }
+            assertTrue(
+                "降速重试期间必须仍在请求：calls $callsAtSlow -> ${repository.currentCalls}",
+                repository.currentCalls > callsAtSlow,
+            )
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun `树莓派恢复后循环自动接上_回到原来节奏`() = runTest(dispatcher) {
+        val repository = FakeMonitorRepository(current = FakeMonitorRepository.failure())
+        val vm = viewModel(repository)
+
+        val job = launch { vm.pollLoop() }
+        try {
+            repeat(5) { tick(DashboardViewModel.POLL_INTERVAL_MILLIS) }
+            assertTrue(vm.uiState.value.slowRetry)
+
+            // 树莓派服务恢复（真机场景：重启服务 / WiFi 回来）。
+            repository.current = com.dboycht.healthmonitor.data.MonitorApiResult.Success(
+                MonitorSnapshot(ambientTempC = 23.0),
+            )
+            // 走完降速周期：**不需要**任何人工干预，循环自己就会再试一次。
+            repeat(3) { tick(DashboardViewModel.RETRY_INTERVAL_MILLIS) }
+
+            val state = vm.uiState.value
+            assertEquals("恢复后应显示已连接", ConnectionStatus.CONNECTED, state.connection)
+            assertFalse("恢复后应退出降速", state.slowRetry)
+            assertEquals(0, state.consecutiveFailures)
+            assertTrue("恢复后应拿到数据", state.snapshot.ambientTempC != null)
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun `降速期间点刷新会立刻请求_不必等满一轮`() = runTest(dispatcher) {
+        val repository = FakeMonitorRepository(current = FakeMonitorRepository.failure())
+        val vm = viewModel(repository)
+        val job = launch { vm.pollLoop() }
+        try {
+            repeat(5) { tick(DashboardViewModel.POLL_INTERVAL_MILLIS) }
+            assertTrue(vm.uiState.value.slowRetry)
+            val before = repository.currentCalls
+
+            vm.refreshNow()
+            // ★ 只推进 1 毫秒：如果还要等满 20 秒的降速周期，下面的断言就不会成立。
+            tick(1)
+
+            assertTrue("点刷新应立刻发起请求", repository.currentCalls > before)
+            // ⚠️ 这一次刷新**还是失败**（仓库仍是 failure）⇒ 计数继续累加、降速**照旧生效** ——
+            //    这是对的（网络确实还没好），所以这里断言的是"降速未解除"，而不是"已解除"。
+            assertTrue("仍然失败时应保持降速", vm.uiState.value.slowRetry)
+
+            // 网络恢复后再点一次：这次应真的回到正常节奏。
+            repository.current = com.dboycht.healthmonitor.data.MonitorApiResult.Success(
+                MonitorSnapshot(ambientTempC = 23.0),
+            )
+            vm.refreshNow()
+            tick(1)
+            assertFalse("恢复后点刷新应解除降速", vm.uiState.value.slowRetry)
+            assertEquals(ConnectionStatus.CONNECTED, vm.uiState.value.connection)
+        } finally {
+            job.cancelAndJoin()
+        }
     }
 
     @Test

@@ -210,7 +210,7 @@ adb install -r D:\code\DeepSeekHarness\raspberry-health-monitor\android\app\buil
 | ③ 严重度排序/颜色 | `domain/SeverityTest.kt` | 0<1<2<3 可比大小；四个颜色互不相同、容器色更浅；越界值被夹取并有兜底色；事件「严重度降序 → 时间降序」；`active_alarms` 最高严重度用于横幅配色 |
 | ④ 接口 JSON 解析 | `data/MonitorJsonParsingTest.kt` | 用协议里的**真实响应样本字符串**（含 `null` 字段与 `{}` 空对象）：`null` 必须是 `null` 而不是 `0.0`；`data` 整体缺失不崩；未知字段被忽略（协议 §6）；`history` 中 `code: null` 的事件被过滤；`/health`、`/devices`、`/silence`、`/sos` 逐一解析 |
 | ⑤ 地址归一化 | `data/UrlNormalizerTest.kt` | `192.168.1.20 → http://192.168.1.20:8080/`；带端口/scheme 不动；`https` 不加 8080；粘贴的完整接口地址只留主机端口；非法输入返回 `null`；幂等；用 `HttpUrl` 真解析一次确认 Retrofit 能用 |
-| 附加 | `ui/dashboard/DashboardCardsTest.kt`、`ui/*/[Dashboard\|Alarms]ViewModelTest.kt`、`settings/AppSettingsTest.kt` | **四张卡片**的硬要求渲染（含"不再有体温卡片"的反向钉子）；请求失败保留上次数据；连续失败停轮询；消音文案提醒「报警未解除」；SOS 成功/失败反馈；设置持久化与归一化 |
+| 附加 | `ui/dashboard/DashboardCardsTest.kt`、`ui/*/[Dashboard\|Alarms]ViewModelTest.kt`、`settings/AppSettingsTest.kt` | **四张卡片**的硬要求渲染（含"不再有体温卡片"的反向钉子）；请求失败保留上次数据；**连续失败降速重试（不停止轮询，含驱动真循环的 3 条）**；**真机原样报警报文能解析**（`pushed` 布尔 / `detail` 混合类型）；消音文案提醒「报警未解除」；SOS 成功/失败反馈；设置持久化与归一化 |
 
 测试**不依赖真实网络**：HTTP 层用 `FakeMonitorRepository`，JSON 层直接用样本字符串喂给
 与运行时同一个 `Json` 配置。
@@ -230,5 +230,11 @@ adb install -r D:\code\DeepSeekHarness\raspberry-health-monitor\android\app\buil
    震动依赖设备 `Vibrator`（模拟器通常没有，代码里已做安全跳过）。
 5. **UI 布局/深色模式/不同屏幕尺寸的实际观感**：未在真机或模拟器上截图确认。
 6. **release 签名与上架**：未配签名；也未验证 R8（当前 release 未开混淆）。
-7. **后台省电行为**：轮询用 `repeatOnLifecycle(STARTED)` 实现，理论上 `onStop` 即停，
-   但未用真机 + 电池统计验证过。
+7. **后台省电行为**：轮询用 `repeatOnLifecycle(STARTED)` 实现，`onStop` 即停；
+   ✅ **2026-10-02 真机验收已实测**：前台每 4 秒一次，按 HOME 后 35 秒内**新增请求 0 次**
+   （用 USB 反向端口 + PC 转发器的逐请求日志量的）。
+8. **失败重试策略（2026-10-02 真机验收后改的，别再改回去）**：连续失败 3 次**不再停止轮询**，
+   而是**降速为每 20 秒重试**，恢复后自动回到 4 秒；`pollingEnabled` 只由 `onStop` 置 false。
+   ⚠️ 旧行为（失败即停 + "刷新"按钮只改一个布尔）在真机上表现为**界面显示"已连接/刚刚"却永远不再刷新**
+   —— 详见 `docs/07-测试验收记录.md` §4 的 A8 行与项目 `ERROR.md` **E80**。
+   回归钉子：`DashboardViewModelTest` 里三条**真正驱动 `pollLoop()`** 的测试。

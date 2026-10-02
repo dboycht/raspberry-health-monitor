@@ -122,15 +122,19 @@ fun DashboardScreen(
             }
         }
 
-        if (state.pollingStopped) {
+        if (state.slowRetry) {
             item {
                 Column(Modifier.padding(horizontal = 14.dp)) {
                     Column {
+                        // ⚠️ 文案必须说"还在重试"，不能说"已暂停" ——
+                        //    2026-10-02 真机验收里，旧文案("自动暂停刷新")配合一个失效的
+                        //    "重新开始刷新"按钮，会让家属以为"过会儿自己会好"，其实永远不会。
                         InfoStrip(
-                            text = "已连续 ${state.consecutiveFailures} 次连接失败，自动暂停刷新以省电。",
+                            text = "已连续 ${state.consecutiveFailures} 次连接失败，" +
+                                "已降速为每 20 秒重试一次（省电）。恢复后自动回到 4 秒，无需手动操作。",
                             severity = Severity.WARNING,
                         )
-                        TextButton(onClick = onRefresh) { Text("重新开始刷新") }
+                        TextButton(onClick = onRefresh) { Text("立即重试") }
                     }
                 }
             }
