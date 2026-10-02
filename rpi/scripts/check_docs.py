@@ -103,6 +103,10 @@ ALLOW_MISSING = {
     # 的真机验收探针（同样两种写法都登记，理由见上）。
     "board_reuse_and_outputs_accept.py",
     "_scratch/board_reuse_and_outputs_accept.py",
+    # 2026-10-02：硬件体检报告（存档在开发副本 `_scratch/evidence/`，不入库）。
+    # docs/15 里写清了**跑法**，读者能自己重跑生成；两种写法都登记，理由同上面几组。
+    "hw-report-20261002-clean.json",
+    "_scratch/evidence/hw-report-20261002-clean.json",
     # ⚠️ 2026-10-01 **又踩了同一族**（E56/E70），这次不只是板子假红 —— **CI 一直是红的**：
     #    docs/14 引用了 `_scratch/preview_tft_frames.py`（TFT 帧预览器，开发副本专属），
     #    而 CI 跑在 checkout 出来的仓库上（没有 `_scratch/`）⇒ `validate.py` 第 7 项 FAIL

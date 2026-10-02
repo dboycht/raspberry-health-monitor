@@ -109,7 +109,7 @@
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
       "status": "partial",
       "verified_on": "2026-10-01",
-      "missing": ["S9 断网可用性：`pi` 用户无网络权限（nmcli 返回 Not authorized），用户 2026-10-01 明确决定本轮不做 ⇒ 该项仍标注未实测"],
+      "missing": ["S9 断网可用性：**真断网**仍未做（`pi` 用户无网络权限，nmcli 返回 Not authorized）；2026-10-01 已用『云不可达 + 最小 MQTT 桩』做**替代验证**（25 项判据，docs/07 §6.2）⇒ `docs/07` 记『部分通过』"],
       "note": "★ 2026-10-01 补 status=partial：**服务化本身已真机验收**（S1–S8、S10–S19 全 ✅，含三面板/消息流/屏显控制/TFT 富帧），**唯独 S9 未实测**且已由用户决定不做 ⇒ 记 partial + missing，而不是糊成 verified、也不是留在 planned（那会读成『什么都没做』）。验收记录见 docs/07 第 3/3.1 节与 §6.1。★ 本级起快照含 `spo2_button`：测血氧是服务级功能（T14），服务级快照把它带上，`--stage T10` 起服务即可复现完整功能集"
     },
     "T11": {
@@ -122,14 +122,18 @@
     "T12": {
       "title": "OneNET 上云（数据点 + 规则引擎转发）",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
-      "status": "planned",
-      "note": "另需在板子的 `devices.local.json` 里开 `onenet.enabled` 并配密钥（密钥不入库）。**已实测**：C1–C5（token 参数生成、上报启动、MQTT connected、数据点写出、平台回执 `accepted`）。**未实测两项**：① **C7 平台侧** —— 本机接收口 `POST /api/v1/cloud/callback` 2026-10-01 已用真 JSON 验通（HTTP 200），但**没有在 OneNET 控制台建规则**，所以『平台真的推回来了』仍未验；② **C9 断网重连** —— 未做真断网。<br>★ 2026-10-01：上云改为**断网即暂停入队**（用户拍板）：`connected` 是三态（未知/已连/已知离线），**只在『已知离线』时暂停入队**并累加 `skipped_offline`，恢复后从当前值继续（**不补传**断网期间的读数）；离线次数/时长/跳过条数都在 `/api/v1/health` 的 `mqtt` 字段里。用『云不可达』替代验证过（本地报警照常、监护循环不受影响），见 docs/07 §6.2"
+      "status": "partial",
+      "verified_on": "2026-10-02",
+      "missing": ["C7 的**平台侧**：规则引擎要 POST 到一个**公网可达**的回调 URL，而本项目立场是『只在内网』（板子在内网 NAT 后、docs/09 只有电脑热点这种局域网通路）⇒ 本机接收口已验通（HTTP 200 + 留证），**平台侧在本课程网络下做不到**（用户 2026-10-02 拍板『不做，只写清』；以后要验的两条路写在 docs/07 的 C7 行与 docs/11 §6）", "C9 的**真断网**：仍未做（`pi` 无网络权限）；已用『云不可达 + 最小 MQTT 桩』替代验证（杀桩⇒离线、再起桩⇒自动重连并继续上报；25 项判据见 docs/07 §6.2）"],
+      "note": "另需在板子的 `devices.local.json` 里开 `onenet.enabled` 并配密钥（密钥不入库）。★ 2026-10-02 由 `planned` 改为 `partial`（原先只是没更新）：**已实测** C1–C6 + C8 —— token 参数生成、上报启动、MQTT connected、数据点写出、平台回执 `accepted`、**故意发非法报文体 ⇒ 平台回 `rejected` + `err_code 98 illegal data`**（把 E47 的机理钉死）、回调端点本机自测 200 + 宽容接收；**部分**：C7 平台侧（拓扑限制，见 missing）、C9 真断网（有替代验证）。<br>★ 2026-10-01：上云改为**断网即暂停入队**（用户拍板）：`connected` 是三态（未知/已连/已知离线），**只在『已知离线』时暂停入队**并累加 `skipped_offline`，恢复后从当前值继续（**不补传**断网期间的读数）；离线次数/时长/跳过条数都在 `/api/v1/health` 的 `mqtt` 字段里。<br>★ 2026-10-02 追加：**手机端新增『云端』页（只读 OneNET）** —— 手机只有移动数据时也能看『树莓派上次上报过什么』（密钥由用户在设置页手填、不进 APK；接口与鉴权的坑见 docs/11 §6.1）。⚠️ 当天中午板子连不上 MQTT broker（校园网侧）⇒ 顺带在真实断网下验了『暂停入队』（`skipped_offline` 增长、无失败堆积）"
     },
     "T13": {
       "title": "手机 App 联调 + 整机收口",
       "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
-      "status": "planned",
-      "note": "安卓端在局域网联调；本级还要填完 docs/07 的 54 项与准备答辩材料。**未做的部分**：A1–A9 **全部未实测**（`app-debug.apk` 已构建 11.31 MB、安卓单测 78 项通过，但**从没在真手机上安装过**）；另 `docs/07` 的 H16（HC-SR04 拓展件）与 T12 的 C7/C9 也仍未验"
+      "status": "partial",
+      "verified_on": "2026-10-02",
+      "missing": ["**整机收口 + 交付材料**还没做：`docs/07` 的导出、`docs/12` 课程任务对照的缺项、答辩材料的最终整理（本级前半段『手机联调』已完成）", "`docs/07` 的 **H16**（HC-SR04 拓展件，未接线）与 **H14**（蓝牙音箱，板上无可用发声设备）仍未验；T12 的 C7 平台侧 / C9 真断网见 T12 的 missing"],
+      "note": "★ 2026-10-02 由 `planned` 改为 `partial`（原先只是没更新）：**A1–A9 九项全部真机实测通过**（安装/配置地址/四张卡真值/缺失值渲染/报警同步/消音/求助/断网恢复/后台省电，逐项证据见 docs/07 §4）。⚠️ 通路说明：手机当时**只有移动数据、与板子不同网段** ⇒ 用 **USB 反向端口**（`adb reverse` + PC 转发器）测的；**『手机经 Wi-Fi 直连树莓派』这条网络路径未验**。★ 这一轮顺带抓出并修掉 2 个真缺陷（A5 报警列表在真机上永远解析失败 = `ERROR.md` E79；A8 断网后界面显示已连接却永不刷新 = E80），两者都是『CI 全绿、只有真机会红』。<br>★ 2026-10-02 追加：安卓端新增**五个标签页**（监护/报警/**云端**/关于/设置），其中『云端』是只读 OneNET（手机不在家也能看上次上报）；`body_temp` 残留全删（五张卡→四张卡）"
     },
     "T14": {
       "title": "按需测血氧（蜂鸣器叫人 → 按键 → 测量 → 报结果）",
