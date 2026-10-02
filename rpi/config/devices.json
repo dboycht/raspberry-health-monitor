@@ -73,15 +73,6 @@
         "baudrate": 16000000
       }
     },
-    "speaker": {
-      "driver": "bt_speaker",
-      "enabled": true,
-      "read_interval_s": 1,
-      "params": {
-        "engine": "espeak-ng",
-        "rate": 150
-      }
-    },
     "alarm_buzzer": {
       "driver": "buzzer",
       "enabled": true,
@@ -117,16 +108,6 @@
       "params": {
         "pin": 13,
         "long_press_s": 1
-      }
-    },
-    "distance": {
-      "driver": "hc_sr04",
-      "enabled": false,
-      "optional": true,
-      "read_interval_s": 5,
-      "params": {
-        "trig_pin": 5,
-        "echo_pin": 6
       }
     }
   },

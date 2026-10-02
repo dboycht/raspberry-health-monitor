@@ -18,8 +18,8 @@ from health_monitor.hal import (
     DeviceInitError,
     DeviceKind,
     DeviceNotReady,
+    LightCommand,
     Sample,
-    SpeakCommand,
     UnsupportedError,
 )
 from health_monitor.outputs.buzzer import (
@@ -184,7 +184,7 @@ class TestBuzzerDriver(unittest.TestCase):
         bz = Buzzer(pin=18, mock=True, sleep=FakeSleep())
         bz.open()
         with self.assertRaises(UnsupportedError):
-            bz.send(SpeakCommand(text="你好"))
+            bz.send(LightCommand(color="red"))
         self.assertEqual(bz.status()["fault_count"], 1)
         bz.close()
 

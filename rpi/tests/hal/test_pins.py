@@ -79,7 +79,6 @@ class TestProjectConfigPins(unittest.TestCase):
     EXCLUSIVE_PINS = {
         "dht11": ("pin",),
         "hc_sr501": ("pin",),
-        "hc_sr04": ("trig_pin", "echo_pin"),
         "buzzer": ("pin",),
         "button": ("pin",),
     }

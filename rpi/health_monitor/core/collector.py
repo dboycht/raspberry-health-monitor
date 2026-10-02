@@ -25,7 +25,6 @@ from ..hal.models import (
     ButtonEvent,
     MotionSample,
     MotionState,
-    RangeSample,
     Sample,
     VitalSignsSample,
     now_ts,
@@ -292,9 +291,6 @@ class Collector:
             snap.ambient = sample
         elif isinstance(sample, MotionSample):
             snap.motion = sample
-        elif isinstance(sample, RangeSample):
-            # 距离暂不参与报警判定，但保留在快照里供拓展功能使用
-            setattr(snap, "range", sample)
         else:
             _LOG.debug("设备 %s 返回的样本类型 %s 未参与报警判定", name, type(sample).__name__)
 
@@ -463,14 +459,11 @@ def _failed_sample(entry: _Entry, now: float, error: str) -> Sample:
         return AmbientSample(**kwargs)
     if isinstance(prev, MotionSample):
         return MotionSample(state=MotionState.UNKNOWN, **kwargs)
-    if isinstance(prev, RangeSample):
-        return RangeSample(**kwargs)
     # 从未成功读过：根据驱动名猜一个合理类型（首次失败时走到这里）
     guess = {
         "max30102": VitalSignsSample,
         "dht11": AmbientSample,
         "hc_sr501": lambda **kw: MotionSample(state=MotionState.UNKNOWN, **kw),
-        "hc_sr04": RangeSample,
     }.get(entry.driver)
     if guess is None:
         return Sample(**kwargs)

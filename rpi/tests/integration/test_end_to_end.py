@@ -83,7 +83,7 @@ class TestFullPipeline(unittest.TestCase):
     def test_所有演示设备都装配成功(self) -> None:
         self.assertIn("vitals", self.rt.inputs)
         self.assertIn("motion", self.rt.inputs)
-        for name in ("display", "speaker", "alarm_buzzer", "status_led"):
+        for name in ("display", "alarm_buzzer", "status_led"):
             self.assertIn(name, self.rt.outputs, f"输出器件 {name} 未装配")
 
     def test_输出器件在open后真的被打开(self) -> None:
@@ -108,12 +108,13 @@ class TestFullPipeline(unittest.TestCase):
         led = self.rt.outputs["status_led"]
         lcd = self.rt.outputs["display"]
         buzzer = self.rt.outputs["alarm_buzzer"]
-        speaker = self.rt.outputs["speaker"]
         self._flush()
         self.assertNotEqual(led.current_color, "off", "报警时 LED 必须亮")
         self.assertIn("HR HIGH", " ".join(lcd.current_lines), "LCD 必须显示报警文案")
         self.assertGreater(buzzer.total_beeps, 0, "报警时蜂鸣器必须响")
-        self.assertTrue(speaker.spoken, "报警时必须有语音播报")
+        # ⚠️ 2026-10-02：蓝牙音箱（语音播报）已废止并删除 ⇒ 原来这条
+        #    `assertTrue(speaker.spoken)` 随之删除；"报警有声"改由蜂鸣器保证
+        #    （上面那条 assertGreater(buzzer.total_beeps, 0) 就是它）。
         self.assertEqual(self.rt.dispatcher.errors, [], "下发不应有失败")
 
     def test_血氧过低是紧急等级(self) -> None:
@@ -145,13 +146,11 @@ class TestFullPipeline(unittest.TestCase):
         self.rt.set_vitals(heart_rate=130.0, spo2=98.0)
         self.rt.silence(self.clock())
         buzzer = self.rt.outputs["alarm_buzzer"]
-        speaker = self.rt.outputs["speaker"]
         self._flush()
-        before_beeps, before_spoken = buzzer.total_beeps, len(speaker.spoken)
+        before_beeps = buzzer.total_beeps
         self.rt.tick()
         self._flush()
         self.assertEqual(buzzer.total_beeps, before_beeps, "静音期间蜂鸣器不该响")
-        self.assertEqual(len(speaker.spoken), before_spoken, "静音期间不该语音播报")
         self.assertNotEqual(self.rt.outputs["status_led"].current_color, "off", "静音期间仍要亮灯提示")
 
     def test_确认解除后输出器件复位(self) -> None:
@@ -182,7 +181,7 @@ class TestFullPipeline(unittest.TestCase):
         status = self.rt.status()
         self.assertEqual(status["devices"]["errors"], {})
         self.assertIn("vitals", status["devices"]["assembled"])
-        self.assertGreaterEqual(len(status["dispatcher"]["outputs"]), 4)
+        self.assertGreaterEqual(len(status["dispatcher"]["outputs"]), 3)
 
 
 class Test实体按键接线(unittest.TestCase):
@@ -463,15 +462,15 @@ class TestHttpApiEndToEnd(unittest.TestCase):
         event = self._post("/api/v1/sos")["event"]
         self.assertEqual(event["code"], "sos_pressed")
 
-    def test_speak_空文本被拒绝且给出400(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self._post("/api/v1/speak?text=")
-        self.assertEqual(ctx.exception.code, 400)
+    def test_已删除的speak接口返回404(self) -> None:
+        """★ 2026-10-02：蓝牙音箱废止 ⇒ `POST /api/v1/speak` 一并删除。
 
-    def test_speak_超长文本被拒绝(self) -> None:
+        这条**故意留着**：将来有人"顺手把语音播报加回来"，会立刻看见"接口已删"这个事实，
+        而不是让一个没人维护的接口悄悄复活（`docs/手册/02`、`05` 里也已删掉该行）。
+        """
         with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self._post("/api/v1/speak?text=" + "a" * 61)
-        self.assertEqual(ctx.exception.code, 400)
+            self._post("/api/v1/speak?text=hi")
+        self.assertEqual(ctx.exception.code, 404)
 
     def test_未知路径返回404且列出可用接口(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as ctx:

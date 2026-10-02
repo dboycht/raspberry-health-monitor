@@ -24,7 +24,6 @@ from health_monitor.hal import (
     MotionSample,
     MotionState,
     Severity,
-    SpeakCommand,
     VitalSignsSample,
     create_device,
     get_spec,
@@ -98,7 +97,6 @@ class TestModels(unittest.TestCase):
             self.assertNotIn("`", code.value)
 
     def test_指令对象存在且默认值合理(self) -> None:
-        self.assertEqual(SpeakCommand(text="请注意安全").text, "请注意安全")
         self.assertEqual(BeepCommand().times, 1)
         self.assertEqual(LightCommand().color, "green")
 

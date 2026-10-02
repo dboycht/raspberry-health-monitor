@@ -91,14 +91,14 @@
     },
     "T8": {
       "title": "蓝牙音箱语音播报",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals"],
       "status": "cancelled",
       "cancelled_on": "2026-09-30",
-      "note": "❌ 用户决定不做。板上**没有可发声的输出设备**：`aplay -l` 只有两张 HDMI 声卡、Pi 5 **没有 3.5mm 孔**、`bluetoothctl devices` 只配了一只键盘 ⇒ `espeak-ng`/`aplay` 虽在，但播报**无去处**（服务日志每次都报 `aplay: audio open error 524`）。为它单独买音箱不划算：报警链路（蜂鸣器 + 三色 LED + 两块屏）已闭环。**代码与驱动保留**（`bt_speaker` + 单测），报告按「已实现、未真机验证（缺硬件）」写。见 docs/14 的 T8 一节。"
+      "note": "❌ **已废止并删除代码**（2026-10-02 用户明确指示「蓝牙音响不要了」）。当初不做的理由：板上**没有可发声的输出设备** —— `aplay -l` 只有两张 HDMI 声卡、Pi 5 **没有 3.5mm 孔**、`bluetoothctl devices` 只配了一只键盘 ⇒ `espeak-ng`/`aplay` 虽在，但播报**无去处**（服务日志每次都报 `aplay: audio open error 524`）；而报警链路（蜂鸣器 + 三色 LED + 两块屏）已闭环。\n★ 2026-10-02 删除范围（同 T5/T6 的「废止即删干净」先例）：① 驱动 `outputs/bt_speaker.py` 与其单测；② `SpeakCommand` / `CommandType.SPEAK` / `AlarmPresentation.speak` 字段与**每条报警的中文播报文案**；③ `POST /api/v1/speak` 调试接口（连同契约文档）；④ 配置里的 `speaker` 器件、模拟器 `ConsoleSpeaker`、`espeak-ng`/`aplay` 体检项。**保留**：蜂鸣器（真实存在的报警声）、三色 LED、两块屏，以及 E63 的**音频工作线程**（蜂鸣器也走它，那条「声音绝不许阻塞监护循环」的纪律与判据照旧有效）。报告按「该级取消、代码已删除」写。见 `ERROR.md` E48 同族记法与 docs/14 的 T8 一节。"
     },
     "T9": {
       "title": "TFT 1.8\" SPI 彩屏",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft"],
       "status": "verified",
       "verified_on": "2026-09-29",
       "commit": "7b1958f",
@@ -106,7 +106,7 @@
     },
     "T10": {
       "title": "服务化：HTTP API + 状态网页",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
       "status": "partial",
       "verified_on": "2026-10-01",
       "missing": ["S9 断网可用性：**真断网**仍未做（`pi` 用户无网络权限，nmcli 返回 Not authorized）；2026-10-01 已用『云不可达 + 最小 MQTT 桩』做**替代验证**（25 项判据，docs/07 §6.2）⇒ `docs/07` 记『部分通过』"],
@@ -114,14 +114,14 @@
     },
     "T11": {
       "title": "SQLite 历史与趋势",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
       "status": "verified",
       "verified_on": "2026-10-01",
       "note": "★ 2026-10-01 由 planned 改为 verified（原先只是没更新）：验收判据全部有真机证据 —— ① 历史接口 S5：`/api/v1/history?metric=ambient_temp_c&limit=300` 实测返回 **300 行**（中位采样间隔 3.0 s）；② 趋势图 S12：用一次**真实采集中断**做 A/B（禁用 ambient 150 s ⇒ 历史里一个 152 s 的洞 ⇒ 按时间断线画出 2 条线，修复前是 1 条线跨缺口）；③ 保留期：`Store.retention_days=30` + `prune()` 每小时被调用（板子实测库 6.4 MB / readings 62749 行 / 跨度 103.5 小时）；④ 『连跑 30~60 分钟』这条早已被更强的运行时跨度覆盖（vitals 表跨度 32 小时）。详见 docs/07 的 S5、S12 与 **§6.1 第 6 行**（本轮 vitals 表改为『只在有值时写』，省 SD 卡写入）"
     },
     "T12": {
       "title": "OneNET 上云（数据点 + 规则引擎转发）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
       "status": "partial",
       "verified_on": "2026-10-02",
       "missing": ["C7 的**平台侧**：规则引擎要 POST 到一个**公网可达**的回调 URL，而本项目立场是『只在内网』（板子在内网 NAT 后、docs/09 只有电脑热点这种局域网通路）⇒ 本机接收口已验通（HTTP 200 + 留证），**平台侧在本课程网络下做不到**（用户 2026-10-02 拍板『不做，只写清』；以后要验的两条路写在 docs/07 的 C7 行与 docs/11 §6）", "C9 的**真断网**：仍未做（`pi` 无网络权限）；已用『云不可达 + 最小 MQTT 桩』替代验证（杀桩⇒离线、再起桩⇒自动重连并继续上报；25 项判据见 docs/07 §6.2）"],
@@ -129,7 +129,7 @@
     },
     "T13": {
       "title": "手机 App 联调 + 整机收口",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
       "status": "partial",
       "verified_on": "2026-10-02",
       "missing": ["**整机收口 + 交付材料**还没做：`docs/07` 的导出、`docs/12` 课程任务对照的缺项、答辩材料的最终整理（本级前半段『手机联调』已完成）", "`docs/07` 的 **H16**（HC-SR04 拓展件，未接线）与 **H14**（蓝牙音箱，板上无可用发声设备）仍未验；T12 的 C7 平台侧 / C9 真断网见 T12 的 missing"],
@@ -137,7 +137,7 @@
     },
     "T14": {
       "title": "按需测血氧（蜂鸣器叫人 → 按键 → 测量 → 报结果）",
-      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "speaker", "tft", "spo2_button"],
+      "devices": ["ambient", "display", "alarm_buzzer", "status_led", "sos_button", "motion", "vitals", "tft", "spo2_button"],
       "status": "verified",
       "verified_on": "2026-09-30",
       "note": "用户 2026-09-30 追加的功能级（docs/14 的 T14 一节）。接线：新增「测血氧」按键一端 **GPIO13（物理脚 33）**、另一端 GND（脚 34）。真机验收：叫人（蜂鸣 2 声 + 两屏 `SPO2 CHECK NOW?`）→ 按键 → 引导测量（屏上 `FINGER ON PPG` / **`TOUCH LIGHTLY`**，后者就是 E60 的产品化处置）→ 报窗口中位数（实测 `心率 68 bpm / 血氧 97 %`，146 个有效读数取中位数）。<br>★ 2026-10-01 追加并真机验收：**默认改为『只做环境测量』**（用户选方案 c）—— 配置默认 `vitals.enabled=false`，**测量窗口内临时装配+打开传感器、测完立刻关掉**（板子实测：测前 devices 无 vitals → 测量中出现 → 30 s 窗口结束又消失）；测量期采样周期用 `thresholds.spo2_read_interval_s`（默认 1 s，测完还原）。⚠️ **stage 快照仍保留 vitals**（为了『级别单调递增』守卫）⇒ 想复现产品默认请用 `--set devices.vitals.enabled=false`。<br>⚠️ 本级暴露 **E61**（多按键事件无来源标识）、**E62**（只信 ok 标记 ⇒ float(None) 打崩 tick）、**E64**（引导测量成了 `spo2_too_low` 的新入口，**待用户拍板**）"

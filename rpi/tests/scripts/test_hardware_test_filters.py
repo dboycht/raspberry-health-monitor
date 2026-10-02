@@ -71,9 +71,9 @@ class TestSelectDevices(unittest.TestCase):
         ("vitals", "max30102"),
         ("ambient", "dht11"),
         ("display", "lcd1602"),
-        ("distance", "hc_sr04"),
+        ("tft", "tft_spi"),
     ]
-    ENABLED = {"vitals", "ambient", "display"}          # distance 是 disabled
+    ENABLED = {"vitals", "ambient", "display"}          # tft 是 disabled
 
     def test_不限制时是全部已启用(self) -> None:
         selected, disabled, unknown_only, unknown_excl = hardware_test.select_devices(
@@ -111,10 +111,10 @@ class TestSelectDevices(unittest.TestCase):
 
     def test_点名了disabled的器件要能被发现(self) -> None:
         selected, disabled, *_ = hardware_test.select_devices(
-            self.CONFIGURED, self.ENABLED, {"distance"}, set()
+            self.CONFIGURED, self.ENABLED, {"tft"}, set()
         )
         self.assertEqual(selected, [])
-        self.assertEqual(disabled, ["distance"])
+        self.assertEqual(disabled, ["tft"])
 
 
 class TestScopeFilters(unittest.TestCase):

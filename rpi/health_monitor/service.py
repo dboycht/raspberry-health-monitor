@@ -670,7 +670,7 @@ class Runtime:
                 _LOG.debug("关闭 HTTP 服务异常（已忽略）：%s", exc)
             self._server = None
         # 音频工作线程（E63）：先停它，再关输出器件 —— 反过来的话，
-        # 线程可能正在 `speaker.send()` 里用已经关掉的器件，日志上是一串假失败。
+        # 线程可能正在 `buzzer.send()` 里用已经关掉的器件，日志上是一串假失败。
         try:
             self.dispatcher.close()
         except Exception as exc:  # noqa: BLE001

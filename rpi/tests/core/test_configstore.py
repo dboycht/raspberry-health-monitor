@@ -32,9 +32,9 @@ BASE = {
             "driver": "led", "read_interval_s": 1.0,
             "params": {"pins": {"green": 22, "yellow": 23, "red": 12}},
         },
-        "hc_sr04": {
-            "driver": "hc_sr04", "enabled": False, "read_interval_s": 2.0,
-            "params": {"trig_pin": 5, "echo_pin": 6},
+        "tft": {
+            "driver": "tft_spi", "enabled": False, "read_interval_s": 2.0,
+            "params": {"dc_pin": 24, "reset_pin": 25},
         },
     },
     "mqtt": {"enabled": False, "host": "keep-me"},
@@ -70,7 +70,7 @@ class TestSnapshot(_StoreCase):
         self.assertEqual(devices["ambient"]["driver"], "dht11")
         self.assertEqual(devices["ambient"]["read_interval_s"], 3.0)
         self.assertTrue(devices["ambient"]["enabled"])
-        self.assertFalse(devices["hc_sr04"]["enabled"], "未启用的设备也要列出来（面板要能重新打开它）")
+        self.assertFalse(devices["tft"]["enabled"], "未启用的设备也要列出来（面板要能重新打开它）")
 
     def test_快照不返回引脚参数(self) -> None:
         """★ 用户明确要求"不做引脚号编辑"：快照里**不返回 params**，前端就没得渲染。"""

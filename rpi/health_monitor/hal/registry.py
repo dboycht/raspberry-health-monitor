@@ -93,22 +93,11 @@ MANIFEST: Dict[str, DriverSpec] = {
         "人体红外传感器 HC-SR501", ("pin",), "核心",
         notes="5V 供电、3.3V 电平输出，可直连 GPIO；需软件去抖",
     ),
-    # ---- 拓展（可选件，默认 enabled=false） ----
-    "hc_sr04": DriverSpec(
-        "hc_sr04", "health_monitor.sensors.hc_sr04:HcSr04", DeviceKind.RANGE,
-        "超声波测距 HC-SR04", ("trig_pin", "echo_pin", "timeout_us"), "拓展",
-        notes="ECHO 为 5V，须经 TXS0102 或分压后再接 GPIO",
-    ),
     # ---- 输出 / 交互 ----
     "lcd1602": DriverSpec(
         "lcd1602", "health_monitor.outputs.lcd1602:Lcd1602", DeviceKind.DISPLAY,
         "LCD1602 液晶（I2C 转接板）", ("bus", "address", "cols", "rows"), "核心",
         notes="PCF8574 背包，常见地址 0x27 / 0x3F；与 MAX30102 共用 I2C 总线",
-    ),
-    "bt_speaker": DriverSpec(
-        "bt_speaker", "health_monitor.outputs.bt_speaker:BtSpeaker", DeviceKind.AUDIO,
-        "蓝牙音箱（语音播报）", ("device_name", "sink", "engine"), "核心",
-        notes="用 espeak-ng 合成中文，经 bluealsa/PulseAudio 播出",
     ),
     "buzzer": DriverSpec(
         "buzzer", "health_monitor.outputs.buzzer:Buzzer", DeviceKind.AUDIO,

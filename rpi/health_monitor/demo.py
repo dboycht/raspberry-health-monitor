@@ -43,7 +43,6 @@ DEMO_CONFIG: Dict[str, Any] = {
         "ambient": {"driver": "dht11", "read_interval_s": 3.0},
         "motion": {"driver": "hc_sr501", "read_interval_s": 0.5},
         "display": {"driver": "lcd1602", "read_interval_s": 1.0},
-        "speaker": {"driver": "bt_speaker", "read_interval_s": 1.0},
         "alarm_buzzer": {"driver": "buzzer", "read_interval_s": 1.0},
         "status_led": {"driver": "led", "read_interval_s": 1.0},
     },
@@ -80,7 +79,6 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
     runtime.open()
     led = runtime.outputs.get("status_led")
     lcd = runtime.outputs.get("display")
-    speaker = runtime.outputs.get("speaker")
     buzzer = runtime.outputs.get("alarm_buzzer")
 
     print("=" * 84)
@@ -116,9 +114,6 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
         else:
             safe_print("   ✅ 无报警")
         print(f"   LED={getattr(led, 'current_color', '?')}   LCD={getattr(lcd, 'current_lines', '?')}")
-        spoken = getattr(speaker, "spoken", None)
-        if spoken:
-            print(f"   语音最后一条：{spoken[-1]}")
         print()
         return events
 
@@ -166,8 +161,7 @@ def run_demo(with_http: bool = False, port: int = 8080) -> int:
     print(f"演示结束：{frame_no['n']} 帧 · 报警 {len(all_events)} 条 · 下发 {len(runtime.dispatcher.dispatched)} 次 · "
           f"下发失败 {len(runtime.dispatcher.errors)} 次")
     if buzzer is not None:
-        print(f"蜂鸣器累计鸣叫 {getattr(buzzer, 'total_beeps', 0)} 次；"
-              f"语音累计播报 {len(getattr(speaker, 'spoken', []))} 条")
+        print(f"蜂鸣器累计鸣叫 {getattr(buzzer, 'total_beeps', 0)} 次")
     codes = [e.code.value for e in all_events]
     print(f"触发过的报警类型：{', '.join(sorted(set(codes)))}")
     print("=" * 84)

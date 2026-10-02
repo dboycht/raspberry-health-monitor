@@ -14,7 +14,6 @@
     POST /api/v1/config          改配置（**部分合并**；写盘 + 立即生效，不重启）
     POST /api/v1/silence         消音（用户按消音键 / 手机端点"我知道了"）
     POST /api/v1/sos             手机端触发一次紧急求助
-    POST /api/v1/speak           让音箱说一句话（调试用）
 
 网页：
     GET  /                       状态页（只读，自动刷新）
@@ -49,7 +48,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from ..hal.exceptions import ConfigError
-from ..hal.models import AlarmCode, AlarmEvent, Severity, SpeakCommand, message_kind
+from ..hal.models import AlarmCode, AlarmEvent, Severity, message_kind
 
 _LOG = logging.getLogger(__name__)
 
@@ -143,7 +142,6 @@ class WebApi:
             ("POST", "/api/v1/screen"): self._screen,
             ("POST", "/api/v1/silence"): self._silence,
             ("POST", "/api/v1/sos"): self._sos,
-            ("POST", "/api/v1/speak"): self._speak,
             # ⚠️ **回归修复（2026-10-01）**：`_cloud_callback` 从它被写出来的那一天起
             #    就**没有注册过**（既不在老的 if/elif 链里、也不在这张表里）——
             #    它是**死代码**，而 `CHANGELOG-接口.md` 与手册都写着这个端点存在
@@ -539,20 +537,6 @@ class WebApi:
     def _sos(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         event = self.runtime.sos(time.time())
         return 200, {"ok": True, "event": event.to_dict()}
-
-    def _speak(self, q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
-        text = _first(q, "text", "").strip()
-        if not text:
-            return 400, {"ok": False, "error": "缺少 text 参数"}
-        if len(text) > 60:
-            return 400, {"ok": False, "error": "text 过长（最多 60 字），避免播报没完没了"}
-        sent = 0
-        for device in self.runtime.dispatcher.outputs.values():
-            if getattr(device, "KIND", None) is not None and device.KIND.value == "audio" and getattr(device, "NAME", "") == "bt_speaker":
-                device.send(SpeakCommand(text=text))
-                sent += 1
-        return 200, {"ok": True, "sent_to": sent, "text": text}
-
 
 # --------------------------------------------------------------------------
 # 参数解析小工具（越界一律夹紧，而不是报 500）

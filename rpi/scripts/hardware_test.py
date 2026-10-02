@@ -301,7 +301,6 @@ DRIVER_NEEDS: Dict[str, Set[str]] = {
     "tft_spi": {"spi", "gpio"},
     "dht11": {"gpio"},
     "hc_sr501": {"gpio"},
-    "hc_sr04": {"gpio"},
     "button": {"gpio"},
     "led": {"gpio"},
     "buzzer": {"gpio"},
@@ -329,7 +328,7 @@ TOOL_CHECK_NEEDS: Dict[str, str] = {
 #: 名字来自默认配置（`core/config.py::DEFAULT_CONFIG`）；改了设备名要同步这里，
 #: 测试会断言"默认配置里的每个设备名要么在这里、要么在 COMPOSED_DEVICE_HINTS 里"。
 CHECKED_DEVICE_NAMES: Set[str] = {
-    "vitals", "ambient", "motion", "distance",
+    "vitals", "ambient", "motion",
     "display", "status_led", "alarm_buzzer", "speaker", "sos_button", "spo2_button",
 }
 
@@ -733,19 +732,6 @@ def main() -> int:
                 "3) 确认 VCC 接的是 **5V**（物理脚 2），GND 共地，OUT 接 GPIO17（物理脚 11）\n"
                 "4) 模块上两个电位器：调灵敏度与延时",
             )
-
-    # 距离（拓展件）
-    distance = with_device("distance")
-    if distance is not None:
-        samples = sample_device(distance, args.interval, gap_s=0.6)
-        values = [getattr(s, "distance_cm", None) for s in samples if not isinstance(s, Exception)]
-        status, detail = evaluate_bounds(values, 2.0, 400.0)
-        rep.add(
-            "超声波测距（HC-SR04）", status, detail,
-            "⚠️ ECHO 输出 5V，必须经 TXS0102 或 1kΩ+2kΩ 分压后才能接 GPIO6（物理脚 31）\n"
-            "VCC 必须 5V；TRIG=GPIO5（物理脚 29）\n"
-            "读数恒 None：多为回波超时（目标太远/太软/角度太偏）",
-        )
 
     # ---------------- 7. 输出器件 ----------------
     if args.skip_output:

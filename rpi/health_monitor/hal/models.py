@@ -143,7 +143,6 @@ class CommandType(str, Enum):
 
     DISPLAY_PAGE = "display_page"  # 显示翻页
     DISPLAY_TEXT = "display_text"  # 显示任意两行文本
-    SPEAK = "speak"                # 语音播报
     BEEP = "beep"                  # 蜂鸣器鸣叫
     LIGHT = "light"                # LED 状态
     SILENCE = "silence"            # 消音（本轮报警静音）
@@ -214,19 +213,6 @@ class AmbientSample(Sample):
     temperature_c: Optional[float] = None
     humidity_percent: Optional[float] = None
     is_cached: bool = False
-
-
-@dataclass(frozen=True)
-class RangeSample(Sample):
-    """距离（HC-SR04）。
-
-    Attributes:
-        distance_cm: 距离，厘米。超出量程或回波超时为 ``None``。
-        echo_us: 回波高电平持续时间（微秒），保留用于疑难排查。
-    """
-
-    distance_cm: Optional[float] = None
-    echo_us: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -349,14 +335,6 @@ class Command:
 
 
 @dataclass(frozen=True)
-class SpeakCommand(Command):
-    """语音播报。``text`` 为中文短句。"""
-
-    text: str = ""
-    priority: Severity = Severity.NOTICE
-
-
-@dataclass(frozen=True)
 class BeepCommand(Command):
     """蜂鸣器鸣叫。
 
@@ -418,13 +396,11 @@ __all__ = [
     "Sample",
     "VitalSignsSample",
     "AmbientSample",
-    "RangeSample",
     "MotionSample",
     "ButtonEvent",
     "DisplayStatus",
     "AlarmEvent",
     "Command",
-    "SpeakCommand",
     "BeepCommand",
     "LightCommand",
     "DisplayCommand",

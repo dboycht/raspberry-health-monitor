@@ -464,12 +464,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                 "baudrate": 24000000,
             },
         },
-        "speaker": {
-            "driver": "bt_speaker",
-            "enabled": True,
-            "read_interval_s": 1.0,
-            "params": {"engine": "espeak-ng", "rate": 150},
-        },
         "alarm_buzzer": {
             "driver": "buzzer",
             "enabled": True,
@@ -491,23 +485,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "params": {"pin": 27, "long_press_s": 1.0},
         },
         # 「测血氧」按键（2026-09-30）：**GPIO13 / 物理脚 33**，另一端接 GND（脚 34）。
-        # ⚠️ 为什么不用更好记的 GPIO5（脚 29）：那个脚被 `distance`（HC-SR04，**虽然默认关闭**）
+        # ⚠️ 当初选 13 而不是更好记的 GPIO5（脚 29）：那会儿 GPIO5 被 `distance`（HC-SR04）
         #    声明着，而 `validate.py` 的撞脚检查**刻意不过滤 enabled**（未启用的器件将来会被启用，
         #    它的声明现在就作数 —— 这条规矩来自"红灯 GPIO24 与 TFT 的 DC 撞脚"那次现场事故）。
-        #    ⇒ 新器件应当让开已声明的脚，而不是去松掉那条守卫。
+        #    ⚠️ **2026-10-02：HC-SR04 已废止并删除代码** ⇒ GPIO5 现在是空的；
+        #    但**引脚保持不变**（按键已按 13 接线，改配置会导致现场对不上）。
         # ⚠️ **功能总开关就是这个 ``enabled``**：置 False ⇒ 连"定期叫人测血氧"一起关掉。
         "spo2_button": {
             "driver": "button",
             "enabled": True,
             "read_interval_s": 0.2,
             "params": {"pin": 13, "long_press_s": 1.0},
-        },
-        "distance": {
-            "driver": "hc_sr04",
-            "enabled": False,
-            "optional": True,
-            "read_interval_s": 5.0,
-            "params": {"trig_pin": 5, "echo_pin": 6},
         },
     },
     # 上云（可选，默认关闭）。填好 broker 信息并把 enabled 改 true 即可。

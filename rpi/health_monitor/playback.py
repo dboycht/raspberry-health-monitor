@@ -36,10 +36,8 @@ from .hal.models import (
     LightCommand,
     MotionSample,
     MotionState,
-    RangeSample,
     Sample,
     Severity,
-    SpeakCommand,
     VitalSignsSample,
 )
 from .service import Runtime
@@ -180,24 +178,6 @@ class SimMotion(_SimBase):
         return max(self.silent_s, time.time() - self._last_seen)
 
 
-class SimRange(_SimBase):
-    """模拟 HC-SR04：默认 60cm 波动。"""
-
-    KIND = DeviceKind.RANGE
-    NAME = "hc_sr04"
-
-    def __init__(self, distance_cm: float = 60.0, **kw: Any) -> None:
-        super().__init__(**kw)
-        self.distance_cm = distance_cm
-
-    def read(self) -> RangeSample:
-        self._require_open()
-        self._maybe_fail()
-        t = time.time() - self._t0
-        cm = self.distance_cm + 3.0 * math.sin(t / 5.0)
-        return RangeSample(device=self.name, distance_cm=round(cm, 1), echo_us=round(cm * 58.0, 1))
-
-
 class SimButton(_SimBase):
     """模拟按键：用 :meth:`press` 注入事件（演示"按下求救键"）。"""
 
@@ -302,30 +282,6 @@ class ConsoleLcd(ConsoleOutput):
         return info
 
 
-class ConsoleSpeaker(ConsoleOutput):
-    """模拟蓝牙音箱：记录播报文本（默认**不真的说话**）。"""
-
-    KIND = DeviceKind.AUDIO
-    NAME = "bt_speaker"
-    PREFIX = "[语音]"
-
-    def send(self, command: Any) -> None:
-        if not isinstance(command, SpeakCommand):
-            raise UnsupportedError(f"音箱只接受 SpeakCommand，收到 {type(command).__name__}")
-        self._record(f"播报：{command.text}", command)
-
-    @property
-    def spoken(self) -> List[str]:
-        return [c.text for c in self.history if isinstance(c, SpeakCommand)]
-
-    def status(self) -> Dict[str, Any]:
-        """带上"播报了几条 / 最后一句"，让 `/api/v1/health` 的 `outputs` 能直接取证。"""
-        info = super().status()
-        spoken = self.spoken
-        info.update({"spoken_count": len(spoken), "last_spoken": (spoken[-1] if spoken else "")})
-        return info
-
-
 class ConsoleBuzzer(ConsoleOutput):
     """模拟蜂鸣器：记录鸣叫次数。"""
 
@@ -391,10 +347,8 @@ _DRIVER_TRANSPORT: Dict[str, str] = {
     "max30102": "i2c",
     "dht11": "onewire",
     "hc_sr501": "gpio",
-    "hc_sr04": "gpio",
     "button": "gpio",
     "lcd1602": "i2c",
-    "bt_speaker": "audio",
     "buzzer": "gpio",
     "led": "gpio",
 }
@@ -403,13 +357,11 @@ _SIM_INPUTS: Dict[str, type] = {
     "max30102": SimVitals,
     "dht11": SimAmbient,
     "hc_sr501": SimMotion,
-    "hc_sr04": SimRange,
     "button": SimButton,
 }
 
 _SIM_OUTPUTS: Dict[str, type] = {
     "lcd1602": ConsoleLcd,
-    "bt_speaker": ConsoleSpeaker,
     "buzzer": ConsoleBuzzer,
     "led": ConsoleLed,
 }
@@ -502,8 +454,8 @@ def _set_or_inject(device: Any, field: str, value: Any) -> bool:
 #: 之所以不"先试真驱动"：真驱动的数值由总线字节决定，剧本改不动它，
 #: 会让演示出现"我设了 128 bpm 但屏幕还是 72"这种自欺现象。
 _PLAYBACK_SIM_DRIVERS = {
-    "max30102", "dht11", "hc_sr501", "hc_sr04", "button",
-    "lcd1602", "bt_speaker", "buzzer", "led",
+    "max30102", "dht11", "hc_sr501", "button",
+    "lcd1602", "buzzer", "led",
 }
 
 
@@ -608,10 +560,8 @@ __all__ = [
     "SimVitals",
     "SimAmbient",
     "SimMotion",
-    "SimRange",
     "SimButton",
     "ConsoleLcd",
-    "ConsoleSpeaker",
     "ConsoleBuzzer",
     "ConsoleLed",
     "FallbackFactory",

@@ -18,7 +18,6 @@ from health_monitor.hal import (
     DeviceKind,
     MotionSample,
     MotionState,
-    RangeSample,
     VitalSignsSample,
 )
 from health_monitor.hal.models import AmbientSample
@@ -127,22 +126,6 @@ class FakeMotionSensor(_FakeBase):
         return self.silent_s
 
 
-class FakeRangeSensor(_FakeBase):
-    """假超声波（拓展件）。"""
-
-    KIND = DeviceKind.RANGE
-    NAME = "hc_sr04"
-
-    def __init__(self, distance_cm: Optional[float] = 60.0, **kw: Any) -> None:
-        super().__init__(**kw)
-        self.distance_cm = distance_cm
-
-    def read(self) -> RangeSample:
-        self._require_open()
-        self._maybe_fail()
-        return RangeSample(device=self.name, distance_cm=self.distance_cm, echo_us=3500.0)
-
-
 #: 一次性构造一整套假设备（集成测试与演示脚本用）
 def build_all(mock: bool = True) -> Dict[str, Device]:
     return {
@@ -156,6 +139,5 @@ __all__ = [
     "FakeVitalSensor",
     "FakeAmbientSensor",
     "FakeMotionSensor",
-    "FakeRangeSensor",
     "build_all",
 ]

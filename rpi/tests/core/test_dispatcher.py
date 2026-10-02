@@ -24,7 +24,7 @@ from health_monitor.core.dispatcher import PRESENTATION_TABLE, AlarmDispatcher
 from health_monitor.core.output_worker import DEFAULT_FAIL_BACKOFF_AFTER
 from health_monitor.hal.device import OutputDevice
 from health_monitor.hal.models import AlarmCode, AlarmEvent, DeviceKind, Severity
-from health_monitor.playback import ConsoleBuzzer, ConsoleLed, ConsoleSpeaker
+from health_monitor.playback import ConsoleBuzzer, ConsoleLed
 
 
 def make_dispatcher() -> AlarmDispatcher:
@@ -37,7 +37,6 @@ def make_dispatcher() -> AlarmDispatcher:
     outputs = {
         "status_led": ConsoleLed(name="status_led"),
         "alarm_buzzer": ConsoleBuzzer(name="alarm_buzzer"),
-        "speaker": ConsoleSpeaker(name="speaker"),
     }
     for device in outputs.values():
         device.open()
@@ -46,11 +45,16 @@ def make_dispatcher() -> AlarmDispatcher:
     return disp
 
 
-class _SlowSpeaker(OutputDevice):
-    """一个 `send()` 会**故意卡住**的假音箱（模拟真机上 15 秒超时的 aplay）。"""
+class _SlowBuzzer(OutputDevice):
+    """一个 `send()` 会**故意卡住**的假音频器件（模拟真机上那条串行、各 15 秒超时的外部命令）。
+
+    ⚠️ 它替的是当年的**蓝牙音箱**：那个器件已废止删除，但"音频器件可能非常慢"这件事
+    没有消失（蜂鸣器也可能被 GPIO/驱动拖住，将来接任何音频设备同理）⇒ 这条判据保留，
+    只是换成用**蜂鸣器**这条真实存在的路径来守。
+    """
 
     KIND = DeviceKind.AUDIO
-    NAME = "bt_speaker"
+    NAME = "buzzer"
 
     def __init__(self, block_s: float = 10.0) -> None:
         super().__init__(mock=True)
@@ -75,14 +79,15 @@ class _SlowSpeaker(OutputDevice):
 class TestAudioNeverBlocksLoop(unittest.TestCase):
     """★ E63 的判据：**输出器件再慢，也不许拖住监护循环**。
 
-    真机事故：`bt_speaker.speak()` 串行两条各 15 秒超时的命令、`dispatch()` 又在主循环
+    真机事故：当年的蓝牙音箱 `speak()` 串行两条各 15 秒超时的命令、`dispatch()` 又在主循环
     线程里同步跑 ⇒ 一次播报让监护盲掉 20~30 秒，还顺手造出一串假 `sensor_fault`。
+    （音箱已删除，纪律保留：见 `_SlowBuzzer` 的说明。）
     """
 
-    def test_慢音箱不许拖住dispatch(self) -> None:
-        slow = _SlowSpeaker(block_s=3.0)
+    def test_慢音频器件不许拖住dispatch(self) -> None:
+        slow = _SlowBuzzer(block_s=3.0)
         slow.open()
-        disp = AlarmDispatcher(outputs={"speaker": slow}, audio_in_background=True)
+        disp = AlarmDispatcher(outputs={"alarm_buzzer": slow}, audio_in_background=True)
         disp.start_audio()
         try:
             event = AlarmEvent(
@@ -100,9 +105,9 @@ class TestAudioNeverBlocksLoop(unittest.TestCase):
 
     def test_墙上的时钟能证明后台确实在跑(self) -> None:
         """反向钉子：不是"什么都不做"——卡住的 `send()` 确实被执行了（只是不在主线程）。"""
-        slow = _SlowSpeaker(block_s=0.3)
+        slow = _SlowBuzzer(block_s=0.3)
         slow.open()
-        disp = AlarmDispatcher(outputs={"speaker": slow})
+        disp = AlarmDispatcher(outputs={"alarm_buzzer": slow})
         disp.start_audio()
         try:
             disp.dispatch(
@@ -116,14 +121,12 @@ class TestAudioNeverBlocksLoop(unittest.TestCase):
             disp.close()
 
     def test_音频器件连续失败会熔断(self) -> None:
-        """★ 真机上 `speaker` 是**永久坏的**（Pi 5 无 3.5 mm 孔、T8 已取消）。
+        """★ 输出器件**永久坏**时，不许让每一次报警都白等它。
 
-        以前的表现是"每一次报警都白等 15 秒"（两条命令串起来 30 秒）；
-        现在连续失败 ``DEFAULT_FAIL_BACKOFF_AFTER`` 次后熔断，
-        冷却期内**连入队都不入**（不再占用工作线程），且监护循环全程不受影响。
-
-        ⚠️ 这条走**蜂鸣器**那条路：语音有 10 秒去重（同一句话不重复念），
-        用语音测会先被去重挡掉、测不到熔断。
+        当年的蓝牙音箱正是这种器件（Pi 5 无 3.5 mm 孔、板上没有可发声设备 ⇒ T8 取消并删除）；
+        本条用"永远抛异常的假蜂鸣器"守住同一套机制：连续失败
+        ``DEFAULT_FAIL_BACKOFF_AFTER`` 次后熔断，冷却期内**连入队都不入**
+        （不再占用工作线程），且监护循环全程不受影响。
         """
         class _BrokenBuzzer(OutputDevice):
             KIND = DeviceKind.AUDIO
@@ -164,9 +167,9 @@ class TestAudioNeverBlocksLoop(unittest.TestCase):
             disp.close()
 
     def test_关服务会把工作线程停掉(self) -> None:
-        slow = _SlowSpeaker(block_s=0.1)
+        slow = _SlowBuzzer(block_s=0.1)
         slow.open()
-        disp = AlarmDispatcher(outputs={"speaker": slow})
+        disp = AlarmDispatcher(outputs={"alarm_buzzer": slow})
         disp.start_audio()
         self.assertTrue(disp.worker.running)
         disp.close()
@@ -208,7 +211,6 @@ class TestReAlert(unittest.TestCase):
         self.disp = make_dispatcher()
         self.led = self.disp.outputs["status_led"]
         self.buzzer = self.disp.outputs["alarm_buzzer"]
-        self.speaker = self.disp.outputs["speaker"]
 
     def tearDown(self) -> None:
         self.disp.close()
@@ -237,28 +239,16 @@ class TestReAlert(unittest.TestCase):
 
     def test_enabled_false_时不出声(self) -> None:
         buzzer = ConsoleBuzzer(name="alarm_buzzer")
-        speaker = ConsoleSpeaker(name="speaker")
-        for device in (buzzer, speaker):
-            device.open()
-        disp = AlarmDispatcher(outputs={"alarm_buzzer": buzzer, "speaker": speaker}, enabled=False)
+        buzzer.open()
+        disp = AlarmDispatcher(outputs={"alarm_buzzer": buzzer}, enabled=False)
         try:
             event = AlarmEvent(ts=1000.0, code=AlarmCode.SOS_PRESSED, severity=Severity.CRITICAL,
                                message="求助", source="sos")
             disp.dispatch(event, 1000.0)
             disp.flush_audio(5.0)
-            self.assertEqual(buzzer.total_beeps, 0)
-            self.assertEqual(speaker.spoken, [], "enabled=False 时连入队都不该有声音")
+            self.assertEqual(buzzer.total_beeps, 0, "enabled=False 时连入队都不该有声音")
         finally:
             disp.close()
-
-    def test_播报仍受节流(self) -> None:
-        self.disp.re_alert(AlarmCode.HR_TOO_HIGH, now=1000.0)
-        self._flush()
-        spoken_first = len(self.speaker.spoken)
-        self.assertGreater(spoken_first, 0, "第 1 次应当真的念出来")
-        self.disp.re_alert(AlarmCode.HR_TOO_HIGH, now=1001.0)   # 1 秒后：同一句话不该重复念
-        self._flush()
-        self.assertEqual(len(self.speaker.spoken), spoken_first)
 
     def test_求救是红灯且解除静音后能响(self) -> None:
         self.disp.silence(now=1000.0)

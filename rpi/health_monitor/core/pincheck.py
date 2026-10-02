@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Mapping, Tuple
 EXCLUSIVE_PIN_KEYS: Dict[str, Tuple[str, ...]] = {
     "dht11": ("pin",),
     "hc_sr501": ("pin",),
-    "hc_sr04": ("trig_pin", "echo_pin"),
     "buzzer": ("pin",),
     "button": ("pin",),
     "tft_spi": ("dc_pin", "reset_pin"),

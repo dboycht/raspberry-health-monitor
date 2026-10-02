@@ -8,26 +8,29 @@
 - 本文件**不认识任何具体输出类**（不 import ``Lcd1602`` 等），只按 ``DeviceKind``
   派发指令，因此换显示屏/换音箱都不用改这里（这是分层的意义所在）。
 
-三条防吵人措施
+两条防吵人措施
 --------------
-1. **一句话 10 秒内不重复播报**（``speak_repeat_s``）；
-2. **消音生效**：``SILENCE`` 后一段时间内只保留 LED 提示，不响铃、不播报；
-3. **蜂鸣器鸣叫有总时长上限**（由驱动再兜一层，防止代码 bug 导致长鸣）。
+1. **消音生效**：``SILENCE`` 后一段时间内只保留 LED 提示，不响铃；
+2. **蜂鸣器鸣叫有总时长上限**（由驱动再兜一层，防止代码 bug 导致长鸣）。
 
 ⚠️ **声音绝不允许阻塞监护循环**（`ERROR.md` **E63**，2026-10-01 真机实测）
 ----------------------------------------------------------------------------
-真机上"两个按键同一秒报 `sensor_fault`"的根因是：`bt_speaker.speak()` 串行跑
-两条各 15 秒超时的外部命令，而本类的 :meth:`dispatch` 是在**主循环线程里**同步执行的
+真机上"两个按键同一秒报 `sensor_fault`"的根因是：当时那条**蓝牙音箱**的 `speak()`
+串行跑两条各 15 秒超时的外部命令，而本类的 :meth:`dispatch` 是在**主循环线程里**同步执行的
 ⇒ **一次语音播报让整个监护停摆 20~30 秒**（不采集、不响应按键、不上云），
 主循环停摆又让"所有周期短的设备被判陈旧"⇒ 凭空一串假故障。
 
-因此本类把 **音频类**指令（`DeviceKind.AUDIO`：蜂鸣器 + 音箱）交给
+⚠️ **2026-10-02：蓝牙音箱已废止并删除**（板上本来就没有可发声设备）⇒ 现在音频类器件只剩
+**蜂鸣器**。但**这条纪律与工作线程都要留着**：蜂鸣器同样走 `DeviceKind.AUDIO`，
+而且"将来接任何慢的音频设备"都必须是入队而不是同步跑 —— 这正是 E63 的教训。
+
+因此本类把 **音频类**指令（`DeviceKind.AUDIO`：**蜂鸣器**）交给
 :class:`~health_monitor.core.output_worker.OutputWorker` 在**工作线程**里执行，
 主循环只入队、立即返回；灯与屏仍**同步**下发（它们只是一次 GPIO/I2C/SPI 写，
 而且"报警最要紧的头几十毫秒"里灯屏必须即时）。
 
 判据（见 `tests/core/test_dispatcher.py::TestAudioNeverBlocksLoop`）：
-**一个 `send()` 故意卡 10 秒的假音箱，不许让 `dispatch()` 多花超过 0.5 秒。**
+**一个 `send()` 故意卡 10 秒的假音频器件，不许让 `dispatch()` 多花超过 0.5 秒。**
 """
 
 from __future__ import annotations
@@ -47,7 +50,6 @@ from ..hal.models import (
     LCD_DEBUG_PAGE,
     LightCommand,
     Severity,
-    SpeakCommand,
 )
 from .output_worker import OutputWorker
 
@@ -56,12 +58,11 @@ _LOG = logging.getLogger(__name__)
 
 @dataclass
 class AlarmPresentation:
-    """一次报警的"呈现方案"（语音文本 / 蜂鸣模式 / 灯色 / LCD 两行）。
+    """一次报警的"呈现方案"（蜂鸣模式 / 灯色 / LCD 两行）。
 
     这是**纯数据**，因此可以被单测直接断言，不需要任何硬件。
     """
 
-    speak: Optional[str] = None
     beep_times: int = 0
     beep_on_ms: int = 200
     beep_off_ms: int = 200
@@ -70,61 +71,61 @@ class AlarmPresentation:
     lcd_lines: tuple = ("", "")
 
 
-#: 报警码 → 语音文本 + LED 颜色 + 蜂鸣模式。文案面向用户，**禁止包含 markdown 标记**。
+#: 报警码 → 蜂鸣模式 + LED 颜色 + LCD 两行。文案面向用户，**禁止包含 markdown 标记**。
 PRESENTATION_TABLE: Dict[AlarmCode, AlarmPresentation] = {
     AlarmCode.SOS_PRESSED: AlarmPresentation(
-        speak="已收到紧急求助，请立即查看", beep_times=5, beep_on_ms=150, beep_off_ms=100,
+        beep_times=5, beep_on_ms=150, beep_off_ms=100,
         light="red", blink=True, lcd_lines=("SOS! HELP NEEDED", "PLEASE CHECK NOW"),
     ),
     AlarmCode.HR_TOO_HIGH: AlarmPresentation(
-        speak="心率偏高，请注意休息", beep_times=3, beep_on_ms=200, beep_off_ms=150,
+        beep_times=3, beep_on_ms=200, beep_off_ms=150,
         light="yellow", blink=True, lcd_lines=("ALARM: HR HIGH", ""),
     ),
     AlarmCode.HR_TOO_LOW: AlarmPresentation(
-        speak="心率偏低，请确认老人状态", beep_times=3, beep_on_ms=300, beep_off_ms=150,
+        beep_times=3, beep_on_ms=300, beep_off_ms=150,
         light="yellow", blink=True, lcd_lines=("ALARM: HR LOW", ""),
     ),
     AlarmCode.SPO2_TOO_LOW: AlarmPresentation(
-        speak="血氧偏低，请立即查看", beep_times=4, beep_on_ms=250, beep_off_ms=120,
+        beep_times=4, beep_on_ms=250, beep_off_ms=120,
         light="red", blink=True, lcd_lines=("ALARM: SPO2 LOW", ""),
     ),
     AlarmCode.AMBIENT_TEMP_HIGH: AlarmPresentation(
-        speak="室温偏高，建议通风", beep_times=1, light="yellow", blink=False,
+        beep_times=1, light="yellow", blink=False,
         lcd_lines=("ROOM TEMP HIGH", ""),
     ),
     AlarmCode.AMBIENT_TEMP_LOW: AlarmPresentation(
-        speak="室温偏低，建议取暖", beep_times=1, light="yellow", blink=False,
+        beep_times=1, light="yellow", blink=False,
         lcd_lines=("ROOM TEMP LOW", ""),
     ),
     AlarmCode.HUMIDITY_HIGH: AlarmPresentation(
-        speak="湿度偏高，建议通风", beep_times=0, light="yellow", blink=False,
+        beep_times=0, light="yellow", blink=False,
         lcd_lines=("HUMIDITY HIGH", ""),
     ),
     AlarmCode.NO_MOTION_TOO_LONG: AlarmPresentation(
-        speak="长时间没有检测到活动，请确认老人是否安全", beep_times=4,
+        beep_times=4,
         beep_on_ms=400, beep_off_ms=150, light="red", blink=True,
         lcd_lines=("NO MOTION ALERT", "CHECK PLEASE"),
     ),
     AlarmCode.NIGHT_FREQUENT_WAKE: AlarmPresentation(
-        speak="夜间起夜次数较多，请注意休息", beep_times=0, light="yellow", blink=False,
+        beep_times=0, light="yellow", blink=False,
         # ⚠️ 必须 ≤16 字符：LCD1602 每行 16 字符、TFT 在 1 倍字号下也是 16 字符。
         #    旧文案 "WAKE UP TOO OFTEN" 是 17 个字符 ⇒ 两块屏上都被截成 "WAKE UP TOO OFT"
         #    （2026-09-29 查 TFT 显示时发现，见 ERROR.md E53）。这里缩短到 14 个字符。
         lcd_lines=("WAKE TOO OFTEN", ""),
     ),
     AlarmCode.SENSOR_FAULT: AlarmPresentation(
-        speak="设备异常，请检查传感器接线", beep_times=2, beep_on_ms=120, beep_off_ms=120,
+        beep_times=2, beep_on_ms=120, beep_off_ms=120,
         light="yellow", blink=True, lcd_lines=("SENSOR FAULT", "CHECK WIRING"),
     ),
     AlarmCode.DEVICE_OFFLINE: AlarmPresentation(
-        speak="设备已离线", beep_times=1, light="yellow", blink=False,
+        beep_times=1, light="yellow", blink=False,
         lcd_lines=("DEVICE OFFLINE", ""),
     ),
     AlarmCode.ALL_CLEAR: AlarmPresentation(
-        speak="", beep_times=0, light="green", blink=False, lcd_lines=("STATUS: NORMAL", ""),
+        beep_times=0, light="green", blink=False, lcd_lines=("STATUS: NORMAL", ""),
     ),
     AlarmCode.SYSTEM_START: AlarmPresentation(
-        speak="监护系统已启动", beep_times=0, light="green", blink=False,
+        beep_times=0, light="green", blink=False,
         lcd_lines=("SYSTEM READY", ""),
     ),
 }
@@ -136,7 +137,6 @@ class AlarmDispatcher:
     Args:
         outputs: ``{设备名: OutputDevice}``（由服务层装配，本类不关心怎么造出来）。
         enabled: 是否真的发声/显示。``False`` 时只记录（演示或夜间静音模式）。
-        speak_repeat_s: 同一句话在该秒数内不重复播报（防吵人）。
         silence_after_s: 调用 :meth:`silence` 后，多少秒内只亮灯不出声。
         audio_in_background: **音频是否交给工作线程**（默认 ``True``，见模块文档 E63）。
             只有"要精确观察音频时序"的测试才该关掉它。
@@ -147,16 +147,13 @@ class AlarmDispatcher:
         self,
         outputs: Optional[Dict[str, OutputDevice]] = None,
         enabled: bool = True,
-        speak_repeat_s: float = 10.0,
         silence_after_s: float = 300.0,
         audio_in_background: bool = True,
         audio_worker: Optional[OutputWorker] = None,
     ) -> None:
         self.outputs: Dict[str, OutputDevice] = dict(outputs or {})
         self.enabled = bool(enabled)
-        self.speak_repeat_s = float(speak_repeat_s)
         self.silence_after_s = float(silence_after_s)
-        self._last_spoken: Dict[str, float] = {}
         self._silenced_until: float = 0.0
         self.dispatched: List[Dict[str, Any]] = []   # 下发流水（供手机端/日志查看）
         self.realerts: int = 0                       # "报警持续提醒"的重发次数（诊断用）
@@ -224,7 +221,6 @@ class AlarmDispatcher:
             "severity": int(event.severity),
             "light": plan.light,
             "blink": plan.blink,
-            "speak": plan.speak or "",
             "beep_times": 0,
             "silenced": self.is_silenced(now),
         }
@@ -247,12 +243,6 @@ class AlarmDispatcher:
             )
             record["beep_times"] = plan.beep_times
 
-        if plan.speak and self._speak_allowed(plan.speak, now):
-            self._send_kind(
-                DeviceKind.AUDIO,
-                SpeakCommand(text=plan.speak, priority=event.severity, ts=now),
-                only_driver="bt_speaker",
-            )
 
         self.dispatched.append(record)
         return plan
@@ -277,7 +267,6 @@ class AlarmDispatcher:
             Severity.NOTICE: ("yellow", False),
         }.get(event.severity, ("yellow", False))
         return AlarmPresentation(
-            speak=event.message or "请注意",
             beep_times=2 if event.severity >= Severity.WARNING else 0,
             light=severity_light[0],
             blink=severity_light[1],
@@ -305,7 +294,7 @@ class AlarmDispatcher:
         }.get(severity, ("yellow", False))
         code_text = getattr(code, "value", str(code))
         return AlarmPresentation(
-            speak="请注意", beep_times=2 if severity >= Severity.WARNING else 0,
+            beep_times=2 if severity >= Severity.WARNING else 0,
             light=severity_light[0], blink=severity_light[1],
             lcd_lines=("ALARM", str(code_text)[:16]),
         )
@@ -326,7 +315,6 @@ class AlarmDispatcher:
         * **不追加** ``dispatched`` 流水（那是"事件流水"，重发会让手机端列表被刷屏）；
           只累加 ``realerts`` 计数，便于测试与诊断；
         * 尊重静音与 ``enabled``：静音期间只更新灯/屏、**不出声**；
-        * 播报仍受 ``speak_repeat_s`` 节流（同一句话不反复念）。
         """
         plan = self.plan_for(code, severity)
         self.realerts += 1
@@ -339,11 +327,6 @@ class AlarmDispatcher:
                 DeviceKind.AUDIO,
                 BeepCommand(times=plan.beep_times, on_ms=plan.beep_on_ms, off_ms=plan.beep_off_ms, ts=now),
                 only_driver="buzzer",
-            )
-        if plan.speak and self._speak_allowed(plan.speak, now):
-            self._send_kind(
-                DeviceKind.AUDIO, SpeakCommand(text=plan.speak, priority=severity, ts=now),
-                only_driver="bt_speaker",
             )
         return plan
 
@@ -364,14 +347,6 @@ class AlarmDispatcher:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
-
-    def _speak_allowed(self, text: str, now: float) -> bool:
-        """同一句话在 ``speak_repeat_s`` 内不重复播报。"""
-        last = self._last_spoken.get(text)
-        if last is not None and (now - last) < self.speak_repeat_s:
-            return False
-        self._last_spoken[text] = now
-        return True
 
     def show_page(self, lines: Any, page: int = 0, now: Optional[float] = None,
                   frame: Optional[Mapping[str, Any]] = None) -> None:
@@ -500,7 +475,7 @@ class AlarmDispatcher:
             "silenced_until": self._silenced_until,
             #: 音频后台执行器的状态（E63）：队列积压 / 各器件成功次数 / 熔断情况。
             #: 排障用：``pending`` 长期不为 0 = 输出器件太慢；``backoff_until`` 里出现器件名
-            #: = 它已连续失败被熔断（本项目真机上 ``speaker`` 就是这样，音频硬件本来就没有）。
+            #: = 它已连续失败被熔断（本项目的蓝牙音箱当年就是这样：板上没有可发声设备）。
             "audio_worker": (self.worker.status() if self.worker is not None else None),
         }
 
