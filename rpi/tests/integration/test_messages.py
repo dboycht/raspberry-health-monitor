@@ -180,12 +180,21 @@ class TestSilenceRecorded(_Base):
         self.assertNotIn("正在报警", rec.message)
 
     def test_消音消息本身不发声(self) -> None:
-        """★ 反向钉子：让"别再响了"的那条记录**自己不许响**。"""
+        """★ 反向钉子：让"别再响了"的那条记录**自己不许响**。
+
+        ⚠️ 两处 `_flush()` 是**必须**的（2026-10-13 按 CI 实测补上）：音频走工作线程（E63），
+        不排空就读 `_beeps()` ⇒ 读到的是"那声**该响的**报警蜂鸣还没落地"的假 0，
+        动作之后它落地就变成 1，断言报 `1 != 0`。本机快（连跑 15 次全绿）而 **CI 慢**（连红两次）。
+        取证脚本：`_scratch/probe_beep_race.py` —— 快照点 `total_beeps=0`、`flush_audio()` 后 `=1`。
+        同文件的 `TestSosStillRecorded.test_长按A触发求救并留下事件` 本来就是这么写的。
+        """
         self._tick()
         self.rt.set_ambient(temperature_c=35.0)
         self._tick(advance=3.0)
+        self._flush()                     # 先让"该响的那声"落地，再取基准
         before = self._beeps()
         self._press_and_tick("sos_button")
+        self._flush()                     # 消音若真多叫了一声，也会在这里落地
         self.assertEqual(self._beeps(), before, "消音动作本身不该再叫一声")
 
 
