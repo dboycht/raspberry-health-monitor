@@ -275,7 +275,7 @@ raspberry-health-monitor/
 ## 8. 版本
 
 - 版本单一来源：`rpi/health_monitor/__init__.py` 的 `__version__`（HTTP `/api/v1/health` 会返回它）
-- 当前版本：**1.0.1**
+- 当前版本：**1.0.2**
 
 ## 9. 验证基线（2026-09-26 实测）
 

@@ -47,7 +47,7 @@ from .net.web import WebApi, start_in_thread
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 #: 彩屏信息页每隔多少秒翻一页（E57）。0 或负数 = 不轮播。
 DISPLAY_PAGE_INTERVAL_S = 6.0
