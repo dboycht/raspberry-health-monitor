@@ -9,11 +9,16 @@
 
 from __future__ import annotations
 
+import sys
+import types
 import unittest
+from typing import Any, Dict
+from unittest import mock
 
 from basic.dht11read import (
     BIT_THRESHOLD_US,
     Dht11Error,
+    Dht11Reader,
     GpiozeroBackend,
     LgpioBackend,
     MockBackend,
@@ -205,6 +210,75 @@ class TestBackendAvailability(unittest.TestCase):
             self.assertIn(backend, ("lgpio", "gpiozero"))
         finally:
             reader.close()
+
+
+class TestBackendOrder(unittest.TestCase):
+    """★ 后端**顺序**必须是"先 gpiozero、后 lgpio"（2026-10-13 课程口径）。
+
+    为什么非要有这条：顺序只是 `open()` 里一个元组的次序，**写反了不会有任何报错**，
+    在开发机上更是看不出来（两个库都没装 ⇒ 两条都失败 ⇒ 行为看起来一样）。
+    所以这里把**两个库都换成假货**，逼出"都可用时选谁"这个分支：
+
+      * 两个都在 ⇒ 必须返回 ``gpiozero``（顺序正确）；
+      * 只有 lgpio ⇒ 必须返回 ``lgpio``（回退仍然有效）。
+    """
+
+    class _FakeSensor:
+        temperature = 25.0
+        humidity = 58.0
+
+        def close(self) -> None:
+            pass
+
+    class _FakeLgpio:
+        """只实现构造/释放用得到的那几个函数。"""
+
+        BOTH_EDGES = 1
+        SET_PULL_UP = 2
+
+        def gpiochip_open(self, _chip: int) -> int:
+            return 0
+
+        def gpio_free(self, _handle: int, _pin: int) -> None:
+            pass
+
+        def gpiochip_close(self, _handle: int) -> None:
+            pass
+
+    def _modules(self, *, gpiozero: bool, lgpio: bool) -> Dict[str, Any]:
+        patch: Dict[str, Any] = {}
+        if gpiozero:
+            mod = types.ModuleType("gpiozero")
+            mod.DHT11 = lambda *a, **k: self._FakeSensor()   # type: ignore[attr-defined]
+            patch["gpiozero"] = mod
+        else:
+            patch["gpiozero"] = None
+        patch["lgpio"] = self._FakeLgpio() if lgpio else None
+        return patch
+
+    def test_两个后端都可用时选gpiozero(self) -> None:
+        with mock.patch.dict(sys.modules, self._modules(gpiozero=True, lgpio=True)):
+            reader = Dht11Reader(pin=4, mock=False)
+            try:
+                self.assertEqual(reader.open(), "gpiozero",
+                                 "gpiozero 必须优先（课程口径：GPIO 一律走 gpiozero）")
+            finally:
+                reader.close()
+
+    def test_只有lgpio时回退到lgpio(self) -> None:
+        with mock.patch.dict(sys.modules, self._modules(gpiozero=False, lgpio=True)):
+            reader = Dht11Reader(pin=4, mock=False)
+            try:
+                self.assertEqual(reader.open(), "lgpio", "gpiozero 不可用时必须能回退")
+            finally:
+                reader.close()
+
+    def test_两个都没有时如实报错而不是降级成mock(self) -> None:
+        with mock.patch.dict(sys.modules, self._modules(gpiozero=False, lgpio=False)):
+            reader = Dht11Reader(pin=4, mock=False)
+            with self.assertRaises(Dht11Error):
+                reader.open()
+            self.assertEqual(reader.backend_name, "none")
 
 
 if __name__ == "__main__":

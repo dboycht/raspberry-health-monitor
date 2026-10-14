@@ -9,11 +9,18 @@
 
 三种后端（按顺序尝试，谁在就用谁）
 ----------------------------------
-1. ``lgpio``（**树莓派上推荐**）：用内核级**边沿时间戳**，纳秒精度。原因见下；
-2. ``gpiozero``：只有 **gpiozero < 2.0** 才有 ``DHT11`` 类。
-   ⚠️ Debian 13（trixie）的 ``python3-gpiozero 2.0.1`` **已经删掉了 DHT11/DHT22**
-   （源码里没有、apt 里也没有任何 dht 包），所以这条路径在较新的系统上通常不可用；
+1. ``gpiozero``（**首选**，课程口径：GPIO 一律走 gpiozero）：但只有 **gpiozero < 2.0**
+   才有 ``DHT11`` 类。⚠️ Debian 13（trixie）的 ``python3-gpiozero 2.0.1`` **已经删掉了
+   DHT11/DHT22**（源码里没有、apt 里也没有任何 dht 包），所以这条路径在较新的系统上
+   通常不可用，会**自动落到下一条**；
+2. ``lgpio``：用内核级**边沿时间戳**，纳秒精度（时序上其实是更稳的一条，见下）；
 3. ``mock``：完全不碰硬件，用缓慢波动的合成数据，**没有树莓派也能把程序跑通**。
+
+> ⚠️ **顺序的由来（如实写明，别误读成技术排序）**：把 gpiozero 放第一位是**课程要求**
+> （"GPIO 一律走 gpiozero"，2026-10-13 收口），**不代表**它在 DHT11 上更准 ——
+> 恰恰相反：单总线靠"高电平宽度"判 0/1，而 lgpio 能拿到**内核级边沿时间戳**，
+> 比在 Python 侧数时间稳得多。真机上到底走了哪个后端**以日志/返回的后端名为准**
+> （`Dht11Reader.open()` 的返回值、`selfcheck` 的"真硬件后端可用：xxx"）。
 
 为什么坚持用"边沿时间戳"而不是在 Python 里紧循环读电平
 ----------------------------------------------------
@@ -227,7 +234,10 @@ def synth_frame(temperature_c: float, humidity_percent: float) -> List[Tuple[int
 
 
 class LgpioBackend:
-    """用 ``lgpio`` 的边沿时间戳读 DHT11（树莓派上推荐）。"""
+    """用 ``lgpio`` 的边沿时间戳读 DHT11（gpiozero 没有 ``DHT11`` 类时的**回退**）。
+
+    ⚠️ 时序上这条其实更稳（内核级时间戳），放第二位纯粹是因为课程要求"GPIO 一律走 gpiozero"。
+    """
 
     name = "lgpio"
 
@@ -277,7 +287,7 @@ class LgpioBackend:
 
 
 class GpiozeroBackend:
-    """用 ``gpiozero`` 的 ``DHT11`` 类读（**只有 gpiozero < 2.0 才有**）。"""
+    """用 ``gpiozero`` 的 ``DHT11`` 类读（**首选**；只有 gpiozero < 2.0 才有这个类）。"""
 
     name = "gpiozero"
 
@@ -409,8 +419,9 @@ class Dht11Reader:
         顺序（每一步失败都往下退，并把原因记进日志——**不静默降级**）：
 
         1. ``--mock`` 或显式指定了 mock 值 → 合成数据；
-        2. ``lgpio`` 可用 → 用它（树莓派上最稳）；
-        3. ``gpiozero`` 且有 ``DHT11`` 类 → 用它（旧系统）；
+        2. ``gpiozero`` 且有 ``DHT11`` 类 → 用它（**课程口径：GPIO 一律走 gpiozero**）；
+           ⚠️ Debian 13 的 gpiozero 2.0.1 已无 ``DHT11`` 类 ⇒ 这一步会失败并自动往下退；
+        3. ``lgpio`` 可用 → 用它（时序上更稳的回退）；
         4. 都不可用 → 抛 :class:`Dht11Error`，并在信息里给出**可执行的排查命令**。
         """
         if self._backend is not None:
@@ -421,7 +432,10 @@ class Dht11Reader:
             return self.backend_name
 
         errors: List[str] = []
-        for factory in (LgpioBackend, GpiozeroBackend):
+        #: ⚠️ 顺序 = **先 gpiozero、后 lgpio**（2026-10-13 课程口径）。
+        #: 顺序的理由与"哪个更准"无关 —— 见模块开头那段说明。
+        #: 机器守卫：`basic/tests/test_basic_frame.py::TestBackendOrder`。
+        for factory in (GpiozeroBackend, LgpioBackend):
             try:
                 self._backend = factory(self.pin)
                 _LOG.info("DHT11 使用 %s 后端（GPIO%d）", self.backend_name, self.pin)
@@ -431,7 +445,9 @@ class Dht11Reader:
         raise Dht11Error(
             "没有可用的 DHT11 读取后端：\n  - "
             + "\n  - ".join(errors)
-            + "\n排查：① 树莓派上装 lgpio：`sudo apt install -y python3-lgpio`；"
+            + "\n排查：① 树莓派上装 gpiozero 与它的底层："
+            "`sudo apt install -y python3-gpiozero python3-lgpio`"
+            "（⚠️ 新版 gpiozero 已无 DHT11 类 ⇒ 实际会用 lgpio 后端，属预期）；"
             "② 只想看程序效果就用 `--mock`；"
             "③ 在电脑上跑必须加 `--mock`（电脑没有树莓派的 GPIO）"
         )

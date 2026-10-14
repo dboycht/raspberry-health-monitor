@@ -5,7 +5,9 @@
 题设要求（逐条对应到本文件的实现）
 ----------------------------------
 1. **使用树莓派 5 和课程学过的温湿度传感器（DHT11）周期性读取温度和湿度**
-   → 见 `Dht11` 类：自己按单总线协议读（lgpio 边沿时间戳），默认 3 秒一次（DHT11 硬件要求 ≥2 秒）
+   → 见 `Dht11` 类：**gpiozero 优先**（课程口径：GPIO 一律走 gpiozero），
+     新版 gpiozero 已无 `DHT11` 类时自动回退到 lgpio 边沿时间戳自实现；
+     默认 3 秒一次（DHT11 硬件要求 ≥2 秒）
 2. **程序保存连续采集的数据**
    → 见 `CsvStore` 类：每采到一个点就**立刻写进 CSV**（每行 fsync，断电也不丢）
 3. **用 Matplotlib 绘制动态曲线；每得到一组新数据，图中的曲线随之刷新**
@@ -23,7 +25,9 @@
     python3 run.py --interval 3 --duration 60 --save curve.png
     python3 run.py --help               # 全部参数
 
-依赖：Python 3.9+；真机读数需要 `python3-lgpio`；画图需要 `python3-matplotlib` + `python3-tk`。
+依赖：Python 3.9+；真机读数需要 `python3-gpiozero` **与** `python3-lgpio`
+      （gpiozero 是新版里的首选后端；⚠️ gpiozero 2.x 已无 `DHT11` 类，实际会走 lgpio 后端，
+      两者都装最省事）；画图需要 `python3-matplotlib` + `python3-tk`。
         （没装 matplotlib 也能 `--no-plot` 正常采集存档。）
 """
 
@@ -44,6 +48,14 @@ from typing import List, Optional, Tuple
 
 #: DHT11 数据脚（BCM 编号）。BCM 4 = 物理脚 7（本作业按接线表接的就是这个）
 DEFAULT_PIN = 4
+
+#: DHT11 量程（数据手册：0~50 ℃、20~90 %RH）。
+#: ⚠️ 温度上限必须**显式**交给 gpiozero 的 DHT11：它默认把 0℃ 以下的读数当无效并抛
+#: NegativeTempError，显式给量程更可控（主项目 `sensors/dht11.py` 里是同一处置）。
+TEMP_MIN_C = 0.0
+TEMP_MAX_C = 50.0
+HUMID_MIN = 20.0
+HUMID_MAX = 90.0
 
 #: BCM → 40-pin 物理脚号（只列常用脚；程序只用来在提示里显示"物理脚几"）。
 #: ⚠️ 两者**不是偏移关系**（GPIO4→7，但 GPIO27→13），所以必须查表，不能 `pin + 1`。
@@ -133,12 +145,19 @@ class Dht11Error(RuntimeError):
 
 
 class Dht11:
-    """DHT11 单总线读取（lgpio 边沿时间戳；mock 模式用合成数据）。
+    """DHT11 单总线读取（**gpiozero 优先**；缺失时回退 lgpio 边沿时间戳；mock 用合成数据）。
 
-    为什么不用 `Adafruit_DHT` / `gpiozero.DHT11`：
-      * 树莓派 5 上 `RPi.GPIO` 不可用，而 gpiozero 2.x **删掉了 DHT11 类**；
-      * 自己实现只需要"拉低 18ms → 收 83 个边沿 → 按高电平宽度判 0/1"，
-        而且**边沿时间戳**比 Python 轮询微秒级电平可靠得多。
+    后端顺序（2026-10-13 按课程口径收口：**GPIO 一律走 gpiozero**）：
+
+      1. ``gpiozero.DHT11`` —— 但 **gpiozero 2.x 删掉了 DHT11 类**
+         （真机实测：Debian 13 的 ``python3-gpiozero 2.0.1`` 里连 ``class DHT11`` 都没有）
+         ⇒ 在较新的系统上这步会失败并**自动回退**到第 2 条；
+      2. ``lgpio`` 边沿时间戳自实现 —— 只需"拉低 18ms → 收边沿 → 按高电平宽度判 0/1"，
+         而且**内核级时间戳**比在 Python 里轮询微秒级电平可靠得多。
+         ⚠️ 它排第二位是**课程要求**（先 gpiozero），**不是**因为它更差 —— 时序上它其实更稳；
+      3. ``mock`` —— 合成数据，电脑上也能跑。
+
+    到底用了哪个后端**以后端名为准**（`open()` 的返回值 / 启动时打印的那一行）。
     """
 
     def __init__(self, pin: int = DEFAULT_PIN, mock: bool = False, retries: int = 3) -> None:
@@ -150,29 +169,63 @@ class Dht11:
         self.backend = "mock" if mock else "none"
         self._lgpio = None
         self._handle = None
+        self._gpiozero_sensor = None
         self._last_ok_at: Optional[float] = None
         self._mock_value = (25.0, 58.0)          # mock 起始值（题设示例就是 25.0℃/58%）
 
     # -- 生命周期 ------------------------------------------------------
 
     def open(self) -> str:
-        """打开传感器，返回后端名（`lgpio` 或 `mock`）。"""
+        """打开传感器，返回后端名（`gpiozero` / `lgpio` / `mock`）。
+
+        ⚠️ 顺序 = **先 gpiozero、后 lgpio**（课程口径）。两者都不可用时**如实报错**，
+        不静默降级成 mock（否则电脑上"跑通了"其实是假数据，等于骗自己）。
+        """
         if self.mock:
             self.backend = "mock"
             return self.backend
+
+        errors: List[str] = []
+        # ① gpiozero（首选）
+        try:
+            from gpiozero import DHT11 as GpioDHT11  # 新版 gpiozero 没有这个类
+            self._gpiozero_sensor = GpioDHT11(self.pin, max_temperature=TEMP_MAX_C)
+            self.backend = "gpiozero"
+            return self.backend
+        except Exception as exc:  # noqa: BLE001 - 类不存在/打不开引脚都算不可用
+            errors.append(f"gpiozero: {type(exc).__name__}: {exc}")
+            self._gpiozero_sensor = None
+
+        # ② lgpio 回退
         try:
             import lgpio  # type: ignore import-not-found
-        except ImportError as exc:  # pragma: no cover - 只在没装 lgpio 的机器上
-            raise Dht11Error(
-                "没有 lgpio：请在树莓派上执行 `sudo apt install -y python3-lgpio`；"
-                "在电脑上跑请加 `--mock`"
-            ) from exc
-        self._lgpio = lgpio
-        self._handle = lgpio.gpiochip_open(0)
-        self.backend = "lgpio"
-        return self.backend
+        except ImportError as exc:  # pragma: no cover - 只在两个库都没有的机器上
+            errors.append(f"lgpio: {type(exc).__name__}: {exc}")
+        else:
+            try:
+                self._handle = lgpio.gpiochip_open(0)
+                self._lgpio = lgpio
+                self.backend = "lgpio"
+                return self.backend
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"lgpio: {type(exc).__name__}: {exc}")
+                self._handle = None
+                self._lgpio = None
+
+        raise Dht11Error(
+            "没有可用的 DHT11 后端：\n  - " + "\n  - ".join(errors)
+            + "\n排查：① 树莓派上 `sudo apt install -y python3-gpiozero python3-lgpio`"
+            "（⚠️ 新版 gpiozero 已无 DHT11 类 ⇒ 实际会走 lgpio 后端，属预期）；"
+            "② 只想看效果加 `--mock`；③ 在电脑上跑必须加 `--mock`"
+        )
 
     def close(self) -> None:
+        if self._gpiozero_sensor is not None:
+            try:
+                self._gpiozero_sensor.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._gpiozero_sensor = None
         if self._lgpio is not None and self._handle is not None:
             try:
                 self._lgpio.gpio_free(self._handle, self.pin)
@@ -213,18 +266,36 @@ class Dht11:
         last_error = ""
         for attempt in range(1, self.retries + 1):
             try:
-                temperature, humidity = self._read_once_lgpio()
+                temperature, humidity = self._read_once()
             except Exception as exc:  # noqa: BLE001 - 硬件层异常很杂，一律转成失败
                 last_error = f"{type(exc).__name__}: {exc}"
                 if attempt < self.retries:
                     time.sleep(0.2)
                 continue
-            if not (0.0 <= temperature <= 50.0 and 20.0 <= humidity <= 90.0):
-                last_error = f"读数超出量程：{temperature}℃ / {humidity}%（DHT11 是 0~50℃、20~90%）"
+            if not (TEMP_MIN_C <= temperature <= TEMP_MAX_C
+                    and HUMID_MIN <= humidity <= HUMID_MAX):
+                last_error = (
+                    f"读数超出量程：{temperature}℃ / {humidity}%"
+                    f"（DHT11 是 {TEMP_MIN_C:g}~{TEMP_MAX_C:g}℃、"
+                    f"{HUMID_MIN:g}~{HUMID_MAX:g}%）"
+                )
                 continue
             self._last_ok_at = time.time()
             return temperature, humidity, ""
         return None, None, last_error or "读取失败"
+
+    def _read_once(self) -> Tuple[float, float]:
+        """按**当前后端**读一次（后端在 :meth:`open` 里定，gpiozero 优先）。"""
+        if self.backend == "gpiozero":
+            return self._read_once_gpiozero()
+        return self._read_once_lgpio()
+
+    def _read_once_gpiozero(self) -> Tuple[float, float]:
+        """用 gpiozero 的 ``DHT11`` 器件读一次（首选后端）。"""
+        sensor = self._gpiozero_sensor
+        if sensor is None:
+            raise Dht11Error("gpiozero 后端未打开（先调 open()）")
+        return float(sensor.temperature), float(sensor.humidity)
 
     def _read_once_lgpio(self) -> Tuple[float, float]:
         """一次完整的单总线读取（拉低 18ms → 收边沿 → 解码）。"""

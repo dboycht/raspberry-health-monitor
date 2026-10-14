@@ -149,7 +149,8 @@ def check_backends() -> Tuple[bool, str]:
     try:
         backend = reader.open()
     except Dht11Error:
-        return True, "真硬件后端不可用（本机没有 GPIO）→ 用 --mock 跑；树莓派上应能自动选到 lgpio"
+        return True, ("真硬件后端不可用（本机没有 GPIO）→ 用 --mock 跑；"
+                      "树莓派上应先试 gpiozero、无 DHT11 类时自动落到 lgpio")
     finally:
         reader.close()
     return True, f"真硬件后端可用：{backend}"

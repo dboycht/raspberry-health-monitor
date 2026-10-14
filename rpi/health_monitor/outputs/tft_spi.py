@@ -30,11 +30,18 @@ BLK / BL/LED   脚 1 或 33（3.3V） 背光；接 GPIO 可调光（可选）
 ⚠️ **SPI 是共享总线，每个从设备必须有自己的片选** —— 往后若在 SPI0 上再加器件，
 请用**另一个 CE**（或改用别的 GPIO 做片选），不要与 TFT 共用脚 26。
 
-真实 SPI 的两种后端（与其它 SPI 驱动保持同一套后端选择）
----------------------------------------------------------
-- 优先 ``spidev``（快，几十 KB 的帧缓冲也能刷得动）；
-- 没有 ``spidev`` 时退回 **``lgpio`` 手工 SPI**（树莓派 5 上 ``RPi.GPIO`` 不可用，
-  所以只能走 lgpio）—— 慢一点，但能点亮。
+GPIO 一律走 gpiozero（项目口径，2026-10-13 按课程要求收口）
+----------------------------------------------------------
+- **DC / RST / 背光三根引脚全部用 ``gpiozero.DigitalOutputDevice``**
+  （``RPi.GPIO`` 在树莓派 5 上不可用；本项目统一以 gpiozero 作为 GPIO 访问层，
+  底层引脚工厂由 lgpio 提供）。本文件**不再直接 import lgpio**；
+  机器守卫见 ``rpi/tests/scripts/test_gpiozero_policy.py``（源码扫描，白名单外不许直接 import lgpio）。
+- SPI **数据线**有两种后端（与其它 SPI 驱动保持同一套后端选择）：
+  1. 优先 ``spidev``（快，几十 KB 的帧缓冲也能刷得动）；
+  2. 没有 ``spidev`` 时退回**软件 SPI**——在 SCLK/MOSI 上逐位翻转，
+     用的是 gpiozero 的 ``DigitalOutputDevice``（不再是直接 lgpio）——慢一点，但能点亮。
+     ⚠️ **该回退路径在本项目真机上从未被走到过**（板上一直有 ``spidev``，`/dev/spidev0.*` 都在）
+     ⇒ 属**未真机验证**；本轮的改动只保证它经 gpiozero、并有 mock 级单测覆盖翻转序列。
 
 许可与来源
 ----------
@@ -59,6 +66,11 @@ from ..hal.models import DeviceKind, DisplayCommand, DisplayStatus, Sample
 _LOG = logging.getLogger(__name__)
 
 RGB = Tuple[int, int, int]
+
+#: 软件 SPI 回退用的两根线（与硬件 SPI0 同脚）。**只在没有 spidev 时才创建**
+#: （装了 spidev 时这两脚归内核 SPI 驱动，绝不能抢成 GPIO）。
+SCLK_PIN = 11
+MOSI_PIN = 10
 
 # --------------------------------------------------------------------------
 # 控制器表：分辨率 + 初始化序列
@@ -434,11 +446,17 @@ class TftSpi(OutputDevice):
         self.width = 0
         self.height = 0
         self._spi: Any = None
-        self._lgpio: Any = None
-        self._lgpio_handle: Any = None
+        #: gpiozero 的 ``DigitalOutputDevice`` 构造器（``open()`` 里动态导入；
+        #: PC / 未装 gpiozero 时为 ``None`` —— 函数内延迟导入，本模块在 PC 上也能 import）
+        self._DigitalOutputDevice: Any = None
+        #: 引脚 → gpiozero 器件（DC / RST / 背光，可能只有其中几个）
+        self._pin_devices: Dict[int, Any] = {}
         self._dc: Any = None
         self._rst: Any = None
         self._bl: Any = None
+        #: 软件 SPI 回退用的两根线 ``(clk, mosi)`` —— **懒创建**：装了 spidev 时绝不碰这两个引脚
+        #: （它们归内核 SPI 驱动所有，抢过来做 GPIO 会影响硬件 SPI）
+        self._bitbang: Optional[Tuple[Any, Any]] = None
         self._backend = "none"
         self.writes = 0
         self.init_attempts: List[str] = []
@@ -464,24 +482,26 @@ class TftSpi(OutputDevice):
             import spidev  # type: ignore import-not-found
         except ImportError:
             spidev = None  # type: ignore[assignment]
+        # GPIO **一律走 gpiozero**（课程口径）：DC / RST / 背光、以及软件 SPI 的 SCLK/MOSI
         try:
-            import lgpio  # type: ignore import-not-found
+            from gpiozero import DigitalOutputDevice  # type: ignore import-not-found
         except ImportError:
-            lgpio = None  # type: ignore[assignment]
+            DigitalOutputDevice = None  # type: ignore[assignment]
 
-        if spidev is None and lgpio is None:
+        if spidev is None and DigitalOutputDevice is None:
             raise DeviceInitError(
-                "TFT 需要 spidev 或 lgpio 之一来走 SPI："
-                "`sudo apt install -y python3-spidev python3-lgpio`（或 pip3 install spidev）"
+                "TFT 需要 spidev（SPI 数据线）与 gpiozero（DC/RST/背光）之一："
+                "`sudo apt install -y python3-spidev python3-gpiozero python3-lgpio`"
             )
-        if lgpio is None and self.dc_pin >= 0:
-            # spidev 只负责数据线，DC/RST/背光仍需 GPIO —— 没有 lgpio 就控制不了
+        gpio_pins = [p for p in (self.dc_pin, self.reset_pin, self.backlight_pin) if p >= 0]
+        if DigitalOutputDevice is None and (gpio_pins or spidev is None):
+            # spidev 只负责数据线；DC/RST/背光与"没 spidev 时的软件 SPI"都得有 GPIO 访问能力
             raise DeviceInitError(
-                "TFT 需要 lgpio 控制 DC/RST 引脚（树莓派 5 上 RPi.GPIO 不可用）："
-                "`sudo apt install -y python3-lgpio`"
+                "TFT 的控制引脚（DC/RST/背光）需要 gpiozero（树莓派 5 上 RPi.GPIO 不可用）："
+                "`sudo apt install -y python3-gpiozero python3-lgpio`"
             )
 
-        self._gpio_open(lgpio)
+        self._gpio_open(DigitalOutputDevice)
         self._spi_open(spidev)
 
         names = list(AUTO_ORDER) if self.controller == "auto" else [self.controller]
@@ -515,25 +535,32 @@ class TftSpi(OutputDevice):
             "4) 用 `python3 scripts/tft_check.py --controller st7735` 逐个试并看颜色条"
         )
 
-    def _gpio_open(self, lgpio: Any) -> None:
-        """打开 GPIO（DC / RST / 背光）。"""
-        self._lgpio = lgpio
+    def _gpio_open(self, DigitalOutputDevice: Any) -> None:
+        """创建 DC / RST / 背光三个 **gpiozero** 输出器件。
+
+        ⚠️ 2026-10-13 起 GPIO 一律走 gpiozero（原来直接 import lgpio）。
+        初始电平与原来逐位一致：**DC=0**（命令）、**RST=1**（不复位）、**背光=0**（先关）。
+        """
+        self._DigitalOutputDevice = DigitalOutputDevice
         try:
-            self._lgpio_handle = lgpio.gpiochip_open(0)
             if self.dc_pin >= 0:
-                lgpio.gpio_claim_output(self._lgpio_handle, self.dc_pin, 0)
+                self._dc = DigitalOutputDevice(self.dc_pin, initial_value=False)
+                self._pin_devices[self.dc_pin] = self._dc
             if self.reset_pin >= 0:
-                lgpio.gpio_claim_output(self._lgpio_handle, self.reset_pin, 1)
+                self._rst = DigitalOutputDevice(self.reset_pin, initial_value=True)
+                self._pin_devices[self.reset_pin] = self._rst
             if self.backlight_pin >= 0:
-                lgpio.gpio_claim_output(self._lgpio_handle, self.backlight_pin, 0)
+                self._bl = DigitalOutputDevice(self.backlight_pin, initial_value=False)
+                self._pin_devices[self.backlight_pin] = self._bl
         except Exception as exc:  # noqa: BLE001
             raise DeviceInitError(
-                f"TFT 的 GPIO 初始化失败（DC=GPIO{self.dc_pin}, RST=GPIO{self.reset_pin}）：{exc}。"
-                "确认接线与权限（试试 sudo）"
+                f"TFT 的 GPIO 初始化失败（gpiozero；DC=GPIO{self.dc_pin}, RST=GPIO{self.reset_pin}）：{exc}。"
+                "确认接线与权限：gpiozero 底层用 lgpio ⇒ 需 python3-gpiozero + python3-lgpio，"
+                "且当前用户在 gpio 组（`groups` 里应有 gpio）"
             ) from exc
 
     def _spi_open(self, spidev: Any) -> None:
-        """打开 SPI 数据通道（优先 spidev，退回 lgpio 手工 SPI）。"""
+        """打开 SPI 数据通道（优先 spidev，退回 **gpiozero 软件 SPI**）。"""
         if spidev is not None:
             try:
                 spi = spidev.SpiDev()
@@ -543,10 +570,10 @@ class TftSpi(OutputDevice):
                 self._spi = spi
                 self._backend = "spidev"
                 return
-            except Exception as exc:  # noqa: BLE001 - 退回 lgpio
-                _LOG.warning("spidev 打开失败（改用手工 SPI）：%s", exc)
+            except Exception as exc:  # noqa: BLE001 - 退回软件 SPI
+                _LOG.warning("spidev 打开失败（改用 gpiozero 软件 SPI）：%s", exc)
         self._spi = None
-        self._backend = "lgpio"
+        self._backend = "gpiozero"
 
     def _init_controller(self, spec: ControllerSpec) -> None:
         """按控制器初始化序列配置屏幕。"""
@@ -608,19 +635,18 @@ class TftSpi(OutputDevice):
         self._opened = False
 
     def _gpio_close(self) -> None:
-        if self._lgpio is not None and self._lgpio_handle is not None:
-            for pin in (self.dc_pin, self.reset_pin, self.backlight_pin):
-                if pin >= 0:
-                    try:
-                        self._lgpio.gpio_free(self._lgpio_handle, pin)
-                    except Exception:  # noqa: BLE001
-                        pass
+        """释放全部 gpiozero 器件（幂等、不抛异常）。"""
+        for device in list(self._pin_devices.values()) + list(self._bitbang or ()):
             try:
-                self._lgpio.gpiochip_close(self._lgpio_handle)
+                device.close()
             except Exception:  # noqa: BLE001
                 pass
-        self._lgpio_handle = None
-        self._lgpio = None
+        self._pin_devices = {}
+        self._bitbang = None
+        self._dc = None
+        self._rst = None
+        self._bl = None
+        self._DigitalOutputDevice = None
 
     # ------------------------------------------------------------------
     # 底层：命令/数据与像素写入
@@ -637,9 +663,39 @@ class TftSpi(OutputDevice):
         time.sleep(0.12)
 
     def _gpio_write(self, pin: int, value: int) -> None:
-        if self.mock or self._lgpio is None or self._lgpio_handle is None or pin < 0:
+        """写一根 GPIO —— **一律经 gpiozero 器件**（不再直接调 lgpio）。"""
+        if self.mock or pin < 0:
             return
-        self._lgpio.gpio_write(self._lgpio_handle, pin, 1 if value else 0)
+        device = self._pin_devices.get(pin)
+        if device is None:
+            return
+        # 用 ``.value`` 而不是 ``on()/off()``：后者会顺带取消 gpiozero 的后台闪烁状态
+        # （E45 的教训 —— LED 那边踩过），这几根线不需要那层语义。
+        device.value = 1 if value else 0
+
+    def _bitbang_devices(self) -> Tuple[Any, Any]:
+        """懒创建软件 SPI 的两根线 ``(clk, mosi)``（**只有没有 spidev 时才会走到**）。
+
+        ⚠️ 必须懒创建：SCLK/MOSI 平时归**内核 SPI 驱动**，装了 spidev 时不能把它们抢成 GPIO
+        （抢了会影响硬件 SPI，而且没必要）。
+        """
+        if self._bitbang is None:
+            factory = self._DigitalOutputDevice
+            if factory is None:
+                raise DeviceIOError(
+                    "没有 spidev、也没有 gpiozero ⇒ 无法走软件 SPI。装一个即可："
+                    "`sudo apt install -y python3-spidev`，或 "
+                    "`sudo apt install -y python3-gpiozero python3-lgpio`"
+                )
+            self._bitbang = (
+                factory(SCLK_PIN, initial_value=False),
+                factory(MOSI_PIN, initial_value=False),
+            )
+            _LOG.warning(
+                "TFT 走 gpiozero 软件 SPI（无 spidev）：SCLK=GPIO%d, MOSI=GPIO%d",
+                SCLK_PIN, MOSI_PIN,
+            )
+        return self._bitbang
 
     def _transfer(self, payload: bytes) -> None:
         """把一段字节送上 SPI（mock 模式只计数）。"""
@@ -652,20 +708,13 @@ class TftSpi(OutputDevice):
             for i in range(0, len(view), 4096):
                 self._spi.writebytes2(bytes(view[i:i + 4096]))
             return
-        # lgpio 手工 SPI：逐字节位操作（慢，但能点亮）
-        lg = self._lgpio
-        h = self._lgpio_handle
-        clk, mosi = 11, 10
-        try:
-            lg.gpio_claim_output(h, clk, 0)
-            lg.gpio_claim_output(h, mosi, 0)
-        except Exception:  # noqa: BLE001 - 已占用则忽略
-            pass
+        # 软件 SPI：用 **gpiozero** 在 SCLK/MOSI 上逐位翻转（慢，但能点亮）
+        clk, mosi = self._bitbang_devices()
         for byte in payload:
             for bit in range(7, -1, -1):
-                lg.gpio_write(h, mosi, (byte >> bit) & 1)
-                lg.gpio_write(h, clk, 1)
-                lg.gpio_write(h, clk, 0)
+                mosi.value = (byte >> bit) & 1
+                clk.on()
+                clk.off()
 
     def _write(self, cmd: int, data: bytes = b"") -> None:
         """发一条命令 +（可选）紧随其后的数据。"""

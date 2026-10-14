@@ -1,21 +1,30 @@
 """SPI TFT 彩屏驱动测试（**不需要真实屏幕**）。
 
-重点覆盖四类容易出错的地方：
+重点覆盖五类容易出错的地方：
 1. **颜色换算**：RGB565 打包与 BGR 交换 —— 红蓝互换是 TFT 最常见的"看起来能用其实错了"；
 2. **字库边界**：非 ASCII（中文/emoji）必须被安全降级成 ``?``，**不能**把乱码字节送上 SPI；
 3. **绘图路径**：整屏填充/矩形/文字/横线在 mock 下都要能跑通且**不访问硬件**；
 4. **接口契约**：只接受 ``DisplayCommand``；``read()`` 诚实回报自己记录的内容；
-   ``describe()`` 给出物理脚号（用户照着接线）。
+   ``describe()`` 给出物理脚号（用户照着接线）；
+5. **GPIO 一律走 gpiozero**（2026-10-13 本轮新增，见 ``TestGpiozeroOnly``）：
+   用**注入的假 gpiozero / 假 spidev** 把真实模式跑通，断言
+   "DC/RST/背光经 gpiozero 创建、初始电平正确、按脚路由"、
+   "有 spidev 时**绝不**把 SCLK/MOSI 抢成 GPIO"、以及"没 gpiozero 时**必须报错**而不是静默降级"。
 """
 
 from __future__ import annotations
 
+import sys
+import types
 import unittest
+from typing import Any, Dict, List, Optional
+from unittest import mock
 
 from health_monitor.hal import (
     DisplayCommand,
     DeviceKind,
     DeviceNotReady,
+    DeviceInitError,
     UnsupportedError,
 )
 from health_monitor.hal.registry import MANIFEST, create_device
@@ -24,6 +33,8 @@ from health_monitor.outputs.tft_spi import (
     CONTROLLERS,
     FONT_8X8,
     FONT_W,
+    MOSI_PIN,
+    SCLK_PIN,
     TftSpi,
     layout_for,
     rgb565,
@@ -170,8 +181,11 @@ class TestTftMock(unittest.TestCase):
     def test_mock模式不创建任何硬件句柄(self) -> None:
         with TftSpi(controller="st7735", mock=True) as tft:
             self.assertIsNone(tft._spi, "mock 模式不能打开 SPI")
-            self.assertIsNone(tft._lgpio, "mock 模式不能打开 GPIO 芯片")
-            self.assertIsNone(tft._lgpio_handle)
+            self.assertIsNone(tft._dc, "mock 模式不能创建 gpiozero 器件")
+            self.assertIsNone(tft._rst)
+            self.assertIsNone(tft._bl)
+            self.assertEqual(tft._pin_devices, {}, "mock 模式不能创建任何 GPIO 器件")
+            self.assertIsNone(tft._bitbang, "mock 模式不能占软件 SPI 的两根线")
             self.assertEqual(tft._backend, "none")
 
     def test_mock模式有虚拟分辨率(self) -> None:
@@ -338,6 +352,174 @@ class TestControllers(unittest.TestCase):
         device.open()
         self.assertTrue(device.status()["opened"])
         device.close()
+
+
+# ---------------------------------------------------------------------------
+# 假器件：用来在**没有树莓派**的机器上把真实模式跑一遍
+# ---------------------------------------------------------------------------
+
+
+class FakeDigitalOutputDevice:
+    """假 gpiozero 输出器件：记录构造参数与每一次电平变化。"""
+
+    def __init__(self, pin: Any, initial_value: Any = None, **kwargs: Any) -> None:
+        self.pin = int(pin)
+        self.initial_value = initial_value
+        #: 初始值**不进** history（history 只记"之后发生过什么变化"）
+        self._value: Optional[int] = None if initial_value is None else int(bool(initial_value))
+        self.history: List[int] = []
+        self.closed = False
+
+    @property
+    def value(self) -> Optional[int]:
+        return self._value
+
+    @value.setter
+    def value(self, new: Any) -> None:
+        self._value = int(bool(new))
+        self.history.append(self._value)
+
+    def on(self) -> None:
+        self.value = 1
+
+    def off(self) -> None:
+        self.value = 0
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeSpiDev:
+    """假 spidev：只记录写法，不碰任何设备节点。"""
+
+    def __init__(self) -> None:
+        self.opened: Optional[tuple] = None
+        self.mode: Optional[int] = None
+        self.max_speed_hz: Optional[int] = None
+        self.written: List[bytes] = []
+        self.closed = False
+
+    def open(self, bus: int, device: int) -> None:
+        self.opened = (bus, device)
+
+    def writebytes2(self, data: bytes) -> None:
+        self.written.append(bytes(data))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _fake_modules(with_spidev: bool = True, with_gpiozero: bool = True) -> Dict[str, Any]:
+    """造一份 `sys.modules` 补丁：把 gpiozero / spidev 换成假货（缺哪个就填 ``None``）。"""
+    patch: Dict[str, Any] = {}
+    if with_gpiozero:
+        mod = types.ModuleType("gpiozero")
+        mod.DigitalOutputDevice = FakeDigitalOutputDevice   # type: ignore[attr-defined]
+        patch["gpiozero"] = mod
+    else:
+        patch["gpiozero"] = None
+    if with_spidev:
+        mod2 = types.ModuleType("spidev")
+        mod2.SpiDev = FakeSpiDev                            # type: ignore[attr-defined]
+        patch["spidev"] = mod2
+    else:
+        patch["spidev"] = None
+    return patch
+
+
+class TestGpiozeroOnly(unittest.TestCase):
+    """★ GPIO 一律走 gpiozero（2026-10-13，课程口径）。
+
+    来历：老师要求用 ``gpiozero``。本驱动原来用 ``lgpio`` 直接控制 DC/RST/背光
+    （以及没 spidev 时的软件 SPI）。现在**全部改走 gpiozero 的 ``DigitalOutputDevice``**；
+    这个类用注入的假 gpiozero 把真实模式跑通 —— 因为这些代码在真机上**必须**能被验证到，
+    而开发机（PC）上没有 gpiozero。
+    """
+
+    def _open_real(self) -> TftSpi:
+        with mock.patch.dict(sys.modules, _fake_modules()):
+            tft = TftSpi(controller="st7735", mock=False, spi_device=1)
+            tft.open()
+        return tft
+
+    def test_真实模式经gpiozero创建控制脚且初始电平正确(self) -> None:
+        tft = self._open_real()
+        self.addCleanup(tft.close)
+        self.assertEqual(tft._backend, "spidev", "有 spidev 时应走 spidev")
+        # DC=24（命令=0）、RST=25（不复位=1）、背光默认 -1（不控制）
+        self.assertIsNotNone(tft._dc, "DC 必须由 gpiozero 创建")
+        self.assertIsNotNone(tft._rst, "RST 必须由 gpiozero 创建")
+        self.assertIsNone(tft._bl, "backlight_pin=-1 时不该创建器件")
+        self.assertEqual(tft._dc.initial_value, False, "DC 初始必须是低电平（命令）")
+        self.assertEqual(tft._rst.initial_value, True, "RST 初始必须是高电平（不复位）")
+        self.assertEqual(sorted(tft._pin_devices), [24, 25], "只有 DC 与 RST 两脚")
+        for device in tft._pin_devices.values():
+            self.assertIsInstance(device, FakeDigitalOutputDevice)
+
+    def test_按脚路由写电平(self) -> None:
+        """`_gpio_write` 必须写到**对应那个引脚**的器件上（写错脚=画不出图）。"""
+        tft = self._open_real()
+        self.addCleanup(tft.close)
+        # ⚠️ `open()` 里的控制器初始化序列**本身就会翻很多次 DC**（每条命令一次），
+        #    所以这里只能看"这几次调用新增的部分"，不能断言整段 history。
+        base_dc, base_rst = len(tft._dc.history), len(tft._rst.history)
+        self.assertGreater(base_dc, 0, "初始化序列必须真的写过 DC（否则命令/数据分不开）")
+        tft._gpio_write(tft.dc_pin, 1)
+        tft._gpio_write(tft.dc_pin, 0)
+        tft._gpio_write(tft.reset_pin, 0)
+        self.assertEqual(tft._dc.history[base_dc:], [1, 0])
+        self.assertEqual(tft._rst.history[base_rst:], [0], "写 RST 不该动到 DC")
+        self.assertEqual(tft._dc.value, 0)
+
+    def test_有spidev时绝不把SCLK与MOSI抢成GPIO(self) -> None:
+        """⚠️ 关键不变量：这两脚归**内核 SPI 驱动**，抢过来会影响硬件 SPI。"""
+        tft = self._open_real()
+        self.addCleanup(tft.close)
+        self.assertIsNone(tft._bitbang, "有 spidev 时不许创建软件 SPI 的引脚")
+        self.assertNotIn(SCLK_PIN, tft._pin_devices)
+        self.assertNotIn(MOSI_PIN, tft._pin_devices)
+
+    def test_没有spidev时软件SPI用gpiozero逐位翻转(self) -> None:
+        """回退路径（真机上从未走到过 ⇒ 未真机验证）：只验证**位序与时钟**是对的。"""
+        tft = TftSpi(controller="st7735", mock=False)
+        self.addCleanup(tft.close)
+        tft._DigitalOutputDevice = FakeDigitalOutputDevice    # 等价于 open() 里注入的构造器
+        tft._spi = None
+        tft._transfer(b"\xa5")                               # 1010 0101
+        self.assertIsNotNone(tft._bitbang, "软件 SPI 必须懒创建出两根线")
+        clk, mosi = tft._bitbang
+        self.assertEqual((clk.pin, mosi.pin), (SCLK_PIN, MOSI_PIN))
+        self.assertEqual(mosi.history, [1, 0, 1, 0, 0, 1, 0, 1], "必须先发 MSB")
+        self.assertEqual(clk.history, [1, 0] * 8, "每个 bit 一次上升沿 + 一次下降沿")
+        # 幂等：第二次传输复用同一对器件，不重建
+        tft._transfer(b"\x00")
+        self.assertIs(tft._bitbang[0], clk)
+
+    def test_关闭时释放全部gpiozero器件(self) -> None:
+        tft = self._open_real()
+        devices = list(tft._pin_devices.values())
+        tft.close()
+        for device in devices:
+            self.assertTrue(device.closed, "close() 必须释放 gpiozero 器件")
+        self.assertIsNone(tft._dc)
+        self.assertIsNone(tft._rst)
+        self.assertEqual(tft._pin_devices, {})
+
+    def test_没有gpiozero时必须报错而不是静默降级(self) -> None:
+        """少一个库就要**当场说清缺什么**，不许"能构造但控不了屏"。"""
+        with mock.patch.dict(sys.modules, _fake_modules(with_gpiozero=False)):
+            tft = TftSpi(controller="st7735", mock=False)
+            with self.assertRaises(DeviceInitError) as ctx:
+                tft.open()
+            self.assertIn("gpiozero", str(ctx.exception), "报错必须点名 gpiozero")
+
+    def test_两个库都没有时报错也点名gpiozero(self) -> None:
+        with mock.patch.dict(sys.modules, _fake_modules(with_spidev=False, with_gpiozero=False)):
+            tft = TftSpi(controller="st7735", mock=False)
+            with self.assertRaises(DeviceInitError) as ctx:
+                tft.open()
+            self.assertIn("gpiozero", str(ctx.exception))
+            self.assertIn("spidev", str(ctx.exception))
 
 
 if __name__ == "__main__":
