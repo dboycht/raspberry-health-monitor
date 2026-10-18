@@ -18,7 +18,11 @@
     "  而 docs/14 的阶梯表里 T14 早已标『已完成』 —— 这个缺口由 T14 条目 + 服务级快照补 spo2_button 修掉。",
     "  ⚠️ T14 的 devices 仍保留 vitals（为了『级别单调递增』这条守卫）；",
     "  想复现**产品默认**（默认不连续采样、测量时临时开）请用：",
-    "     python3 scripts/stage_run.py --stage T14 --set devices.vitals.enabled=false"
+    "     python3 scripts/stage_run.py --stage T14 --set devices.vitals.enabled=false",
+    "★ 2026-10-18：**全部级已收口** —— T13 的最后一项欠账（答辩演示脚本按 docs/15 §3 重排）已完成 ⇒",
+    "  T13 由 partial 改为 verified（verified_on=2026-10-18）。此后**没有任何 partial 级**；",
+    "  守卫 `test_stage_run.py::test_partial必须写明缺了什么` 在同日改成：零 partial 时必须在",
+    "  本 note 里显式写『全部级已收口』，且每级都要有 verified_on / cancelled_on —— 防止有人悄悄全绿。"
   ],
   "reference": "rpi/config/devices.example.json",
   "stages": {

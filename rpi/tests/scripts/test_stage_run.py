@@ -163,16 +163,39 @@ class TestStageSnapshots(unittest.TestCase):
                 self.assertIsInstance(info.get("devices"), list, "devices 必须是列表")
 
     def test_partial必须写明缺了什么(self) -> None:
-        """★ 2026-10-01 新增 `partial`：**已验收、但有一项明确未做**（当前是 T10 的 S9）。
+        """★ 2026-10-01 新增 `partial`：**已验收、但有一项明确未做**（当时是 T10 的 S9）。
 
         为什么要这个状态、而不是二选一：
         * 记 `verified` ⇒ 把"断网可用性没验过"糊过去（本项目明令禁止"实测/未实测"不分档）；
         * 记 `planned` ⇒ 读起来像"这一级什么都没做"，而实际 S1–S8、S10–S19 全验过了。
 
         ⇒ 判据：`partial` 必须同时给 `verified_on` 与**非空** `missing`（缺了什么、为什么缺）。
+
+        ⚠️ **2026-10-18 改**：原来这里写死了"本项目应有 partial 级"（当时 T10 是 partial）。
+        T13 的最后一项欠账（答辩演示脚本按 `docs/15` §3 重排）在 2026-10-18 完成 ⇒ 合法的
+        "零 partial"出现了，旧断言会**逼着人留一条假账**。所以把"不许悄悄全绿"的意图换成
+        一条**可检查的显式声明**：零 partial 时，顶层 `note` 必须写明"全部级已收口"，
+        且每一级都得有 `verified_on`（verified）或 `cancelled_on`（cancelled）。
         """
         partials = [n for n, i in self.stages.items() if i.get("status") == "partial"]
-        self.assertTrue(partials, "本项目应有 partial 级（T10）；没有说明快照被改坏了")
+
+        if not partials:
+            note_text = " ".join(str(x) for x in (self.data.get("note") or []))
+            self.assertIn(
+                "全部级已收口",
+                note_text,
+                "没有任何 partial 级时，顶层 note 必须显式声明『全部级已收口』"
+                "（否则可能就是有人把账悄悄全清了）",
+            )
+            for name, info in self.stages.items():
+                with self.subTest(stage=name):
+                    status = info.get("status")
+                    if status == "verified":
+                        self.assertTrue(info.get("verified_on"), f"{name} 标了 verified 却没写 verified_on")
+                    elif status == "cancelled":
+                        self.assertTrue(info.get("cancelled_on"), f"{name} 标了 cancelled 却没写 cancelled_on")
+            return
+
         for name in partials:
             info = self.stages[name]
             with self.subTest(stage=name):
