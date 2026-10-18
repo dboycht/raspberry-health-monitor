@@ -462,6 +462,32 @@ class TestHttpApiEndToEnd(unittest.TestCase):
         event = self._post("/api/v1/sos")["event"]
         self.assertEqual(event["code"], "sos_pressed")
 
+    def test_清除报警接口把灯和屏复位(self) -> None:
+        """★ 2026-10-18 真机踩到：手机点过"求助"之后，板子的红灯**只能靠重启服务才灭**。
+
+        原因不是"消音没生效"，而是三件事叠在一起：
+        `sos_pressed` 是**人工事件**（规则引擎里没有"持续态"能自己恢复）、
+        `silence` 按设计**只停声音不停灯**（见 §4.6）、
+        而 `Runtime.clear_alarms()` 虽然早就有、**却没有任何对外入口**（只被 demo/单测调用）。
+
+        判据三层，缺一不可：
+        ① 返回 200 且事件码是 `all_clear`；
+        ② `active_alarms` 真的清空（不是只改了个响应字段）；
+        ③ **输出器件真的复位**：LED 回绿、LCD 回到 NORMAL ——
+           "只清内部状态、不复位输出"是 2026-09-21 踩过的老坑（见 `test_确认解除后输出器件复位`）。
+        """
+        self.rt.sos(self.rt.clock())              # 先制造一个"求助"锁定态
+        self.assertEqual(self.rt.outputs["status_led"].current_color, "red",
+                         "前提不成立：SOS 应当先亮红灯")
+        payload = self._post("/api/v1/alarms/clear")
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["event"]["code"], "all_clear")
+        self.assertEqual(payload["active_alarms"], {})
+        self.assertEqual(self.rt.outputs["status_led"].current_color, "green",
+                         "清除报警必须把 LED 复位（否则用户以为还在报警）")
+        self.assertIn("NORMAL", " ".join(self.rt.outputs["display"].current_lines),
+                      "清除报警必须让 LCD 回到正常文案")
+
     def test_已删除的speak接口返回404(self) -> None:
         """★ 2026-10-02：蓝牙音箱废止 ⇒ `POST /api/v1/speak` 一并删除。
 

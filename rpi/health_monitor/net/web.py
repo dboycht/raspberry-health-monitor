@@ -142,6 +142,9 @@ class WebApi:
             ("POST", "/api/v1/screen"): self._screen,
             ("POST", "/api/v1/silence"): self._silence,
             ("POST", "/api/v1/sos"): self._sos,
+            # 人工确认：清除报警态 + 把输出器件复位（2026-10-18 补；此前 `clear_alarms()`
+            # 只有 demo.py 与单测在调，**对外没有任何入口** ⇒ 手机"SOS"之后红灯只能靠重启灭）。
+            ("POST", "/api/v1/alarms/clear"): self._alarms_clear,
             # ⚠️ **回归修复（2026-10-01）**：`_cloud_callback` 从它被写出来的那一天起
             #    就**没有注册过**（既不在老的 if/elif 链里、也不在这张表里）——
             #    它是**死代码**，而 `CHANGELOG-接口.md` 与手册都写着这个端点存在
@@ -537,6 +540,32 @@ class WebApi:
     def _sos(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
         event = self.runtime.sos(time.time())
         return 200, {"ok": True, "event": event.to_dict()}
+
+    def _alarms_clear(self, _q: Dict[str, list]) -> Tuple[int, Dict[str, Any]]:
+        """人工确认：清除全部报警态，并**把输出器件复位到正常状态**。
+
+        为什么要有这个接口（2026-10-18 真机踩到，`ERROR.md` E87）
+        --------------------------------------------------------
+        `POST /api/v1/sos` 发出的是**人工事件**：调度器把 LED 切红、LCD 写 "SOS" 之后，
+        **没有任何"恢复正常"的事件来收尾**（规则引擎里 `sos_pressed` 不是"持续态"报警）。
+        而 `POST /api/v1/silence` 按设计**只停声音、不停灯**（`core/dispatcher.py::silence`）。
+        于是手机点过"求助"之后，板子上的红灯会**一直亮到重启服务**。
+
+        `Runtime.clear_alarms()` 从 2026-09-21 起就存在（会真的下发一次 `ALL_CLEAR`，
+        把 LED 复位成绿色、两块屏回到信息页），但此前**只被 `demo.py` 与单测调用** ——
+        对外没有任何入口，所以"人工确认"这件事在真机上根本做不到。
+
+        语义（与 `silence` 的区别，务必别混）：
+        * `silence` = 静音一段时间，**报警态保留**（灯仍亮）；
+        * `clear`   = **确认报警已处理**：清空 `active_alarms` + 复位灯/屏/蜂鸣器。
+        """
+        event = self.runtime.clear_alarms(time.time())
+        return 200, {
+            "ok": True,
+            "event": event.to_dict(),
+            "active_alarms": self.runtime.engine.active_alarms(),
+            "dispatcher": self.runtime.dispatcher.status(),
+        }
 
 # --------------------------------------------------------------------------
 # 参数解析小工具（越界一律夹紧，而不是报 500）
