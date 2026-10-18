@@ -297,4 +297,29 @@ class MonitorJsonParsingTest {
             assertNull("缺失字段必须是 null（Gson 会给 0.0，那正是协议禁止的）", value)
         }
     }
+
+    /**
+     * 协议 §4.14：`POST /api/v1/alarms/clear`（2026-10-18 新增）。
+     *
+     * 样本取自**板子真机返回的原样报文**（只有 `dispatcher` 一段被省略），
+     * 用来钉住两件事：① `event.code == "all_clear"`；② 清除后 `active_alarms` 是**空对象**
+     * （不是 null、也不是"少了一个字段"）。
+     */
+    @Test
+    fun `解析 §4_14 清除报警响应`() {
+        val raw = """{"ok": true,
+            "event": {"ts": 1792315101.2, "code": "all_clear", "severity": 0,
+                      "message": "已确认，监护恢复正常", "value": null, "unit": "",
+                      "source": "operator", "detail": {}},
+            "active_alarms": {},
+            "dispatcher": {"silenced_until": 0.0, "realerts": 0}}"""
+        val response = json.decodeFromString<ClearAlarmsResponse>(raw)
+
+        assertTrue(response.ok)
+        assertEquals("all_clear", response.event!!.code)
+        assertEquals("已确认，监护恢复正常", response.event!!.message)
+        assertEquals(0, response.event!!.severity)
+        assertNull("all_clear 没有数值", response.event!!.value)
+        assertTrue("清除后 active_alarms 必须是空对象", response.active_alarms.isEmpty())
+    }
 }

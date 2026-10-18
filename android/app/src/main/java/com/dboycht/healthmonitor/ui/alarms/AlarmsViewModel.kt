@@ -34,6 +34,8 @@ data class AlarmsUiState(
     val feedback: String? = null,
     val feedbackSeverity: Int = 0,
     val sendingSos: Boolean = false,
+    /** 正在请求树莓派"清除报警"（按钮置灰用，避免连点）。 */
+    val clearingAlarms: Boolean = false,
 ) {
     /** 事件列表：严重的、最近的排前面。 */
     val sortedHistory get() = feed.history.sortedBySeverityThenTime()
@@ -158,6 +160,43 @@ class AlarmsViewModel(
 
     fun clearFeedback() {
         _uiState.value = _uiState.value.copy(feedback = null)
+    }
+
+    /**
+     * 人工确认：清除报警态并让树莓派把灯/屏复位（协议 §4.14，2026-10-18 新增）。
+     *
+     * 为什么必须有它（真机上踩到的缺口）：手机点了"求助"之后，板子上的红灯会
+     * **一直亮到重启服务** —— 因为 `sos_pressed` 是人工事件（没有"持续态"能自动恢复），
+     * 而"消音"按设计**只停声音、不停灯**（见 [AlarmsUiState.silencedUntil] 的语义）。
+     *
+     * ⚠️ 语义上它是"家属已处理"的确认，不是静音：会真的把 `active_alarms` 清空；
+     * 若异常仍在（例如血氧还是低），树莓派**下一次判定会重新报警**。
+     */
+    fun clearAlarms() {
+        if (_uiState.value.clearingAlarms) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                clearingAlarms = true,
+                feedback = "正在请树莓派确认清除…",
+                feedbackSeverity = Severity.INFO,
+            )
+            when (val result = repository.clearAlarms()) {
+                is MonitorApiResult.Success -> {
+                    _uiState.value = _uiState.value.copy(
+                        clearingAlarms = false,
+                        feedback = "✅ 已确认清除：${result.data}（树莓派的灯与屏已复位）",
+                        feedbackSeverity = Severity.INFO,
+                    )
+                    refreshOnce()
+                }
+
+                is MonitorApiResult.Failure -> _uiState.value = _uiState.value.copy(
+                    clearingAlarms = false,
+                    feedback = "❌ 清除失败：${result.message}",
+                    feedbackSeverity = Severity.CRITICAL,
+                )
+            }
+        }
     }
 
     companion object {

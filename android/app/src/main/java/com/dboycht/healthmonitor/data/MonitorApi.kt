@@ -53,6 +53,16 @@ interface MonitorApi {
     @POST("api/v1/sos")
     suspend fun sos(@Header("X-Auth-Token") token: String? = null): SosResponse
 
+    /**
+     * 人工确认：清除报警态并把板子的灯/屏复位（协议 §4.14，2026-10-18 新增）。
+     *
+     * ⚠️ 与 [silence] 的区别（真机踩过）：消音**只停声音、灯仍然红**，
+     * 而"求助"是人工事件、板子不会自己恢复 ⇒ 手机点过求助之后，
+     * 不用这个接口就只能重启树莓派服务才能把红灯灭掉。
+     */
+    @POST("api/v1/alarms/clear")
+    suspend fun clearAlarms(@Header("X-Auth-Token") token: String? = null): ClearAlarmsResponse
+
     /** 让音箱说话（协议 §4.8，调试用；text 最多 60 字，超长服务器返回 400）。 */
     @POST("api/v1/speak")
     suspend fun speak(

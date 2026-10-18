@@ -34,6 +34,14 @@ interface MonitorRepository {
 
     /** 紧急求助（协议 §4.7）。返回服务器回显的事件描述，用于界面确认提示。 */
     suspend fun sos(): MonitorApiResult<String>
+
+    /**
+     * 人工确认：清除报警态并把板子的灯/屏复位（协议 §4.14）。
+     *
+     * 与 [silence] 的区别必须在界面上说清：消音只停声音、报警态仍在；
+     * 本方法是"家属已处理"的机器表达。返回服务器回显的事件描述。
+     */
+    suspend fun clearAlarms(): MonitorApiResult<String>
 }
 
 /**
@@ -85,6 +93,14 @@ class RetrofitMonitorRepository(
         val message = response.event?.message
         message?.takeIf { it.isNotBlank() }
             ?: com.dboycht.healthmonitor.domain.AlarmCatalog.label(code)
+    }
+
+    override suspend fun clearAlarms(): MonitorApiResult<String> = call { api, token ->
+        val response = api.clearAlarms(token)
+        if (!response.ok) throw ApiFailure(response.error ?: "服务器拒绝了清除报警请求")
+        val message = response.event?.message
+        message?.takeIf { it.isNotBlank() }
+            ?: com.dboycht.healthmonitor.domain.AlarmCatalog.label(response.event?.code)
     }
 
     /** 统一：解析地址 → 取/建 api → 执行 → 把异常翻译成中文提示。 */

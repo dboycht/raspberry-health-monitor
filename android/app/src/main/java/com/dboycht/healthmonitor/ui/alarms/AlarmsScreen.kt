@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -15,6 +17,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -41,9 +47,36 @@ fun AlarmsScreen(
     onRefresh: () -> Unit,
     onSilence: () -> Unit,
     onSos: () -> Unit,
+    onClearAlarms: () -> Unit,
     onDismissFeedback: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // "确认清除"要二次确认：它会把板子的红灯/报警文案复位，误触会让人以为"没人管了"
+    var confirmClear by remember { mutableStateOf(false) }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("确认清除报警？") },
+            text = {
+                Text(
+                    "树莓派的红灯与报警文案会复位。（它不会关掉监护：若异常仍在，" +
+                        "下一次判定会重新报警。）",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClear = false
+                        onClearAlarms()
+                    },
+                ) { Text("确认清除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("取消") }
+            },
+        )
+    }
+
     Column(modifier.fillMaxSize()) {
         ConnectionBar(
             status = state.connection,
@@ -148,6 +181,19 @@ fun AlarmsScreen(
 
         Column(Modifier.padding(14.dp)) {
             SosButton(onTrigger = onSos, label = "紧急求助（长按 1.5 秒）")
+            // 2026-10-18 新增：消音只停声音、灯仍红 ⇒ 手机点过"求助"后需要一个"确认/复位"入口
+            Button(
+                onClick = {
+                    // 真的在报警才弹二次确认；没报警时直接调（幂等，不会误伤）
+                    if (state.hasActiveAlarms) confirmClear = true else onClearAlarms()
+                },
+                enabled = !state.clearingAlarms,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+            ) {
+                Text(if (state.clearingAlarms) "正在清除…" else "确认已处理（清除报警并复位灯/屏）")
+            }
             if (state.feedback != null) {
                 TextButton(onClick = onDismissFeedback, modifier = Modifier.fillMaxWidth()) {
                     Text("清除上面的提示")

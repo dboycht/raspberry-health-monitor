@@ -21,6 +21,7 @@ class FakeMonitorRepository(
     var devices: MonitorApiResult<List<DeviceInfo>> = MonitorApiResult.Success(emptyList()),
     var silenceResult: MonitorApiResult<Double?> = MonitorApiResult.Success(null),
     var sosResult: MonitorApiResult<String> = MonitorApiResult.Success("已收到紧急求助，请立即查看"),
+    var clearAlarmsResult: MonitorApiResult<String> = MonitorApiResult.Success("已确认，监护恢复正常"),
 ) : MonitorRepository {
 
     /** 调用次数，便于断言"轮询真的只跑了一次"。 */
@@ -29,6 +30,8 @@ class FakeMonitorRepository(
     var silenceCalls: Int = 0
         private set
     var sosCalls: Int = 0
+        private set
+    var clearAlarmsCalls: Int = 0
         private set
 
     override suspend fun loadCurrent(): MonitorApiResult<MonitorSnapshot> {
@@ -50,6 +53,11 @@ class FakeMonitorRepository(
     override suspend fun sos(): MonitorApiResult<String> {
         sosCalls++
         return sosResult
+    }
+
+    override suspend fun clearAlarms(): MonitorApiResult<String> {
+        clearAlarmsCalls++
+        return clearAlarmsResult
     }
 
     companion object {

@@ -171,6 +171,7 @@ private fun MonitorApp(container: AppContainer) {
                     onRefresh = { alarmsViewModel.refreshNow() },
                     onSilence = { alarmsViewModel.silence() },
                     onSos = { alarmsViewModel.sendSos() },
+                    onClearAlarms = { alarmsViewModel.clearAlarms() },
                     onDismissFeedback = { alarmsViewModel.clearFeedback() },
                 )
 

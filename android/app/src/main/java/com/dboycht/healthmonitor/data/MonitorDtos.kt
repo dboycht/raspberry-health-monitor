@@ -40,6 +40,20 @@ data class SosResponse(
     val error: String? = null,
 )
 
+/**
+ * `POST /api/v1/alarms/clear` 的响应（协议 §4.14）。
+ *
+ * `event` 是那条 `all_clear` 事件，`active_alarms` 是清除**之后**的活动报警
+ * （正常情况下是空对象；若树莓派那边还有持续态报警，它会立刻再报出来）。
+ */
+@Serializable
+data class ClearAlarmsResponse(
+    val ok: Boolean = false,
+    val event: AlarmEventDto? = null,
+    val active_alarms: Map<String, Double> = emptyMap(),
+    val error: String? = null,
+)
+
 // ---------------------------------------------------------------------------
 // GET /api/v1/current
 // ---------------------------------------------------------------------------

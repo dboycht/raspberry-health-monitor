@@ -142,4 +142,47 @@ class AlarmsViewModelTest {
         assertEquals(null, vm.uiState.value.feedback)
         assertTrue(vm.uiState.value.hasActiveAlarms)
     }
+
+    @Test
+    fun `确认清除成功后给出反馈_并立刻刷新到无报警`() = runTest(dispatcher) {
+        val repository = FakeMonitorRepository(
+            current = MonitorApiResult.Success(
+                MonitorSnapshot(activeAlarms = mapOf("sos_pressed" to 1.0)),
+            ),
+        )
+        repository.clearAlarmsResult = MonitorApiResult.Success("已确认，监护恢复正常")
+        val vm = AlarmsViewModel(repository)
+        vm.refreshNow()
+        advanceUntilIdle()
+        assertTrue("前提不成立：应当先有活动报警", vm.uiState.value.hasActiveAlarms)
+
+        // 清除之后树莓派那边 active_alarms 变空 —— 用假仓库的下一次 current 结果模拟
+        repository.current = MonitorApiResult.Success(MonitorSnapshot())
+        vm.clearAlarms()
+        advanceUntilIdle()
+
+        assertEquals(1, repository.clearAlarmsCalls)
+        val state = vm.uiState.value
+        assertFalse(state.clearingAlarms)
+        assertTrue("清除成功要有明确反馈：${state.feedback}", state.feedback!!.contains("已确认清除"))
+        assertEquals(Severity.INFO, state.feedbackSeverity)
+        assertFalse("清除后必须立刻刷新，横幅应熄灭", state.hasActiveAlarms)
+    }
+
+    @Test
+    fun `确认清除失败时给出失败提示_不崩`() = runTest(dispatcher) {
+        val repository = FakeMonitorRepository()
+        repository.clearAlarmsResult = FakeMonitorRepository.failure(
+            "接口不存在（404）：树莓派上的服务版本可能太旧",
+        )
+        val vm = AlarmsViewModel(repository)
+
+        vm.clearAlarms()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.clearingAlarms)
+        assertTrue(state.feedback!!.startsWith("❌ 清除失败"))
+        assertEquals(Severity.CRITICAL, state.feedbackSeverity)
+    }
 }
