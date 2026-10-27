@@ -478,26 +478,34 @@ def check_node_scripts() -> Tuple[bool, str]:
 
 
 def check_hardware_diagrams() -> Tuple[bool, str]:
-    """★ 接线图必须与 ``devices.json`` / ``describe()`` 同步（2026-10-27 新增）。
+    """★ 接线图 / 原理图必须与 ``devices.json`` / ``describe()`` 同步（2026-10-27 新增）。
 
-    为什么单独一项：接线图是**给人照着插线用的**，它落后于配置时**任何单测都不会红**
+    为什么单独一项：这些图是**给人照着插线用的**，它们落后于配置时**任何单测都不会红**
     （图不参与运行）。本项目已经真实漂移过：`hardware/` 下的手写文档至今写着
     "红色 LED / GPIO12"，而配置里只剩 green/yellow，还漏掉了「测血氧」按键。
 
-    ⇒ 两张 SVG 改由 ``hardware/tools/gen_wiring_svg.py`` 生成，这里跑它的 ``--check``：
-    重新渲染一遍并与已提交的文件逐字节比对。附带跑内容级单测
-    （``tests/scripts/test_wiring_svg.py``：器件漏画 / 已删器件仍在图上 都会被抓住）。
-    """
-    gen = REPO_ROOT / "hardware" / "tools" / "gen_wiring_svg.py"
-    if not gen.exists():
-        return False, f"找不到生成脚本：{gen}"
+    ⇒ 三张图都由脚本从配置生成，这里跑它们的 ``--check``：
+    * ``hardware/tools/gen_wiring_svg.py``  → 40-pin 引脚接线图 + 框图
+    * ``hardware/tools/gen_schematic.py``   → **端口对端口原理图**（器件带自己的引脚名）
 
-    proc = run_python([str(gen), "--check"], cwd=REPO_ROOT)
-    if proc.returncode != 0:
-        detail = "\n      ".join((proc.stdout or "").strip().splitlines()[:8])
-        return False, ("接线图已过期（与 devices.json / describe() 不一致）：\n      "
-                       + (detail or _NO_OUTPUT_HINT)
-                       + "\n      修复： python hardware/tools/gen_wiring_svg.py")
+    附带跑内容级单测（``tests/scripts/test_wiring_svg.py``）：器件漏画 / 已删器件仍在图上
+    / 配置引脚没出现在图上 —— 都会被抓住。
+    """
+    generators = [
+        REPO_ROOT / "hardware" / "tools" / "gen_wiring_svg.py",
+        REPO_ROOT / "hardware" / "tools" / "gen_schematic.py",
+    ]
+    for gen in generators:
+        if not gen.exists():
+            return False, f"找不到生成脚本：{gen}"
+
+    for gen in generators:
+        proc = run_python([str(gen), "--check"], cwd=REPO_ROOT)
+        if proc.returncode != 0:
+            detail = "\n      ".join((proc.stdout or "").strip().splitlines()[:8])
+            return False, (f"接线图/原理图已过期（{gen.name}）：\n      "
+                           + (detail or _NO_OUTPUT_HINT)
+                           + f"\n      修复： python {gen.relative_to(REPO_ROOT).as_posix()}")
 
     # 内容级判据：--check 只证明"文件是最新渲染的"，不证明"该画的都画了"
     if run_python(["-c", "import pytest"], cwd=RPI_DIR).returncode == 0:
@@ -507,14 +515,14 @@ def check_hardware_diagrams() -> Tuple[bool, str]:
     if tests.returncode != 0:
         combined = (tests.stdout or "") + "\n" + (tests.stderr or "")
         tail = "\n      ".join([ln for ln in combined.splitlines() if ln.strip()][-8:])
-        return False, f"接线图内容检查失败：\n      {tail or _NO_OUTPUT_HINT}"
+        return False, f"接线图/原理图内容检查失败：\n      {tail or _NO_OUTPUT_HINT}"
 
     line = ""
-    for ln in reversed(((proc.stdout or "") + "\n" + (tests.stdout or "")).splitlines()):
-        if "[OK]" in ln or "passed" in ln:
+    for ln in reversed((tests.stdout or "").splitlines()):
+        if "passed" in ln:
             line = ln.strip()
             break
-    return True, line or "接线图与代码一致"
+    return True, f"3 张图与代码一致；内容检查 {line or 'OK'}"
 
 
 def main() -> int:

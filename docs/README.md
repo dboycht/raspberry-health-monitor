@@ -50,14 +50,15 @@
 | 文件 | 内容 |
 | --- | --- |
 | [`../hardware/README.md`](../hardware/README.md) | 材料清单对照：每个器件用在哪 / 没用在哪 / 为什么 |
-| [`../hardware/接线图-引脚.svg`](../hardware/接线图-引脚.svg) | ⭐ **40-pin 逐脚接线图**（图形化；由配置生成，照着插线用这张） |
-| [`../hardware/接线图-原理.svg`](../hardware/接线图-原理.svg) | ⭐ **系统原理框图**（供电轨 / 总线 / 限流元件；PPT 用这张） |
+| [`../hardware/原理图.svg`](../hardware/原理图.svg) | ⭐⭐ **端口对端口原理图**（器件带自己的引脚名，逐根线连到树莓派物理脚；交作业/答辩用这张） |
+| [`../hardware/接线图-引脚.svg`](../hardware/接线图-引脚.svg) | ⭐ **40-pin 逐脚接线图**（图形化；照着插线用这张） |
+| [`../hardware/接线图-原理.svg`](../hardware/接线图-原理.svg) | **系统框图**（供电轨 / 总线分组 / 限流元件） |
 | [`../hardware/01-引脚分配表.md`](../hardware/01-引脚分配表.md) | ⭐ 40-pin 完整分配、I2C 地址表、空闲引脚、保留脚 |
 | [`../hardware/02-接线图.md`](../hardware/02-接线图.md) | ⭐ 逐器件逐线接线表（物理脚号 + BCM + 线色建议） |
 | [`../hardware/03-供电与安全.md`](../hardware/03-供电与安全.md) | 供电预算、电平匹配、保护电阻、烧板风险 |
 
-> 两张 SVG 是**生成物**（`python hardware/tools/gen_wiring_svg.py`），
-> 由 `validate.py` 第 8 项「硬件接线图」守着不许过期。
+> 三张 SVG 都是**生成物**（`python hardware/tools/gen_wiring_svg.py`、
+> `python hardware/tools/gen_schematic.py`），由 `validate.py` 第 8 项「硬件接线图」守着不许过期。
 
 ## 四、其他
 

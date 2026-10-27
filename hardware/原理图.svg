@@ -1,0 +1,307 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1180" viewBox="0 0 1500 1180" font-family="Consolas, Microsoft YaHei, monospace">
+<title>Raspberry Pi health monitor schematic</title>
+<rect width="1500" height="1180" fill="#ffffff"/>
+<text x="44.0" y="50.0" font-size="23" fill="#111111" text-anchor="start" font-weight="bold">树莓派健康监护系统 · 原理图（端口对端口）</text>
+<text x="44.0" y="74.0" font-size="12" fill="#333333" text-anchor="start" font-weight="normal">Raspberry Pi 5 Model B  |  居家老人健康监护系统 · 课程设计</text>
+<text x="44.0" y="92.0" font-size="10.5" fill="#8a8a8a" text-anchor="start" font-weight="normal">引脚号由 rpi/config/devices.json 与各驱动 describe() 读出  ·  版本 1.0.3  ·  2026-10-27</text>
+<line x1="44.0" y1="106.0" x2="1456.0" y2="106.0" stroke="#d8d8d8" stroke-width="1.0"/>
+<rect x="655.0" y="130.0" width="190.0" height="456.0" fill="none" stroke="#111111" stroke-width="2.0"/>
+<text x="750.0" y="156.0" font-size="16" fill="#111111" text-anchor="middle" font-weight="bold">树莓派 5</text>
+<text x="750.0" y="174.0" font-size="11" fill="#333333" text-anchor="middle" font-weight="normal">40-pin 排针</text>
+<line x1="655.0" y1="192.0" x2="639.0" y2="192.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="196.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">1</text>
+<line x1="845.0" y1="192.0" x2="861.0" y2="192.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="196.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">2</text>
+<line x1="655.0" y1="212.0" x2="639.0" y2="212.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="216.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">3</text>
+<line x1="845.0" y1="212.0" x2="861.0" y2="212.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="216.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">4</text>
+<line x1="655.0" y1="232.0" x2="639.0" y2="232.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="236.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">5</text>
+<line x1="845.0" y1="232.0" x2="861.0" y2="232.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="236.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">6</text>
+<line x1="655.0" y1="252.0" x2="639.0" y2="252.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="256.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">7</text>
+<line x1="845.0" y1="252.0" x2="861.0" y2="252.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="256.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">8</text>
+<line x1="655.0" y1="272.0" x2="639.0" y2="272.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="276.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">9</text>
+<line x1="845.0" y1="272.0" x2="861.0" y2="272.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="276.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">10</text>
+<line x1="655.0" y1="292.0" x2="639.0" y2="292.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="296.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">11</text>
+<line x1="845.0" y1="292.0" x2="861.0" y2="292.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="296.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">12</text>
+<line x1="655.0" y1="312.0" x2="639.0" y2="312.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="316.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">13</text>
+<line x1="845.0" y1="312.0" x2="861.0" y2="312.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="316.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">14</text>
+<line x1="655.0" y1="332.0" x2="639.0" y2="332.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="336.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">15</text>
+<line x1="845.0" y1="332.0" x2="861.0" y2="332.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="336.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">16</text>
+<line x1="655.0" y1="352.0" x2="639.0" y2="352.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="356.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">17</text>
+<line x1="845.0" y1="352.0" x2="861.0" y2="352.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="356.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">18</text>
+<line x1="655.0" y1="372.0" x2="639.0" y2="372.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="376.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">19</text>
+<line x1="845.0" y1="372.0" x2="861.0" y2="372.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="376.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">20</text>
+<line x1="655.0" y1="392.0" x2="639.0" y2="392.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="396.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">21</text>
+<line x1="845.0" y1="392.0" x2="861.0" y2="392.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="396.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">22</text>
+<line x1="655.0" y1="412.0" x2="639.0" y2="412.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="416.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">23</text>
+<line x1="845.0" y1="412.0" x2="861.0" y2="412.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="416.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">24</text>
+<line x1="655.0" y1="432.0" x2="639.0" y2="432.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="436.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">25</text>
+<line x1="845.0" y1="432.0" x2="861.0" y2="432.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="436.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">26</text>
+<line x1="655.0" y1="452.0" x2="639.0" y2="452.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="456.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">27</text>
+<line x1="845.0" y1="452.0" x2="861.0" y2="452.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="456.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">28</text>
+<line x1="655.0" y1="472.0" x2="639.0" y2="472.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="476.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">29</text>
+<line x1="845.0" y1="472.0" x2="861.0" y2="472.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="476.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">30</text>
+<line x1="655.0" y1="492.0" x2="639.0" y2="492.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="496.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">31</text>
+<line x1="845.0" y1="492.0" x2="861.0" y2="492.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="496.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">32</text>
+<line x1="655.0" y1="512.0" x2="639.0" y2="512.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="516.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">33</text>
+<line x1="845.0" y1="512.0" x2="861.0" y2="512.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="516.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">34</text>
+<line x1="655.0" y1="532.0" x2="639.0" y2="532.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="536.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">35</text>
+<line x1="845.0" y1="532.0" x2="861.0" y2="532.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="536.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">36</text>
+<line x1="655.0" y1="552.0" x2="639.0" y2="552.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="556.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">37</text>
+<line x1="845.0" y1="552.0" x2="861.0" y2="552.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="556.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">38</text>
+<line x1="655.0" y1="572.0" x2="639.0" y2="572.0" stroke="#111111" stroke-width="1.2"/>
+<text x="649.0" y="576.0" font-size="10.5" fill="#111111" text-anchor="end" font-weight="bold">39</text>
+<line x1="845.0" y1="572.0" x2="861.0" y2="572.0" stroke="#111111" stroke-width="1.2"/>
+<text x="851.0" y="576.0" font-size="10.5" fill="#111111" text-anchor="start" font-weight="bold">40</text>
+<rect x="34.0" y="150.0" width="168.0" height="146.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="118.0" y="172.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">MAX30102</text>
+<text x="118.0" y="188.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">心率血氧  I2C-1 0x57</text>
+<line x1="44.0" y1="196.0" x2="192.0" y2="196.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="118.0" y="290.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">INT 悬空（驱动轮询读 FIFO）</text>
+<line x1="202.0" y1="212.0" x2="222.0" y2="212.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="216.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">VIN</text>
+<line x1="202.0" y1="234.0" x2="222.0" y2="234.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="238.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">GND</text>
+<line x1="202.0" y1="256.0" x2="222.0" y2="256.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="260.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">SDA</text>
+<line x1="202.0" y1="278.0" x2="222.0" y2="278.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="282.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">SCL</text>
+<line x1="202.0" y1="300.0" x2="222.0" y2="300.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="304.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">INT</text>
+<rect x="34.0" y="340.0" width="168.0" height="124.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="118.0" y="362.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">LCD1602</text>
+<text x="118.0" y="378.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">液晶  I2C 转接板 0x27/0x3F</text>
+<line x1="44.0" y1="386.0" x2="192.0" y2="386.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="118.0" y="458.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">5V 供电（3.3V 时对比度极低）</text>
+<line x1="202.0" y1="402.0" x2="222.0" y2="402.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="406.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">VCC</text>
+<line x1="202.0" y1="424.0" x2="222.0" y2="424.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="428.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">GND</text>
+<line x1="202.0" y1="446.0" x2="222.0" y2="446.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="450.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">SDA</text>
+<line x1="202.0" y1="468.0" x2="222.0" y2="468.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="472.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">SCL</text>
+<rect x="34.0" y="530.0" width="168.0" height="102.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="118.0" y="552.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">DHT11</text>
+<text x="118.0" y="568.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">温湿度  单总线</text>
+<line x1="44.0" y1="576.0" x2="192.0" y2="576.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="118.0" y="626.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">裸四针需 4k7~10k 上拉到 3.3V</text>
+<line x1="202.0" y1="592.0" x2="222.0" y2="592.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="596.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">VCC</text>
+<line x1="202.0" y1="614.0" x2="222.0" y2="614.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="618.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">DATA</text>
+<line x1="202.0" y1="636.0" x2="222.0" y2="636.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="640.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">GND</text>
+<rect x="34.0" y="710.0" width="168.0" height="102.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="118.0" y="732.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">HC-SR501</text>
+<text x="118.0" y="748.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">人体红外  PIR</text>
+<line x1="44.0" y1="756.0" x2="192.0" y2="756.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="118.0" y="806.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">必须 5V；OUT 为 3.3V 可直连</text>
+<line x1="202.0" y1="772.0" x2="222.0" y2="772.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="776.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">VCC</text>
+<line x1="202.0" y1="794.0" x2="222.0" y2="794.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="798.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">OUT</text>
+<line x1="202.0" y1="816.0" x2="222.0" y2="816.0" stroke="#111111" stroke-width="1.2"/>
+<text x="194.0" y="820.0" font-size="11" fill="#111111" text-anchor="end" font-weight="normal">GND</text>
+<rect x="1298.0" y="150.0" width="168.0" height="190.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="1382.0" y="172.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">TFT ST7735S</text>
+<text x="1382.0" y="188.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">彩屏 128x160  SPI0.1</text>
+<line x1="1308.0" y1="196.0" x2="1456.0" y2="196.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="1382.0" y="334.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">CS 独占 CE1；背光接 3.3V 常亮</text>
+<line x1="1298.0" y1="212.0" x2="1278.0" y2="212.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="216.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">VCC</text>
+<line x1="1298.0" y1="234.0" x2="1278.0" y2="234.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="238.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">GND</text>
+<line x1="1298.0" y1="256.0" x2="1278.0" y2="256.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="260.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">SCK</text>
+<line x1="1298.0" y1="278.0" x2="1278.0" y2="278.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="282.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">SDA</text>
+<line x1="1298.0" y1="300.0" x2="1278.0" y2="300.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="304.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">CS</text>
+<line x1="1298.0" y1="322.0" x2="1278.0" y2="322.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="326.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">DC</text>
+<line x1="1298.0" y1="344.0" x2="1278.0" y2="344.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="348.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">RST</text>
+<rect x="1298.0" y="430.0" width="168.0" height="80.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="1382.0" y="452.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">蜂鸣器</text>
+<text x="1382.0" y="468.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">有源  高电平响</text>
+<line x1="1308.0" y1="476.0" x2="1456.0" y2="476.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="1382.0" y="504.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">必须串 220R~1k 限流</text>
+<line x1="1298.0" y1="492.0" x2="1278.0" y2="492.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="496.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">+</text>
+<line x1="1298.0" y1="514.0" x2="1278.0" y2="514.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="518.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">-</text>
+<rect x="1298.0" y="550.0" width="168.0" height="102.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="1382.0" y="572.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">LED 绿 / 黄</text>
+<text x="1382.0" y="588.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">状态灯  共阴</text>
+<line x1="1308.0" y1="596.0" x2="1456.0" y2="596.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="1382.0" y="646.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">任意时刻只亮一种颜色</text>
+<line x1="1298.0" y1="612.0" x2="1278.0" y2="612.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="616.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">绿 an</text>
+<line x1="1298.0" y1="634.0" x2="1278.0" y2="634.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="638.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">黄 an</text>
+<line x1="1298.0" y1="656.0" x2="1278.0" y2="656.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="660.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">共阴</text>
+<rect x="1298.0" y="730.0" width="168.0" height="80.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="1382.0" y="752.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">求救键</text>
+<text x="1382.0" y="768.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">长按 &gt;=1s 触发</text>
+<line x1="1308.0" y1="776.0" x2="1456.0" y2="776.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<text x="1382.0" y="804.0" font-size="9" fill="#8a8a8a" text-anchor="middle" font-weight="normal">内部上拉，按下读到低</text>
+<line x1="1298.0" y1="792.0" x2="1278.0" y2="792.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="796.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">A</text>
+<line x1="1298.0" y1="814.0" x2="1278.0" y2="814.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="818.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">B</text>
+<rect x="1298.0" y="850.0" width="168.0" height="80.0" fill="none" stroke="#111111" stroke-width="1.6"/>
+<text x="1382.0" y="872.0" font-size="13.5" fill="#111111" text-anchor="middle" font-weight="bold">测血氧键</text>
+<text x="1382.0" y="888.0" font-size="9.5" fill="#333333" text-anchor="middle" font-weight="normal">按需启动测量</text>
+<line x1="1308.0" y1="896.0" x2="1456.0" y2="896.0" stroke="#d8d8d8" stroke-width="0.8"/>
+<line x1="1298.0" y1="912.0" x2="1278.0" y2="912.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="916.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">A</text>
+<line x1="1298.0" y1="934.0" x2="1278.0" y2="934.0" stroke="#111111" stroke-width="1.2"/>
+<text x="1306.0" y="938.0" font-size="11" fill="#111111" text-anchor="start" font-weight="normal">B</text>
+<polyline points="222.0,256.0 361.6,256.0 361.6,212.0 639.0,212.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="236.0" y="240.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="236.0" y="251.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">SDA1</text>
+<polyline points="222.0,278.0 361.6,278.0 361.6,232.0 639.0,232.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="236.0" y="262.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="236.0" y="273.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">SCL1</text>
+<polyline points="222.0,446.0 361.6,446.0 361.6,212.0 639.0,212.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="236.0" y="430.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="236.0" y="441.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">SDA1</text>
+<polyline points="222.0,468.0 361.6,468.0 361.6,232.0 639.0,232.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="236.0" y="452.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="236.0" y="463.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">SCL1</text>
+<polyline points="222.0,614.0 361.6,614.0 361.6,212.0 861.0,212.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="236.0" y="598.0" width="41.0" height="14" fill="#ffffff"/>
+<text x="236.0" y="609.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GPIO4</text>
+<polyline points="222.0,794.0 361.6,794.0 361.6,352.0 639.0,352.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="236.0" y="778.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="236.0" y="789.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GPIO17</text>
+<polyline points="1278.0,256.0 1018.6,256.0 1018.6,412.0 639.0,412.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1230.0" y="240.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="251.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">SCLK</text>
+<polyline points="1278.0,278.0 1018.6,278.0 1018.6,372.0 639.0,372.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1230.0" y="262.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="273.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">MOSI</text>
+<polyline points="1278.0,300.0 1018.6,300.0 1018.6,432.0 861.0,432.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1237.0" y="284.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="295.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">CE1</text>
+<polyline points="1278.0,322.0 1018.6,322.0 1018.6,412.0 861.0,412.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1216.0" y="306.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="317.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO24</text>
+<polyline points="1278.0,344.0 1018.6,344.0 1018.6,432.0 639.0,432.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1216.0" y="328.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="339.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO25</text>
+<polyline points="1278.0,492.0 1018.6,492.0 1018.6,352.0 861.0,352.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1236.0" y="485.5" width="24" height="13" fill="#ffffff" stroke="#111111" stroke-width="1.2"/>
+<text x="1248.0" y="496.0" font-size="8.5" fill="#111111" text-anchor="middle" font-weight="normal">220R</text>
+<rect x="1178.0" y="476.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1226.0" y="487.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO18</text>
+<polyline points="1278.0,612.0 1018.6,612.0 1018.6,392.0 861.0,392.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1236.0" y="605.5" width="24" height="13" fill="#ffffff" stroke="#111111" stroke-width="1.2"/>
+<text x="1248.0" y="616.0" font-size="8.5" fill="#111111" text-anchor="middle" font-weight="normal">220R</text>
+<rect x="1178.0" y="596.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1226.0" y="607.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO22</text>
+<polyline points="1278.0,634.0 1018.6,634.0 1018.6,412.0 639.0,412.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1236.0" y="627.5" width="24" height="13" fill="#ffffff" stroke="#111111" stroke-width="1.2"/>
+<text x="1248.0" y="638.0" font-size="8.5" fill="#111111" text-anchor="middle" font-weight="normal">220R</text>
+<rect x="1178.0" y="618.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1226.0" y="629.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO23</text>
+<polyline points="1278.0,792.0 1018.6,792.0 1018.6,452.0 639.0,452.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1216.0" y="776.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="787.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO27</text>
+<polyline points="1278.0,912.0 1018.6,912.0 1018.6,312.0 639.0,312.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1216.0" y="896.0" width="48.0" height="14" fill="#ffffff"/>
+<text x="1264.0" y="907.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GPIO13</text>
+<polyline points="222.0,212.0 256.0,212.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="196.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="207.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">3.3V</text>
+<polyline points="222.0,234.0 256.0,234.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="218.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="229.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GND</text>
+<polyline points="222.0,402.0 256.0,402.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="386.0" width="20.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="397.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">5V</text>
+<polyline points="222.0,424.0 256.0,424.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="408.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="419.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GND</text>
+<polyline points="222.0,592.0 256.0,592.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="576.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="587.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">3.3V</text>
+<polyline points="222.0,636.0 256.0,636.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="620.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="631.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GND</text>
+<polyline points="222.0,772.0 256.0,772.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="756.0" width="20.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="767.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">5V</text>
+<polyline points="222.0,816.0 256.0,816.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="264.0" y="800.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="264.0" y="811.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GND</text>
+<polyline points="1278.0,212.0 1244.0,212.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1202.0" y="196.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="1236.0" y="207.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">3.3V</text>
+<polyline points="1278.0,234.0 1244.0,234.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1209.0" y="218.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="1236.0" y="229.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GND</text>
+<polyline points="1278.0,514.0 1244.0,514.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1209.0" y="498.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="1236.0" y="509.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GND</text>
+<polyline points="1278.0,656.0 1244.0,656.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1209.0" y="640.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="1236.0" y="651.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GND</text>
+<polyline points="1278.0,814.0 1244.0,814.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1209.0" y="798.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="1236.0" y="809.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GND</text>
+<polyline points="1278.0,934.0 1244.0,934.0" fill="none" stroke="#111111" stroke-width="1.3" stroke-linejoin="round"/>
+<rect x="1209.0" y="918.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="1236.0" y="929.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">GND</text>
+<rect x="591.0" y="176.0" width="34.0" height="14" fill="#ffffff"/>
+<text x="625.0" y="187.0" font-size="10" fill="#333333" text-anchor="end" font-weight="normal">3.3V</text>
+<rect x="875.0" y="216.0" width="27.0" height="14" fill="#ffffff"/>
+<text x="875.0" y="227.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">GND</text>
+<rect x="875.0" y="176.0" width="20.0" height="14" fill="#ffffff"/>
+<text x="875.0" y="187.0" font-size="10" fill="#333333" text-anchor="start" font-weight="normal">5V</text>
+<text x="750.0" y="620.0" font-size="10" fill="#8a8a8a" text-anchor="middle" font-weight="normal">3.3V / 5V / GND 为同名网络：实物接面包板同一条电源轨（不逐根画线）</text>
+<text x="44.0" y="1060.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 1  3.3V / 5V / GND 用「同名网络」标注（每个引脚一根短线带网名）：实物上它们接面包板同一条电源轨，规范画法不逐根连线。</text>
+<text x="44.0" y="1077.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 2  ⚠ 3.3V 器件：MAX30102 / DHT11 / TFT；5V 器件：LCD1602 / HC-SR501。接错会烧器件或对比度极低。</text>
+<text x="44.0" y="1094.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 3  ⚠ 蜂鸣器与两只 LED 的信号线上必须串 220Ω~1kΩ 限流电阻（图中方框），否则可能烧 GPIO 引脚。</text>
+<text x="44.0" y="1111.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 4  I2C-1 为多从机总线（MAX30102 0x57 与 LCD 转接板 0x27/0x3F 并挂同一条 SDA1/SCL1）。</text>
+<text x="44.0" y="1128.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 5  SPI0 只挂 TFT 一个从设备，片选独占 CE1（物理脚 26）；CE0（脚 24）空着不用。</text>
+<text x="44.0" y="1145.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 6  MAX30102 的 INT 悬空不接；按键另一端接 GND（驱动启用内部上拉，按下读到低电平）。</text>
+<text x="44.0" y="1162.0" font-size="10.5" fill="#333333" text-anchor="start" font-weight="normal">注 7  方框内左列数字为树莓派物理脚号（插线看它），网名里的 GPIOxx 为 BCM 编号（写代码看它）。</text>
+</svg>

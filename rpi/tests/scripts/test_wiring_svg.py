@@ -40,17 +40,19 @@ from typing import Dict, List
 _RPI_DIR = Path(__file__).resolve().parents[2]          # .../rpi
 _PROJECT_ROOT = _RPI_DIR.parent                          # 仓库根
 _GEN = _PROJECT_ROOT / "hardware" / "tools" / "gen_wiring_svg.py"
+_GEN_SCH = _PROJECT_ROOT / "hardware" / "tools" / "gen_schematic.py"
 _HW = _PROJECT_ROOT / "hardware"
+_SCHEMATIC = "原理图.svg"
 
 
-def _run_gen(args: List[str]) -> subprocess.CompletedProcess:
+def _run_gen(args: List[str], script: Path = None) -> subprocess.CompletedProcess:
     """跑生成脚本；强制 UTF-8 IO（中文 Windows 上默认是 cp936，见 ERROR.md E32）。"""
     import os
 
     env = dict(os.environ)
     env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
     return subprocess.run(
-        [sys.executable, str(_GEN), *args],
+        [sys.executable, str(script or _GEN), *args],
         cwd=str(_PROJECT_ROOT),
         capture_output=True,
         text=True,
@@ -230,7 +232,100 @@ class TestWiringSvgContent(unittest.TestCase):
             self.assertNotRegex(text, r'href="(?!#)', f"{name} 引用了外部资源")
 
 
-class TestContractWithDocs(unittest.TestCase):
+class TestSchematicIsCurrent(unittest.TestCase):
+    """★ 端口对端口原理图（2026-10-27 按用户要求新增）。
+
+    用户口径：「我要原理图……就是那种端口对端口的」。所以这张图必须
+    **同时画出两端**：树莓派 40 个物理脚 + 器件自己的引脚名（VIN/SDA/OUT…），
+    每根线从 Pi 的脚连到器件的引脚。只画"器件卡片写着 VCC→脚2"不算原理图。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.svg = (_HW / _SCHEMATIC).read_text(encoding="utf-8")
+        cls.devices = _config_devices()
+
+    def test_原理图存在且不过期(self) -> None:
+        self.assertTrue((_HW / _SCHEMATIC).exists(), "缺少 原理图.svg")
+        proc = _run_gen(["--check"], script=_GEN_SCH)
+        self.assertEqual(
+            proc.returncode, 0,
+            "原理图已过期，请重新生成：\n"
+            "    python hardware/tools/gen_schematic.py\n"
+            f"脚本输出：\n{proc.stdout}\n{proc.stderr}",
+        )
+
+    def test_树莓派侧画出了全部40个物理脚(self) -> None:
+        """端口对端口的前提：Pi 这一端要有「端口」。少画脚号就等于少了端点。"""
+        missing = []
+        for phys in range(1, 41):
+            # pin numbers are rendered as their own <text> element
+            if f">{phys}</text>" not in self.svg:
+                missing.append(phys)
+        self.assertEqual(missing, [], f"原理图缺少这些物理脚号：{missing}")
+
+    def test_器件侧画出了自己的引脚名(self) -> None:
+        """每个器件都要有它**自己的**引脚名，否则连线没有终点。"""
+        expected = {
+            "MAX30102": ["VIN", "GND", "SDA", "SCL", "INT"],
+            "LCD1602": ["VCC", "GND", "SDA", "SCL"],
+            "DHT11": ["VCC", "DATA", "GND"],
+            "HC-SR501": ["VCC", "OUT", "GND"],
+            "TFT": ["VCC", "GND", "SCK", "SDA", "CS", "DC", "RST"],
+            "蜂鸣器": ["+"],
+        }
+        drawn = set()
+        import re
+        for m in re.finditer(r">([^<>]+)</text>", self.svg):
+            drawn.add(m.group(1))
+        missing = {k: [p for p in pins if p not in drawn]
+                   for k, pins in expected.items()}
+        missing = {k: v for k, v in missing.items() if v}
+        self.assertEqual(missing, {}, f"这些器件的引脚名没画出来：{missing}")
+
+    def test_每个配置引脚都作为网标出现(self) -> None:
+        """★ 核心判据：配置里的 BCM 必须都能在图上找到对应网名（GPIOxx）。"""
+        claims = [
+            self.devices["ambient"]["params"]["pin"],
+            self.devices["motion"]["params"]["pin"],
+            self.devices["alarm_buzzer"]["params"]["pin"],
+            self.devices["sos_button"]["params"]["pin"],
+            self.devices["spo2_button"]["params"]["pin"],
+            self.devices["tft"]["params"]["dc_pin"],
+            self.devices["tft"]["params"]["reset_pin"],
+        ] + list(self.devices["status_led"]["params"]["pins"].values())
+
+        missing = [f"GPIO{b}" for b in claims if f"GPIO{b}" not in self.svg]
+        self.assertEqual(missing, [], f"原理图里没有这些引脚的网标：{missing}")
+
+    def test_I2C与SPI的固定功能网标在图上(self) -> None:
+        """总线脚不在 devices.json 里（内核固定功能），必须由图画出来。"""
+        for net in ("SDA1", "SCL1", "SCLK", "MOSI", "CE1"):
+            self.assertIn(net, self.svg, f"原理图缺少总线网标 {net}")
+
+    def test_限流电阻按代码要求画出(self) -> None:
+        """蜂鸣器 + 绿/黄 LED = 恰好 3 个限流电阻（红灯已撤，不该有第 4 个）。"""
+        self.assertEqual(self.svg.count(">220R<"), 3,
+                         "限流电阻数量与预期不符（器件增减时请同步更新本断言）")
+
+    def test_已删除器件不许出现(self) -> None:
+        for ghost in ("HC-SR04", "蓝牙音箱", "TMP36", "MCP3002"):
+            self.assertNotIn(ghost, self.svg, f"原理图里还画着已删除的器件：{ghost}")
+        self.assertNotIn("GPIO12", self.svg, "原理图里还有已撤销的红色 LED（GPIO12）")
+
+    def test_原理图是黑白线稿(self) -> None:
+        """用户选定"传统电气原理图风格"：不许有大面积彩色填充（打印用）。"""
+        import re
+
+        fills = re.findall(r'fill="(#[0-9a-fA-F]{6})"', self.svg)
+        colourful = [f for f in fills
+                     if f.lower() not in ("#ffffff", "#111111", "#333333",
+                                          "#8a8a8a", "#d8d8d8")]
+        self.assertEqual(colourful[:5], [], f"原理图出现彩色填充：{set(colourful)}")
+
+    def test_原理图是LF线尾(self) -> None:
+        raw = (_HW / _SCHEMATIC).read_bytes()
+        self.assertEqual(raw.count(b"\r\n"), 0, f"{_SCHEMATIC} 含 CRLF（CI 会假红）")
     """接线图与既有文字文档的关系：图是"照着接线"的主入口，必须被索引进。"""
 
     def test_hardware_README登记了两张图(self) -> None:
