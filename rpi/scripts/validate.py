@@ -5,7 +5,7 @@
 
 用法（在 ``rpi/`` 目录下）::
 
-    python scripts/validate.py              # 全部 11 项检查
+    python scripts/validate.py              # 全部 12 项检查
     python scripts/validate.py --quick      # 跳过单测/演示/基础版（只做静态检查）
     python scripts/validate.py --real       # 额外提示哪些检查需要真机
 
@@ -477,6 +477,46 @@ def check_node_scripts() -> Tuple[bool, str]:
     return True, "；".join(summaries) or "Node 脚本自检通过"
 
 
+def check_hardware_diagrams() -> Tuple[bool, str]:
+    """★ 接线图必须与 ``devices.json`` / ``describe()`` 同步（2026-10-27 新增）。
+
+    为什么单独一项：接线图是**给人照着插线用的**，它落后于配置时**任何单测都不会红**
+    （图不参与运行）。本项目已经真实漂移过：`hardware/` 下的手写文档至今写着
+    "红色 LED / GPIO12"，而配置里只剩 green/yellow，还漏掉了「测血氧」按键。
+
+    ⇒ 两张 SVG 改由 ``hardware/tools/gen_wiring_svg.py`` 生成，这里跑它的 ``--check``：
+    重新渲染一遍并与已提交的文件逐字节比对。附带跑内容级单测
+    （``tests/scripts/test_wiring_svg.py``：器件漏画 / 已删器件仍在图上 都会被抓住）。
+    """
+    gen = REPO_ROOT / "hardware" / "tools" / "gen_wiring_svg.py"
+    if not gen.exists():
+        return False, f"找不到生成脚本：{gen}"
+
+    proc = run_python([str(gen), "--check"], cwd=REPO_ROOT)
+    if proc.returncode != 0:
+        detail = "\n      ".join((proc.stdout or "").strip().splitlines()[:8])
+        return False, ("接线图已过期（与 devices.json / describe() 不一致）：\n      "
+                       + (detail or _NO_OUTPUT_HINT)
+                       + "\n      修复： python hardware/tools/gen_wiring_svg.py")
+
+    # 内容级判据：--check 只证明"文件是最新渲染的"，不证明"该画的都画了"
+    if run_python(["-c", "import pytest"], cwd=RPI_DIR).returncode == 0:
+        tests = run_python(["-m", "pytest", "tests/scripts/test_wiring_svg.py", "-q"], cwd=RPI_DIR)
+    else:
+        tests = run_python(["-m", "unittest", "tests.scripts.test_wiring_svg", "-v"], cwd=RPI_DIR)
+    if tests.returncode != 0:
+        combined = (tests.stdout or "") + "\n" + (tests.stderr or "")
+        tail = "\n      ".join([ln for ln in combined.splitlines() if ln.strip()][-8:])
+        return False, f"接线图内容检查失败：\n      {tail or _NO_OUTPUT_HINT}"
+
+    line = ""
+    for ln in reversed(((proc.stdout or "") + "\n" + (tests.stdout or "")).splitlines()):
+        if "[OK]" in ln or "passed" in ln:
+            line = ln.strip()
+            break
+    return True, line or "接线图与代码一致"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="树莓派健康监护项目验证脚本")
     parser.add_argument("--quick", action="store_true", help="跳过单测与演示（只做静态检查）")
@@ -491,6 +531,7 @@ def main() -> int:
         Check("引脚冲突", check_pin_conflicts),
         Check("设备自检（模拟）", check_selfcheck),
         Check("文档一致性", check_docs),
+        Check("硬件接线图", check_hardware_diagrams),
         Check("Node 脚本自检", check_node_scripts),
     ]
     if not args.quick:

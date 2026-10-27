@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="914" viewBox="0 0 1240 914" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+<title>Raspberry Pi health monitor schematic</title>
+<rect width="1240" height="914" fill="#ffffff"/>
+<text x="34" y="48" font-size="25" fill="#1a1a1a" text-anchor="start" font-weight="bold">树莓派健康监护系统 · 原理框图</text>
+<text x="34" y="74" font-size="13" fill="#6b7780" text-anchor="start" font-weight="normal">供电轨 / 总线 / 限流元件一览（与 40-pin 接线图配套）</text>
+<text x="34" y="96" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">生成自 rpi/config/devices.json  ·  版本 1.0.3  ·  2026-10-27</text>
+<rect x="48" y="150" width="44" height="436" rx="8" fill="#fbfcfd" stroke="#c7d3dc" stroke-width="1"/>
+<path d="M 70 191.0 L 70 261.0" fill="none" stroke="#c0392b" stroke-width="5" stroke-linecap="round"/>
+<rect x="30" y="191" width="80" height="26" rx="4" fill="#c0392b" stroke="none" stroke-width="1"/>
+<text x="70" y="209" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="bold">3.3V</text>
+<text x="120" y="208" font-size="10.5" fill="#6b7780" text-anchor="start" font-weight="normal">脚 1 / 17（合计 500 mA 上限）</text>
+<path d="M 70 322.2 L 70 392.2" fill="none" stroke="#e67e22" stroke-width="5" stroke-linecap="round"/>
+<rect x="30" y="322" width="80" height="26" rx="4" fill="#e67e22" stroke="none" stroke-width="1"/>
+<text x="70" y="340" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="bold">5V</text>
+<text x="120" y="339" font-size="10.5" fill="#6b7780" text-anchor="start" font-weight="normal">脚 2 / 4（直通电源，无稳压）</text>
+<path d="M 70 453.4 L 70 523.4" fill="none" stroke="#4a4a4a" stroke-width="5" stroke-linecap="round"/>
+<rect x="30" y="453" width="80" height="26" rx="4" fill="#4a4a4a" stroke="none" stroke-width="1"/>
+<text x="70" y="471" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="bold">GND</text>
+<text x="120" y="470" font-size="10.5" fill="#6b7780" text-anchor="start" font-weight="normal">脚 6/9/14/20/25/30/34/39</text>
+<rect x="300" y="150" width="300" height="456" rx="12" fill="#2f6f4e" stroke="#1f4d36" stroke-width="2"/>
+<text x="450" y="184" font-size="17" fill="#ffffff" text-anchor="middle" font-weight="bold">树莓派 5 Model B</text>
+<text x="450" y="206" font-size="11" fill="#bfe0cd" text-anchor="middle" font-weight="normal">BCM2712 · Debian 13 · Python 3</text>
+<path d="M 318 220 L 582 220" fill="none" stroke="#5f9a7e" stroke-width="1" stroke-linecap="round"/>
+<rect x="318" y="238" width="264" height="46" rx="6" fill="#8e44ad" stroke="none" stroke-width="1"/>
+<text x="332" y="258" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold">I2C-1</text>
+<text x="332" y="275" font-size="10" fill="#e6eef4" text-anchor="start" font-weight="normal">GPIO2 / GPIO3（脚 3 / 5）</text>
+<rect x="318" y="298" width="264" height="46" rx="6" fill="#2980b9" stroke="none" stroke-width="1"/>
+<text x="332" y="318" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold">SPI0</text>
+<text x="332" y="335" font-size="10" fill="#e6eef4" text-anchor="start" font-weight="normal">GPIO7/10/11 + DC24/RST25</text>
+<rect x="318" y="358" width="264" height="46" rx="6" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="332" y="378" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold">GPIO 输入</text>
+<text x="332" y="395" font-size="10" fill="#e6eef4" text-anchor="start" font-weight="normal">GPIO4 / 17 / 27 / 13</text>
+<rect x="318" y="418" width="264" height="46" rx="6" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="332" y="438" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold">GPIO 输出</text>
+<text x="332" y="455" font-size="10" fill="#e6eef4" text-anchor="start" font-weight="normal">GPIO18 / 22 / 23</text>
+<rect x="318" y="478" width="264" height="46" rx="6" fill="#34495e" stroke="none" stroke-width="1"/>
+<text x="332" y="498" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold">监护核心</text>
+<text x="332" y="515" font-size="10" fill="#e6eef4" text-anchor="start" font-weight="normal">collector → rules → dispatcher</text>
+<rect x="318" y="538" width="264" height="46" rx="6" fill="#2c6e9b" stroke="none" stroke-width="1"/>
+<text x="332" y="558" font-size="12.5" fill="#ffffff" text-anchor="start" font-weight="bold">网络 / 上云</text>
+<text x="332" y="575" font-size="10" fill="#e6eef4" text-anchor="start" font-weight="normal">web.py HTTP · MQTT → OneNET</text>
+<rect x="706" y="118" width="490" height="108" rx="6" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="706" y="118" width="5" height="108" rx="2" fill="#8e44ad" stroke="none" stroke-width="1"/>
+<text x="720" y="136" font-size="12.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">I2C-1 总线（多从机并挂，靠地址区分）</text>
+<circle cx="724" cy="158" r="4" fill="#8e44ad"/>
+<text x="736" y="162" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">MAX30102 心率血氧</text>
+<text x="736" y="176" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">0x57 · 3.3V 供电 ⚠   ·   默认 false，按需装配</text>
+<circle cx="724" cy="192" r="4" fill="#8e44ad"/>
+<text x="736" y="196" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">LCD1602 转接板 PCF8574</text>
+<text x="736" y="210" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">0x27 / 0x3F · 5V 供电 ⚠   ·   本地英文文案显示</text>
+<rect x="706" y="250" width="490" height="74" rx="6" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="706" y="250" width="5" height="74" rx="2" fill="#2980b9" stroke="none" stroke-width="1"/>
+<text x="720" y="268" font-size="12.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">SPI0 总线（单从设备）</text>
+<circle cx="724" cy="290" r="4" fill="#2980b9"/>
+<text x="736" y="294" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">TFT 彩屏 ST7735S 128×160</text>
+<text x="736" y="308" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">CS=CE1(脚26) 独占 · 3.3V   ·   环境页 / 报警页</text>
+<rect x="706" y="348" width="490" height="108" rx="6" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="706" y="348" width="5" height="108" rx="2" fill="#16a085" stroke="none" stroke-width="1"/>
+<text x="720" y="366" font-size="12.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">单总线 + 普通 GPIO</text>
+<circle cx="724" cy="388" r="4" fill="#16a085"/>
+<text x="736" y="392" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">DHT11 温湿度</text>
+<text x="736" y="406" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO4 · 3.3V · 周期 3s   ·   环境温度 / 湿度</text>
+<circle cx="724" cy="422" r="4" fill="#16a085"/>
+<text x="736" y="426" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">HC-SR501 人体红外</text>
+<text x="736" y="440" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO17 · 5V 供电 ⚠   ·   在床 / 活动检测</text>
+<rect x="706" y="480" width="490" height="108" rx="6" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="706" y="480" width="5" height="108" rx="2" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="720" y="498" font-size="12.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">输出器件（含限流元件）</text>
+<circle cx="724" cy="520" r="4" fill="#7f8c8d"/>
+<text x="736" y="524" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">蜂鸣器（有源）</text>
+<text x="736" y="538" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO18 · 串 220Ω~1kΩ ⚠   ·   报警鸣叫</text>
+<circle cx="724" cy="554" r="4" fill="#7f8c8d"/>
+<text x="736" y="558" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">LED 绿 / 黄</text>
+<text x="736" y="572" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO22 / GPIO23 · 各串 220Ω~1kΩ   ·   正常 / 注意</text>
+<rect x="706" y="612" width="490" height="108" rx="6" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="706" y="612" width="5" height="108" rx="2" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="720" y="630" font-size="12.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">输入按键</text>
+<circle cx="724" cy="652" r="4" fill="#7f8c8d"/>
+<text x="736" y="656" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">求救键</text>
+<text x="736" y="670" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO27 · 内部上拉 · 长按 ≥1s   ·   触发紧急求助</text>
+<circle cx="724" cy="686" r="4" fill="#7f8c8d"/>
+<text x="736" y="690" font-size="11.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">测血氧键</text>
+<text x="736" y="704" font-size="10" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO13 · 内部上拉   ·   按需启动测量窗口</text>
+<path d="M 600 261 L 686 261 L 686 150 L 701 150" fill="none" stroke="#8e44ad" stroke-width="2.4" stroke-linecap="round"/>
+<path d="M 600 321 L 686 321 L 686 282 L 701 282" fill="none" stroke="#2980b9" stroke-width="2.4" stroke-linecap="round"/>
+<path d="M 600 381 L 686 381 L 686 380 L 701 380" fill="none" stroke="#16a085" stroke-width="2.4" stroke-linecap="round"/>
+<path d="M 600 441 L 686 441 L 686 512 L 701 512" fill="none" stroke="#7f8c8d" stroke-width="2.4" stroke-linecap="round"/>
+<path d="M 600 381 L 686 381 L 686 644 L 701 644" fill="none" stroke="#7f8c8d" stroke-width="2.4" stroke-linecap="round"/>
+<text x="34" y="794" font-size="11" fill="#c0392b" text-anchor="start" font-weight="normal">⚠ 两条电源红线：红色轨 = 3.3V、橙色轨 = 5V，两条正轨绝不能短接；所有器件必须共地。</text>
+<text x="34" y="812" font-size="11" fill="#c0392b" text-anchor="start" font-weight="normal">⚠ MAX30102 / DHT11 / TFT 必须 3.3V；LCD1602 与 HC-SR501 必须 5V —— 接反的后果见 hardware/03。</text>
+<text x="34" y="830" font-size="11" fill="#c0392b" text-anchor="start" font-weight="normal">⚠ 每个 LED 与蜂鸣器的信号线上必须看到限流电阻（220Ω~1kΩ），否则可能烧 GPIO 引脚。</text>
+<text x="34" y="848" font-size="11" fill="#c0392b" text-anchor="start" font-weight="normal">⚠ SPI0 的 CS 固定用 CE1（脚 26），CE0（脚 24）空着不用；再加从设备请另占片选。</text>
+<text x="34" y="866" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">ℹ 已废止并删除的器件（不再接线）：蓝牙音箱（板上无可发声输出）、HC-SR04（ECHO 为 5V 电平）、TMP36+MCP3002。</text>
+</svg>

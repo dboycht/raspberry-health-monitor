@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1264" viewBox="0 0 1900 1264" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+<title>Raspberry Pi 5 40-pin wiring diagram</title>
+<rect width="1900" height="1264" fill="#ffffff"/>
+<text x="34" y="48" font-size="26" fill="#1a1a1a" text-anchor="start" font-weight="bold">树莓派 5 · 40-pin 引脚接线图</text>
+<text x="34" y="76" font-size="13.5" fill="#6b7780" text-anchor="start" font-weight="normal">Raspberry Pi 5 Model B  |  居家老人健康监护系统</text>
+<text x="34" y="100" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">由图生成脚本从 rpi/config/devices.json 与各驱动 describe() 读取，非手写；改了配置请重跑 hardware/tools/gen_wiring_svg.py</text>
+<text x="34" y="118" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">版本 1.0.3  ·  生成日期 2026-10-27</text>
+<rect x="34" y="134" width="15" height="9" rx="2" fill="#8e44ad" stroke="none" stroke-width="1"/>
+<text x="55" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">I2C-1</text>
+<rect x="130" y="134" width="15" height="9" rx="2" fill="#2980b9" stroke="none" stroke-width="1"/>
+<text x="151" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">SPI0</text>
+<rect x="226" y="134" width="15" height="9" rx="2" fill="#16a085" stroke="none" stroke-width="1"/>
+<text x="247" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">单总线</text>
+<rect x="322" y="134" width="15" height="9" rx="2" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="343" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">普通 GPIO</text>
+<rect x="418" y="134" width="15" height="9" rx="2" fill="#c0392b" stroke="none" stroke-width="1"/>
+<text x="439" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">3.3V</text>
+<rect x="502" y="134" width="15" height="9" rx="2" fill="#e67e22" stroke="none" stroke-width="1"/>
+<text x="523" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">5V</text>
+<rect x="586" y="134" width="15" height="9" rx="2" fill="#4a4a4a" stroke="none" stroke-width="1"/>
+<text x="607" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GND</text>
+<rect x="670" y="134" width="15" height="9" rx="2" fill="#9aa5ad" stroke="none" stroke-width="1"/>
+<text x="691" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">空闲/保留</text>
+<rect x="60" y="148" width="1180" height="520" rx="14" fill="#2f6f4e" stroke="#1f4d36" stroke-width="2"/>
+<text x="650" y="166" font-size="12" fill="#d8ede1" text-anchor="middle" font-weight="bold">J8  ·  40-pin 排针</text>
+<circle cx="390" cy="194" r="7.5" fill="#c0392b"/>
+<text x="375" y="198" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">1</text>
+<text x="349" y="198" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">3.3V</text>
+<circle cx="390" cy="218" r="7.5" fill="#8e44ad"/>
+<text x="375" y="222" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">3</text>
+<text x="349" y="222" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">MAX30102 SDA  ·  GPIO2  +1 共享</text>
+<circle cx="390" cy="242" r="7.5" fill="#8e44ad"/>
+<text x="375" y="246" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">5</text>
+<text x="349" y="246" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">MAX30102 SCL  ·  GPIO3  +1 共享</text>
+<circle cx="390" cy="266" r="7.5" fill="#16a085"/>
+<text x="375" y="270" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">7</text>
+<text x="349" y="270" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">DHT11 DATA  ·  GPIO4</text>
+<circle cx="390" cy="290" r="7.5" fill="#4a4a4a"/>
+<text x="375" y="294" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">9</text>
+<text x="349" y="294" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">GND</text>
+<circle cx="390" cy="314" r="7.5" fill="#7f8c8d"/>
+<text x="375" y="318" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">11</text>
+<text x="349" y="318" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">HC-SR501 OUT  ·  GPIO17</text>
+<circle cx="390" cy="338" r="7.5" fill="#7f8c8d"/>
+<text x="375" y="342" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">13</text>
+<text x="349" y="342" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">SOS button  ·  GPIO27</text>
+<circle cx="390" cy="362" r="7.5" fill="#7f8c8d"/>
+<text x="375" y="366" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">15</text>
+<text x="349" y="366" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">LED green  ·  GPIO22</text>
+<circle cx="390" cy="386" r="7.5" fill="#c0392b"/>
+<text x="375" y="390" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">17</text>
+<text x="349" y="390" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">3.3V</text>
+<circle cx="390" cy="410" r="7.5" fill="#2980b9"/>
+<text x="375" y="414" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">19</text>
+<text x="349" y="414" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">TFT SDA (MOSI)  ·  GPIO10</text>
+<circle cx="390" cy="434" r="7.5" fill="#9aa5ad"/>
+<text x="375" y="438" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">21</text>
+<text x="349" y="438" font-size="11" fill="#6b7780" text-anchor="end" font-weight="normal">GPIO9  ·  空闲</text>
+<circle cx="390" cy="458" r="7.5" fill="#2980b9"/>
+<text x="375" y="462" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">23</text>
+<text x="349" y="462" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">TFT SCK  ·  GPIO11</text>
+<circle cx="390" cy="482" r="7.5" fill="#4a4a4a"/>
+<text x="375" y="486" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">25</text>
+<text x="349" y="486" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">GND</text>
+<circle cx="390" cy="506" r="7.5" fill="#9aa5ad"/>
+<text x="375" y="510" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">29</text>
+<text x="349" y="510" font-size="11" fill="#6b7780" text-anchor="end" font-weight="normal">GPIO5  ·  空闲</text>
+<circle cx="390" cy="530" r="7.5" fill="#9aa5ad"/>
+<text x="375" y="534" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">31</text>
+<text x="349" y="534" font-size="11" fill="#6b7780" text-anchor="end" font-weight="normal">GPIO6  ·  空闲</text>
+<circle cx="390" cy="554" r="7.5" fill="#7f8c8d"/>
+<text x="375" y="558" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">33</text>
+<text x="349" y="558" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">SpO2 button  ·  GPIO13</text>
+<circle cx="390" cy="578" r="7.5" fill="#9aa5ad"/>
+<text x="375" y="582" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">35</text>
+<text x="349" y="582" font-size="11" fill="#6b7780" text-anchor="end" font-weight="normal">GPIO19  ·  空闲</text>
+<circle cx="390" cy="602" r="7.5" fill="#9aa5ad"/>
+<text x="375" y="606" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">37</text>
+<text x="349" y="606" font-size="11" fill="#6b7780" text-anchor="end" font-weight="normal">GPIO26  ·  空闲</text>
+<circle cx="390" cy="626" r="7.5" fill="#4a4a4a"/>
+<text x="375" y="630" font-size="12" fill="#1a1a1a" text-anchor="end" font-weight="bold">39</text>
+<text x="349" y="630" font-size="11" fill="#1a1a1a" text-anchor="end" font-weight="normal">GND</text>
+<circle cx="910" cy="194" r="7.5" fill="#e67e22"/>
+<text x="925" y="198" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">2</text>
+<text x="951" y="198" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">5V</text>
+<circle cx="910" cy="218" r="7.5" fill="#e67e22"/>
+<text x="925" y="222" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">4</text>
+<text x="951" y="222" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">5V</text>
+<circle cx="910" cy="242" r="7.5" fill="#4a4a4a"/>
+<text x="925" y="246" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">6</text>
+<text x="951" y="246" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">GND</text>
+<circle cx="910" cy="266" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="270" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">8</text>
+<text x="951" y="270" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO14  ·  空闲</text>
+<circle cx="910" cy="290" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="294" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">10</text>
+<text x="951" y="294" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO15  ·  空闲</text>
+<circle cx="910" cy="314" r="7.5" fill="#7f8c8d"/>
+<text x="925" y="318" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">12</text>
+<text x="951" y="318" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">Buzzer +  ·  GPIO18</text>
+<circle cx="910" cy="338" r="7.5" fill="#4a4a4a"/>
+<text x="925" y="342" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">14</text>
+<text x="951" y="342" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">GND</text>
+<circle cx="910" cy="362" r="7.5" fill="#7f8c8d"/>
+<text x="925" y="366" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">16</text>
+<text x="951" y="366" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">LED yellow  ·  GPIO23</text>
+<circle cx="910" cy="386" r="7.5" fill="#2980b9"/>
+<text x="925" y="390" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">18</text>
+<text x="951" y="390" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">TFT DC/A0  ·  GPIO24</text>
+<circle cx="910" cy="410" r="7.5" fill="#4a4a4a"/>
+<text x="925" y="414" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">20</text>
+<text x="951" y="414" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">GND</text>
+<circle cx="910" cy="434" r="7.5" fill="#2980b9"/>
+<text x="925" y="438" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">22</text>
+<text x="951" y="438" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">TFT RESET  ·  GPIO25</text>
+<circle cx="910" cy="458" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="462" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">24</text>
+<text x="951" y="462" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO8  ·  空闲</text>
+<circle cx="910" cy="482" r="7.5" fill="#2980b9"/>
+<text x="925" y="486" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">26</text>
+<text x="951" y="486" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">TFT CS  ·  GPIO7</text>
+<circle cx="910" cy="506" r="7.5" fill="#4a4a4a"/>
+<text x="925" y="510" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">30</text>
+<text x="951" y="510" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">GND</text>
+<circle cx="910" cy="530" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="534" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">32</text>
+<text x="951" y="534" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO12  ·  空闲</text>
+<circle cx="910" cy="554" r="7.5" fill="#4a4a4a"/>
+<text x="925" y="558" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">34</text>
+<text x="951" y="558" font-size="11" fill="#1a1a1a" text-anchor="start" font-weight="normal">GND</text>
+<circle cx="910" cy="578" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="582" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">36</text>
+<text x="951" y="582" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO16  ·  空闲</text>
+<circle cx="910" cy="602" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="606" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">38</text>
+<text x="951" y="606" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO20  ·  空闲</text>
+<circle cx="910" cy="626" r="7.5" fill="#9aa5ad"/>
+<text x="925" y="630" font-size="12" fill="#1a1a1a" text-anchor="start" font-weight="bold">40</text>
+<text x="951" y="630" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GPIO21  ·  空闲</text>
+<rect x="1330" y="154" width="526" height="126" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="154" width="5" height="126" rx="2.5" fill="#8e44ad" stroke="none" stroke-width="1"/>
+<text x="1348" y="177" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">MAX30102 心率血氧</text>
+<text x="1840" y="177" font-size="10.5" fill="#8e44ad" text-anchor="end" font-weight="normal">I2C-1 · 0x57</text>
+<text x="1348" y="197" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">VIN → 脚 1（3.3V）⚠ 接 5V 会烧芯片</text>
+<text x="1348" y="215" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GND → 脚 6</text>
+<text x="1348" y="233" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">SDA → 脚 3（GPIO2）    SCL → 脚 5（GPIO3）</text>
+<text x="1348" y="251" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">INT 悬空不接（本驱动轮询读 FIFO）</text>
+<text x="1348" y="269" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">配置 enabled=false：测量窗口内临时装配</text>
+<path d="M 1240 194 L 1302 194 L 1302 217.0 L 1327 217.0" fill="none" stroke="#c0392b" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="294" width="526" height="108" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="294" width="5" height="108" rx="2.5" fill="#8e44ad" stroke="none" stroke-width="1"/>
+<text x="1348" y="317" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">LCD1602 液晶（I2C 转接板）</text>
+<text x="1840" y="317" font-size="10.5" fill="#8e44ad" text-anchor="end" font-weight="normal">I2C-1 · 0x27/0x3F</text>
+<text x="1348" y="337" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">VCC → 脚 2（5V）⚠ 3.3V 时对比度极低</text>
+<text x="1348" y="355" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GND → 脚 9</text>
+<text x="1348" y="373" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">SDA → 脚 3    SCL → 脚 5（与 MAX30102 并挂）</text>
+<text x="1348" y="391" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">只认 ASCII：中文会花屏，文案一律用英文</text>
+<path d="M 1240 194 L 1302 194 L 1302 348.0 L 1327 348.0" fill="none" stroke="#e67e22" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="416" width="526" height="108" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="416" width="5" height="108" rx="2.5" fill="#16a085" stroke="none" stroke-width="1"/>
+<text x="1348" y="439" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">DHT11 温湿度</text>
+<text x="1840" y="439" font-size="10.5" fill="#16a085" text-anchor="end" font-weight="normal">单总线 · 3s</text>
+<text x="1348" y="459" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">VCC → 脚 1（3.3V）⚠ 不要接 5V</text>
+<text x="1348" y="477" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">DATA → 脚 7（GPIO4）</text>
+<text x="1348" y="495" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GND → 脚 14</text>
+<text x="1348" y="513" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">裸四针需 4k7~10k 上拉到 3.3V；间隔 ≥2s</text>
+<path d="M 1240 266 L 1302 266 L 1302 470.0 L 1327 470.0" fill="none" stroke="#16a085" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="538" width="526" height="126" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="538" width="5" height="126" rx="2.5" fill="#2980b9" stroke="none" stroke-width="1"/>
+<text x="1348" y="561" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">TFT 彩屏 ST7735S 128×160</text>
+<text x="1840" y="561" font-size="10.5" fill="#2980b9" text-anchor="end" font-weight="normal">SPI0.1 · CE1</text>
+<text x="1348" y="581" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">VCC → 脚 1（3.3V）    GND → 脚 39</text>
+<text x="1348" y="599" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">SCK → 脚 23（GPIO11）  SDA/MOSI → 脚 19（GPIO10）</text>
+<text x="1348" y="617" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">CS → 脚 26（GPIO7 = SPI0 CE1）⚠ 独占片选</text>
+<text x="1348" y="635" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">DC/A0 → 脚 18（GPIO24）  RESET → 脚 22（GPIO25）</text>
+<text x="1348" y="653" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">背光 backlight_pin=-1 ⇒ 接 3.3V 常亮</text>
+<path d="M 1240 482 L 1302 482 L 1302 601.0 L 1327 601.0" fill="none" stroke="#2980b9" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="678" width="526" height="108" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="678" width="5" height="108" rx="2.5" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="1348" y="701" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">HC-SR501 人体红外</text>
+<text x="1840" y="701" font-size="10.5" fill="#7f8c8d" text-anchor="end" font-weight="normal">GPIO · 0.5s</text>
+<text x="1348" y="721" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">VCC → 脚 2（5V）⚠ 必须 5V，3.3V 会误触发</text>
+<text x="1348" y="739" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">OUT → 脚 11（GPIO17）输出 3.3V，可直连</text>
+<text x="1348" y="757" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">GND → 脚 20</text>
+<text x="1348" y="775" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">上电热身约 1 分钟；部署建议 settle_s=60</text>
+<path d="M 1240 314 L 1302 314 L 1302 732.0 L 1327 732.0" fill="none" stroke="#7f8c8d" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="800" width="526" height="90" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="800" width="5" height="90" rx="2.5" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="1348" y="823" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">蜂鸣器（有源）</text>
+<text x="1840" y="823" font-size="10.5" fill="#7f8c8d" text-anchor="end" font-weight="normal">GPIO · 高=响</text>
+<text x="1348" y="843" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">正极 ── 串 220Ω~1kΩ ── 脚 12（GPIO18）</text>
+<text x="1348" y="861" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">负极 → GND（脚 39）</text>
+<text x="1348" y="879" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">⚠ 无源型号本驱动不支持（需 PWM 方波）</text>
+<path d="M 1240 314 L 1302 314 L 1302 845.0 L 1327 845.0" fill="none" stroke="#7f8c8d" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="904" width="526" height="108" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="904" width="5" height="108" rx="2.5" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="1348" y="927" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">LED 状态灯（绿 / 黄）</text>
+<text x="1840" y="927" font-size="10.5" fill="#7f8c8d" text-anchor="end" font-weight="normal">GPIO · 高=亮</text>
+<text x="1348" y="947" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">绿 ── 串 220Ω~1kΩ ── 脚 15（GPIO22）</text>
+<text x="1348" y="965" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">黄 ── 串 220Ω~1kΩ ── 脚 16（GPIO23）</text>
+<text x="1348" y="983" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">共阴（−）→ GND（脚 39）</text>
+<text x="1348" y="1001" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">驱动保证任意时刻只亮一种颜色</text>
+<path d="M 1240 362 L 1302 362 L 1302 958.0 L 1327 958.0" fill="none" stroke="#7f8c8d" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="1330" y="1026" width="526" height="90" rx="7" fill="#f7f9fb" stroke="#c7d3dc" stroke-width="1"/>
+<rect x="1330" y="1026" width="5" height="90" rx="2.5" fill="#7f8c8d" stroke="none" stroke-width="1"/>
+<text x="1348" y="1049" font-size="13.5" fill="#1a1a1a" text-anchor="start" font-weight="bold">按键 ×2（求救 / 测血氧）</text>
+<text x="1840" y="1049" font-size="10.5" fill="#7f8c8d" text-anchor="end" font-weight="normal">GPIO · 内部上拉</text>
+<text x="1348" y="1069" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">求救：脚 13（GPIO27）── 另一端 → GND（脚 25）</text>
+<text x="1348" y="1087" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">测血氧：脚 33（GPIO13）── 另一端 → GND（脚 34）</text>
+<text x="1348" y="1105" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">短按 &lt;1.0s = 消音/翻页；长按 ≥1.0s = 触发</text>
+<path d="M 1240 338 L 1302 338 L 1302 1071.0 L 1327 1071.0" fill="none" stroke="#7f8c8d" stroke-width="1.3" stroke-linecap="round" stroke-dasharray="4 3"/>
+</svg>
