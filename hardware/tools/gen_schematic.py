@@ -259,7 +259,7 @@ def net_label(x: float, y: float, name: str, anchor: str = "middle") -> str:
     )
 
 
-def render_schematic(info: Dict[str, dict], version: str, date: str) -> str:
+def render_schematic(info: Dict[str, dict], version: str) -> str:
     devices = build_devices(info)
 
     W = 1500
@@ -277,7 +277,7 @@ def render_schematic(info: Dict[str, dict], version: str, date: str) -> str:
     out.append(txt(44, 74, "Raspberry Pi 5 Model B  |  居家老人健康监护系统 · 课程设计",
                    12, NET))
     out.append(txt(44, 92, f"引脚号由 rpi/config/devices.json 与各驱动 describe() 读出"
-                           f"  ·  版本 {version}  ·  {date}", 10.5, GRAY))
+                           f"  ·  版本 {version}", 10.5, GRAY))
     out.append(line(44, 106, W - 44, 106, 1.0, LIGHT))
 
     # ---------------- the Pi symbol: 40 numbered pins, two columns
@@ -460,13 +460,17 @@ def _describe_all() -> Dict[str, dict]:
 
 
 def render_all() -> Dict[str, str]:
-    import datetime
+    """Render the schematic from config. **No wall-clock input.**
 
+    A date stamped into the drawing made ``--check`` fail the very next day
+    (CI #124, 2026-10-29) although every pin was correct -- the gate compares
+    bytes, and "today" is a different byte tomorrow.  The build time is
+    recorded by git, which is the right place for it.
+    """
     import health_monitor
 
     return {OUT_NAME: render_schematic(_describe_all(),
-                                       getattr(health_monitor, "__version__", "?"),
-                                       datetime.date.today().isoformat())}
+                                       getattr(health_monitor, "__version__", "?"))}
 
 
 def _write_lf(path: Path, content: str) -> None:

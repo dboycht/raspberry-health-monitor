@@ -3,7 +3,7 @@
 <rect width="1500" height="1180" fill="#ffffff"/>
 <text x="44.0" y="50.0" font-size="23" fill="#111111" text-anchor="start" font-weight="bold">树莓派健康监护系统 · 原理图（端口对端口）</text>
 <text x="44.0" y="74.0" font-size="12" fill="#333333" text-anchor="start" font-weight="normal">Raspberry Pi 5 Model B  |  居家老人健康监护系统 · 课程设计</text>
-<text x="44.0" y="92.0" font-size="10.5" fill="#8a8a8a" text-anchor="start" font-weight="normal">引脚号由 rpi/config/devices.json 与各驱动 describe() 读出  ·  版本 1.0.3  ·  2026-10-27</text>
+<text x="44.0" y="92.0" font-size="10.5" fill="#8a8a8a" text-anchor="start" font-weight="normal">引脚号由 rpi/config/devices.json 与各驱动 describe() 读出  ·  版本 1.0.3</text>
 <line x1="44.0" y1="106.0" x2="1456.0" y2="106.0" stroke="#d8d8d8" stroke-width="1.0"/>
 <rect x="655.0" y="130.0" width="190.0" height="456.0" fill="none" stroke="#111111" stroke-width="2.0"/>
 <text x="750.0" y="156.0" font-size="16" fill="#111111" text-anchor="middle" font-weight="bold">树莓派 5</text>

@@ -326,11 +326,73 @@ class TestSchematicIsCurrent(unittest.TestCase):
     def test_原理图是LF线尾(self) -> None:
         raw = (_HW / _SCHEMATIC).read_bytes()
         self.assertEqual(raw.count(b"\r\n"), 0, f"{_SCHEMATIC} 含 CRLF（CI 会假红）")
+
+
+class TestNoVolatileInput(unittest.TestCase):
+    """★ 渲染不许含"会自己变"的东西（2026-10-29 实测踩到，CI #124 因此红）。
+
+    **现象**：三张图都印了生成日期，而门禁 ``--check`` 是"重新渲染 + 逐字节比对"。
+    于是**第二天 CI 必红** —— 尽管图上每个引脚都对。本机当时没重跑 ``--check``，
+    所以表现为"本机绿、隔天 CI 红"。
+
+    **根因**：门禁回答的是"图与**代码**是否同步"，而日期是**时间**的函数，
+    不是代码的函数。把时间写进被比对的内容 ⇒ 判据自带过期时间。
+
+    **结论**：生成时间由 git 记录（``git log -- hardware/原理图.svg``），
+    不允许进入渲染内容；版本号可以，因为它只在人改它时才变。
+    """
+
+    def test_渲染结果里没有日期或时间戳(self) -> None:
+        import re
+
+        for name in ("接线图-引脚.svg", "接线图-原理.svg", "原理图.svg"):
+            text = (_HW / name).read_text(encoding="utf-8")
+            found = re.findall(r"\b(?:19|20)\d{2}-\d{2}-\d{2}\b", text)
+            self.assertEqual(
+                found[:3], [],
+                f"{name} 里出现了日期时间戳 —— --check 会在第二天假红。"
+                "生成时间请交给 git 记录。",
+            )
+            self.assertNotIn("生成日期", text, f"{name} 里出现了「生成日期」")
+
+    def test_渲染是日期无关的(self) -> None:
+        """★ 直接注入"未来日期"，断言渲染结果逐字节不变。
+
+        只断言"图里没有日期字符串"不够 —— 时间还可能以别的形式影响输出。
+        """
+        import os
+
+        probe = (
+            "import sys, datetime;"
+            "sys.path.insert(0, 'rpi'); sys.path.insert(0, 'hardware/tools');"
+            "import gen_wiring_svg as G, gen_schematic as S;"
+            "before = dict(G.render_all()); before.update(S.render_all());"
+            "datetime.date = type('D', (datetime.date,),"
+            " {'today': classmethod(lambda c: c(2030, 12, 31))});"
+            "after = dict(G.render_all()); after.update(S.render_all());"
+            "print('SAME' if before == after else 'DIFF: ' + "
+            "','.join(k for k in before if before[k] != after[k]))"
+        )
+        env = dict(os.environ)
+        env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        proc = subprocess.run([sys.executable, "-c", probe], cwd=str(_PROJECT_ROOT),
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", env=env)
+        out = (proc.stdout or "").strip()
+        if not out:
+            # 探针跑不起来（语法错/导入失败）也要说清楚 —— 否则只会看到一句无信息的
+            # "SAME not found in ''"，分不清是"渲染变了"还是"探针本身坏了"。
+            self.fail("日期无关性探针没有输出，可能生成器改坏了语法：\n"
+                      + (proc.stderr or "")[-800:])
+        self.assertIn("SAME", out, f"渲染结果随日期变化（{out}）—— --check 会隔天假红。")
+
+
+class TestContractWithDocs(unittest.TestCase):
     """接线图与既有文字文档的关系：图是"照着接线"的主入口，必须被索引进。"""
 
-    def test_hardware_README登记了两张图(self) -> None:
+    def test_hardware_README登记了三张图(self) -> None:
         readme = (_HW / "README.md").read_text(encoding="utf-8")
-        for name in ("接线图-引脚.svg", "接线图-原理.svg"):
+        for name in ("接线图-引脚.svg", "接线图-原理.svg", "原理图.svg"):
             self.assertIn(name, readme, f"hardware/README.md 没有登记 {name}")
 
     def test_生成脚本自己写明了来源(self) -> None:

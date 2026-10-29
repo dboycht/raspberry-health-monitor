@@ -278,7 +278,7 @@ BUS_COLOR = {"i2c": COL["i2c"], "spi": COL["spi"], "onewire": COL["onewire"], "g
 BUS_NAME = {"i2c": "I2C-1", "spi": "SPI0", "onewire": "1-Wire", "gpio": "GPIO"}
 
 
-def render_pins(rows: List[Dict[str, Any]], version: str, date: str) -> str:
+def render_pins(rows: List[Dict[str, Any]], version: str) -> str:
     """Diagram 1: the 40-pin header, laid out like the real connector.
 
     Two columns of 20 pads; each pad's text grows *outward* (odd pins to the
@@ -300,7 +300,7 @@ def render_pins(rows: List[Dict[str, Any]], version: str, date: str) -> str:
     out.append(text(34, 100, "由图生成脚本从 rpi/config/devices.json 与各驱动 describe() 读取，"
                              "非手写；改了配置请重跑 hardware/tools/gen_wiring_svg.py",
                     11, COL["dim"]))
-    out.append(text(34, 118, f"版本 {version}  ·  生成日期 {date}", 11, COL["dim"]))
+    out.append(text(34, 118, f"版本 {version}  ·  生成时间见 git 提交记录", 11, COL["dim"]))
 
     # --- legend
     lx = 34
@@ -484,7 +484,7 @@ def _device_cards() -> List[Tuple[str, str, List[str], str, List[int]]]:
 
 
 def render_schematic(info: Dict[str, Dict[str, Any]], rows: List[Dict[str, Any]],
-                     version: str, date: str) -> str:
+                     version: str) -> str:
     W = 1240
     out: List[str] = []
 
@@ -545,7 +545,7 @@ def render_schematic(info: Dict[str, Dict[str, Any]], rows: List[Dict[str, Any]]
     out.append(svg_open(W, H, "Raspberry Pi health monitor schematic"))
     out.append(text(34, 48, "树莓派健康监护系统 · 原理框图", 25, COL["ink"], weight="bold"))
     out.append(text(34, 74, "供电轨 / 总线 / 限流元件一览（与 40-pin 接线图配套）", 13, COL["dim"]))
-    out.append(text(34, 96, f"生成自 rpi/config/devices.json  ·  版本 {version}  ·  {date}",
+    out.append(text(34, 96, f"生成自 rpi/config/devices.json  ·  版本 {version}",
                     11, COL["dim"]))
 
     # --- power rails down the left
@@ -629,23 +629,30 @@ def render_schematic(info: Dict[str, Dict[str, Any]], rows: List[Dict[str, Any]]
 
 
 def render_all() -> Dict[str, str]:
+    """Render every diagram from config. **No wall-clock input** -- see below.
+
+    Why no date (2026-10-29, real CI failure):
+        The first version stamped ``datetime.date.today()`` into each SVG while
+        ``--check`` compared the committed file against a fresh render
+        byte-for-byte.  That gate therefore went red **the next calendar day**,
+        no matter whether the diagram was correct: CI #124 failed for exactly
+        this reason while every pin in the drawing was right.
+
+    Judgement: the gate answers "are the diagrams in sync with the *code*?",
+        so nothing time-dependent may enter the rendered bytes.  When a diagram
+        was produced is already recorded -- and recorded better -- by git
+        (``git log -- hardware/原理图.svg``).  The version *is* allowed in,
+        because it changes only when a human changes it.
+    """
     import health_monitor
 
     version = getattr(health_monitor, "__version__", "?")
-    date = _today()
     info = describe_all()
     rows = build_pin_rows(info)
     return {
-        "接线图-引脚.svg": render_pins(rows, version, date),
-        "接线图-原理.svg": render_schematic(info, rows, version, date),
+        "接线图-引脚.svg": render_pins(rows, version),
+        "接线图-原理.svg": render_schematic(info, rows, version),
     }
-
-
-def _today() -> str:
-    """Real local date -- never guessed (project rule 12)."""
-    import datetime
-
-    return datetime.date.today().isoformat()
 
 
 def main() -> int:

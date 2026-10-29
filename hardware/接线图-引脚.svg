@@ -4,7 +4,7 @@
 <text x="34" y="48" font-size="26" fill="#1a1a1a" text-anchor="start" font-weight="bold">树莓派 5 · 40-pin 引脚接线图</text>
 <text x="34" y="76" font-size="13.5" fill="#6b7780" text-anchor="start" font-weight="normal">Raspberry Pi 5 Model B  |  居家老人健康监护系统</text>
 <text x="34" y="100" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">由图生成脚本从 rpi/config/devices.json 与各驱动 describe() 读取，非手写；改了配置请重跑 hardware/tools/gen_wiring_svg.py</text>
-<text x="34" y="118" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">版本 1.0.3  ·  生成日期 2026-10-27</text>
+<text x="34" y="118" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">版本 1.0.3  ·  生成时间见 git 提交记录</text>
 <rect x="34" y="134" width="15" height="9" rx="2" fill="#8e44ad" stroke="none" stroke-width="1"/>
 <text x="55" y="143" font-size="11" fill="#6b7780" text-anchor="start" font-weight="normal">I2C-1</text>
 <rect x="130" y="134" width="15" height="9" rx="2" fill="#2980b9" stroke="none" stroke-width="1"/>
